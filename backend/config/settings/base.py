@@ -1,0 +1,479 @@
+"""
+Configuración base del proyecto ROTULOS_PERSO.
+
+Ajustes comunes a todos los entornos. Los valores sensibles o que varían
+por entorno se leen desde variables de entorno / archivo .env.
+"""
+
+from datetime import timedelta
+from pathlib import Path
+
+import environ
+
+# BASE_DIR apunta a la raíz del repo (dos niveles arriba de config/settings/)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+env = environ.Env(
+    DEBUG=(bool, False),
+    ALLOWED_HOSTS=(list, []),
+    CORS_ALLOWED_ORIGINS=(list, []),
+)
+
+# Lee el archivo .env de la raíz si existe (en producción se usan
+# variables de entorno reales y este archivo no está presente)
+environ.Env.read_env(BASE_DIR / ".env")
+
+SECRET_KEY = env("SECRET_KEY")
+DEBUG = env("DEBUG")
+
+# Se lee desde la variable de entorno ALLOWED_HOSTS (lista separada por comas).
+# En dev.py se sobreescribe con ["*"]; en prod DEBE venir del .env con los
+# dominios/IPs reales. El default solo cubre localhost: no hardcodear acá IPs
+# personales de red (LAN/Tailscale) que terminarían siendo el fallback real
+# en producción si alguien se olvida de setear la variable en el .env.
+ALLOWED_HOSTS = env(
+    "ALLOWED_HOSTS",
+    default=["localhost", "127.0.0.1"],
+)
+
+# ---------------------------------------------------------------------------
+# Aplicaciones
+# ---------------------------------------------------------------------------
+
+DJANGO_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+]
+
+THIRD_PARTY_APPS = [
+    "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # revocación de refresh tokens
+    "corsheaders",
+]
+
+LOCAL_APPS = [
+    "apps.accounts",    # autenticación (Google Sign-In)
+    "apps.documents",   # carga y gestión de archivos (imágenes / PDF)
+    "apps.processing",  # agente embebido: convierte el documento a formato código
+    "apps.labels",      # rótulos generados, plantillas e impresión
+    "apps.orders",      # direcciones y pedidos del cliente final
+    "apps.audit",       # registro de auditoría (solo lectura)
+    "apps.integrations",  # claves de API y webhooks (entrada/salida)
+]
+
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    # CorsMiddleware debe ir antes de CommonMiddleware
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+
+# ---------------------------------------------------------------------------
+# Base de datos
+# ---------------------------------------------------------------------------
+
+DATABASES = {
+    # DATABASE_URL permite cambiar de motor sin tocar código,
+    # p. ej. postgres://user:pass@host:5432/rotulos
+    "default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
+}
+
+# ---------------------------------------------------------------------------
+# Django REST Framework
+# ---------------------------------------------------------------------------
+
+REST_FRAMEWORK = {
+    # Toda la API se autentica con JWT (djangorestframework-simplejwt).
+    # El frontend manda el access token en el header:
+    #   Authorization: Bearer <access>
+    # Tanto el login con Google como el de email/contraseña emiten JWT,
+    # así el frontend maneja un único tipo de token sin importar el método.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        # Subclase de JWTAuthentication (ver apps.accounts.authentication):
+        # además de validar el token, bloquea con 403 estructurado a los
+        # usuarios con must_change_password=True fuera de la allowlist
+        # (cambiar-password / ver el propio perfil / logout). Es el único
+        # choke point que cubre TODA la API sin tener que tocar cada vista.
+        "apps.accounts.authentication.JWTAuthenticationWithPasswordPolicy",
+    ],
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+        "rest_framework.parsers.MultiPartParser",  # necesario para subir imágenes/PDF
+        "rest_framework.parsers.FormParser",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+    # Cerrado por defecto: cada endpoint exige usuario autenticado salvo que
+    # declare `permission_classes = [AllowAny]` explícitamente (login, registro,
+    # Google, health). Así un endpoint nuevo nunca queda público por descuido.
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    # Rate limiting. El scope "login" se aplica a mano en las vistas de auth
+    # (ver LoginRateThrottle); "anon"/"user" son los límites generales.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",
+        "user": "1000/min",
+        "login": "5/min",
+        # Pedir/confirmar reset de contraseña: frena el email bombing a una
+        # víctima y la fuerza bruta sobre el token del link.
+        "password_reset": "5/min",
+        # Reenvío del email de verificación: frena el reenvío masivo.
+        "email_verification": "5/min",
+        # API de ingesta de pedidos (apps.integrations, autenticada con
+        # Api-Key): un ERP/tienda que reintenta agresivo no debe poder
+        # tumbar la API. Configurable por .env porque el volumen esperado
+        # varía mucho de un cliente a otro.
+        "ingest": env("INGEST_THROTTLE_RATE", default="120/min"),
+        # Rótulos que pide la tienda (apps.integrations.store_labels): un
+        # lote masivo son hasta 50 etiquetas y la plataforma se baja UN PDF
+        # por etiqueta, así que el límite anónimo por defecto (60/min) la
+        # dejaría afuera a mitad de camino.
+        "store_labels": env("STORE_LABELS_THROTTLE_RATE", default="300/min"),
+        # La cotización entra una vez por checkout de cada tienda: mucho
+        # más seguido que los rótulos, y frenarla saca nuestra opción de
+        # envío del carrito.
+        "store_rates": env("STORE_RATES_THROTTLE_RATE", default="1200/min"),
+        # Lectura de rótulos con el modelo (apps.processing): cada llamada se
+        # paga por token, así que se limita por usuario para que un bucle en el
+        # frontend no gaste dinero antes de que nadie lo note.
+        "importacion_rotulo": env("IMPORTACION_THROTTLE_RATE", default="20/min"),
+    },
+}
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+
+CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
+
+# El navegador solo le deja leer al JavaScript de otro origen un puñado de
+# cabeceras estándar. Sin esta lista, el frontend (otro puerto que la API)
+# recibe el rótulo impreso pero no se entera de que a un campo le faltó el
+# dato, de que un domicilio se cortó o de que el QR quedó ilegible: el render
+# de ElementLayout informa eso en estas cabeceras (ver
+# ElementLayoutViewSet.render). Un domicilio recortado en silencio termina en
+# un paquete que no llega.
+CORS_EXPOSE_HEADERS = [
+    "X-Layout-Missing",
+    "X-Layout-Truncated",
+    "X-Layout-Warnings",
+]
+
+# ---------------------------------------------------------------------------
+# Google OAuth / Sign-In
+# ---------------------------------------------------------------------------
+
+# client_id / client_secret creados en Google Cloud Console (ver .env).
+# El client_id se usa como "audience" al verificar el ID token en el Flujo A.
+# El client_secret solo hace falta si se implementa el Flujo B (redirect/code).
+GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", default="")
+GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET", default="")
+GOOGLE_REDIRECT_URI = env("GOOGLE_REDIRECT_URI", default="")
+
+# ---------------------------------------------------------------------------
+# Email
+# ---------------------------------------------------------------------------
+
+# Por defecto SMTP (producción). En dev.py se sobreescribe con el backend de
+# consola para no necesitar un servidor de correo real. Los datos del SMTP se
+# leen del .env; con EMAIL_BACKEND se puede forzar otro backend sin tocar código.
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+
+# Remitente de los correos transaccionales (reset de contraseña, etc.).
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL", default="ROTULOS <no-reply@rotulos.local>"
+)
+
+# Base del frontend (SPA) para armar links que van en los correos, p. ej. el
+# de reset apunta a {FRONTEND_URL}/reset-password.html?uid=...&token=...
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+
+# URL de la página que resuelve el reset (a la que apunta el enlace del correo).
+# Por defecto es frontend/reset-password.html; se puede sobreescribir desde el .env.
+PASSWORD_RESET_URL = env(
+    "PASSWORD_RESET_URL", default=f"{FRONTEND_URL}/reset-password.html"
+)
+
+# URL de la página que confirma la verificación de email (a la que apunta el
+# enlace del correo de verificación de RegisterView). Mismo criterio que
+# PASSWORD_RESET_URL: por defecto la ruta de la SPA, sobreescribible desde el .env.
+EMAIL_VERIFICATION_URL = env(
+    "EMAIL_VERIFICATION_URL", default=f"{FRONTEND_URL}/verify-email.html"
+)
+
+# Validez del token de reset de contraseña (default de Django: 3 días).
+PASSWORD_RESET_TIMEOUT = env.int("PASSWORD_RESET_TIMEOUT", default=60 * 60 * 24)
+
+# Contraseña temporal usada cuando un admin crea un usuario sin especificar
+# password (panel de gestión de usuarios). Esa cuenta queda marcada con
+# must_change_password=True (ver apps.accounts.models.PasswordChangeRequirement
+# y UserAdminSerializer.create). Si no está configurada, el admin sigue
+# obligado a indicar una contraseña al crear (comportamiento previo).
+ADMIN_CREATED_USER_PASSWORD = env("ADMIN_CREATED_USER_PASSWORD", default="")
+
+# ---------------------------------------------------------------------------
+# Rótulos (apps.labels)
+# ---------------------------------------------------------------------------
+
+# Remitente, destinatario, domicilio, CP y localidad salen del pedido y de su
+# cliente/tienda (apps.labels.label_rendering.build_label_context): la app es
+# multi-cliente, así que no hay un remitente global configurable.
+
+# Tope de rótulos por lote (POST /api/v1/labels/batch/, ver
+# apps.labels.batch_views). El lote corre síncrono, en el mismo request:
+# sin esto, un lote gigante sería un timeout en vez de un error claro.
+LABELS_BATCH_MAX_ITEMS = env.int("LABELS_BATCH_MAX_ITEMS", default=200)
+
+# ---------------------------------------------------------------------------
+# Importación de pedidos (apps.orders.import_views) — story 21
+# ---------------------------------------------------------------------------
+
+# Igual que LABELS_BATCH_MAX_ITEMS: corre síncrono, en el mismo request.
+ORDERS_IMPORT_MAX_ROWS = env.int("ORDERS_IMPORT_MAX_ROWS", default=1000)
+ORDERS_IMPORT_MAX_FILE_SIZE_MB = env.int("ORDERS_IMPORT_MAX_FILE_SIZE_MB", default=10)
+
+# ---------------------------------------------------------------------------
+# Webhooks salientes (apps.integrations.webhooks) — story 24
+# ---------------------------------------------------------------------------
+
+# Sin cola de tareas: el envío es síncrono, en el mismo request que cambió
+# el estado del pedido. Un timeout corto evita que un endpoint del cliente
+# que no responde bloquee esa operación.
+WEBHOOK_DELIVERY_TIMEOUT_SECONDS = env.int("WEBHOOK_DELIVERY_TIMEOUT_SECONDS", default=3)
+
+# ---------------------------------------------------------------------------
+# Tiendas online conectadas (apps.integrations: StoreConnection / IntegrationEvent)
+# ---------------------------------------------------------------------------
+
+# Clave Fernet para cifrar los tokens OAuth de las tiendas (ver
+# apps.integrations.crypto). Vacía = se deriva de SECRET_KEY (solo para
+# desarrollo: en producción definir una propia).
+INTEGRATIONS_ENCRYPTION_KEY = env("INTEGRATIONS_ENCRYPTION_KEY", default="")
+
+# Cola de eventos (apps.integrations.events, manage.py run_integrations_worker).
+INTEGRATIONS_EVENT_MAX_ATTEMPTS = env.int("INTEGRATIONS_EVENT_MAX_ATTEMPTS", default=8)
+INTEGRATIONS_EVENT_RETRY_BASE_SECONDS = env.int("INTEGRATIONS_EVENT_RETRY_BASE_SECONDS", default=60)
+INTEGRATIONS_EVENT_RETRY_MAX_SECONDS = env.int("INTEGRATIONS_EVENT_RETRY_MAX_SECONDS", default=3600)
+# Un evento en "processing" por más que esto se considera abandonado (worker
+# caído) y se vuelve a encolar.
+INTEGRATIONS_EVENT_PROCESSING_TIMEOUT_SECONDS = env.int(
+    "INTEGRATIONS_EVENT_PROCESSING_TIMEOUT_SECONDS", default=600
+)
+
+# App de Tiendanube (Portal de Partners). El client secret también firma los
+# webhooks que manda Tiendanube (header x-linkedstore-hmac-sha256).
+TIENDANUBE_APP_ID = env("TIENDANUBE_APP_ID", default="")
+TIENDANUBE_CLIENT_SECRET = env("TIENDANUBE_CLIENT_SECRET", default="")
+# Versión de la API (https://api.tiendanube.com/<versión>/<store_id>/...).
+TIENDANUBE_API_VERSION = env("TIENDANUBE_API_VERSION", default="2025-03")
+# Obligatorio para Tiendanube (400 sin él): "NombreApp (email de contacto)".
+TIENDANUBE_USER_AGENT = env("TIENDANUBE_USER_AGENT", default="")
+TIENDANUBE_HTTP_TIMEOUT_SECONDS = env.int("TIENDANUBE_HTTP_TIMEOUT_SECONDS", default=10)
+
+# Instalación de tiendas (apps.integrations.stores): vida del "state" firmado
+# de la URL de autorización y del enlace para vincular una tienda instalada
+# desde la tienda de apps a una cuenta.
+INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS = env.int("INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS", default=900)
+INTEGRATIONS_STORE_CLAIM_MAX_AGE_SECONDS = env.int("INTEGRATIONS_STORE_CLAIM_MAX_AGE_SECONDS", default=1800)
+# Página del frontend (relativa a FRONTEND_URL) a la que vuelve el comerciante
+# después de instalar la app, con el resultado en la query string.
+STORE_CONNECT_FRONTEND_PATH = env("STORE_CONNECT_FRONTEND_PATH", default="tiendas.html")
+
+# URL pública HTTPS del backend, sin barra final. Con ella se registran los
+# webhooks de cada tienda ({base}/api/v1/integrations/tiendanube/webhooks/);
+# vacía = no se registran (la tienda queda con un aviso en last_error).
+INTEGRATIONS_PUBLIC_BASE_URL = env("INTEGRATIONS_PUBLIC_BASE_URL", default="")
+# Al conectar/vincular una tienda se importan los pedidos creados en los
+# últimos N días.
+INTEGRATIONS_INITIAL_IMPORT_DAYS = env.int("INTEGRATIONS_INITIAL_IMPORT_DAYS", default=30)
+# Pedidos por página al importar (máximo de la API de Tiendanube: 200).
+TIENDANUBE_ORDERS_PAGE_SIZE = env.int("TIENDANUBE_ORDERS_PAGE_SIZE", default=200)
+
+# Rótulos que pide la tienda desde su propio admin (apps.integrations.store_labels).
+# Plazo propio para resolver un rótulo: pasado esto se informa "falló" con el
+# motivo. Va con margen sobre los 30 minutos en que Tiendanube lo da por
+# vencido solo, para que el comerciante vea SIEMPRE por qué no le salió.
+STORE_LABEL_TIMEOUT_SECONDS = env.int("STORE_LABEL_TIMEOUT_SECONDS", default=1200)
+# Vida máxima de la URL pública del PDF. En la práctica se invalida mucho
+# antes (cuando la plataforma avisa que ya lo bajó); esto es el tope por si
+# ese aviso nunca llega.
+STORE_LABEL_DOWNLOAD_MAX_AGE_SECONDS = env.int("STORE_LABEL_DOWNLOAD_MAX_AGE_SECONDS", default=86400)
+# Nombre del medio de envío como lo ven el comerciante y el comprador en el
+# checkout de la tienda. La app es multi-cliente: no va un nombre de cliente.
+STORE_LABEL_CARRIER_NAME = env("STORE_LABEL_CARRIER_NAME", default="Rótulos")
+
+# ---------------------------------------------------------------------------
+# JWT (djangorestframework-simplejwt)
+# ---------------------------------------------------------------------------
+
+# El access token es de vida corta y viaja en cada petición; cuando expira,
+# el frontend usa el refresh (vida larga) para obtener uno nuevo sin volver
+# a pedir credenciales. La firma se hace con SECRET_KEY.
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # Rotación: cada uso del endpoint de refresh emite un refresh NUEVO y
+    # manda el anterior a la blacklist. Si un refresh robado se reutiliza
+    # después de haber sido rotado, la petición falla (401) y el robo queda
+    # en evidencia. Requiere la app token_blacklist y correr las migraciones.
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+}
+
+# ---------------------------------------------------------------------------
+# Validación de contraseñas
+# ---------------------------------------------------------------------------
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+# ---------------------------------------------------------------------------
+# Internacionalización
+# ---------------------------------------------------------------------------
+
+LANGUAGE_CODE = "es-ar"
+TIME_ZONE = "America/Argentina/Buenos_Aires"
+USE_I18N = True
+USE_TZ = True
+
+# ---------------------------------------------------------------------------
+# Archivos estáticos y multimedia
+# ---------------------------------------------------------------------------
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Los documentos subidos (imágenes / PDF) se guardan acá
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ---------------------------------------------------------------------------
+# Claude (lectura de rótulos desde una foto) — apps.processing.agent
+# ---------------------------------------------------------------------------
+
+# Clave de la API de Anthropic. Sin ella, la app processing devuelve un error
+# explicando que falta configurarla, en vez de fallar de forma críptica.
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+
+# Modelo que interpreta los rótulos. Leer un rótulo de una foto es una tarea
+# visual con criterio —hay que distinguir el rótulo de un campo de su valor—,
+# así que se usa el modelo más capaz.
+ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", default="claude-opus-5")
+
+# Segundos de espera antes de dar por perdida la llamada. Una lectura normal
+# tarda entre 10 y 60; el default del SDK son 600, demasiado para dejar a un
+# usuario esperando frente a una pantalla.
+ANTHROPIC_TIMEOUT = env.float("ANTHROPIC_TIMEOUT", default=120.0)
+
+# ---------------------------------------------------------------------------
+# Render de rótulos (apps.labels.render) — fuentes para PNG
+# ---------------------------------------------------------------------------
+
+# Configuración de fuentes TTF para el render a PNG. Las rutas por defecto del
+# módulo render.fonts cubren Linux/Windows/macOS; este diccionario permite
+# anteponer rutas propias en un contenedor que empaqueta sus propias fuentes.
+#   RENDER_FONTS_TTF = {"helvetica": ("/opt/fonts/Helvetica.ttf", ...)}
+RENDER_FONTS_TTF = env.json("RENDER_FONTS_TTF", default={})
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# Estaba definido SOLO en prod.py, así que fuera de producción no había
+# ninguna configuración y Python caía en su `lastResort`: los INFO se
+# descartaban en silencio y lo demás salía sin fecha, sin nivel y sin nombre
+# del logger. Eso importa porque apps.integrations está escrito para LOGUEAR
+# en vez de reventar (un error ahí no puede romperle el checkout a un
+# comprador), y esa decisión depende de que alguien pueda leer los logs.
+LOG_LEVEL = env("LOG_LEVEL", default="INFO")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "{asctime} {levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        # Para nuestro código: deja pasar todo lo que el logger permita.
+        "app_console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+        # Para Django y las librerías de terceros. Tiene nivel propio, y no
+        # alcanza con el del logger raíz: un registro que PROPAGA hacia la
+        # raíz se filtra por el nivel del HANDLER, no por el del logger. Sin
+        # esto, cada aviso de Django saldría dos veces en desarrollo.
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "level": "WARNING",
+        },
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        # Todo nuestro código usa getLogger(__name__) bajo `apps.`, así que
+        # un solo logger lo cubre entero.
+        "apps": {"handlers": ["app_console"], "level": LOG_LEVEL, "propagate": False},
+        # Django trae su propio handler de consola y además propaga hacia la
+        # raíz: sin declararlo acá, cada aviso suyo saldría dos veces (una
+        # pelada, otra con formato). `propagate: False` corta esa segunda
+        # vuelta. Se pierde `mail_admins`, que sin ADMINS configurado no
+        # manda nada; el día que se configure, va agregado acá.
+        "django": {"handlers": ["app_console"], "level": LOG_LEVEL, "propagate": False},
+    },
+}

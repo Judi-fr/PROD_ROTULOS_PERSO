@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+
+    <title>Gestión de usuarios</title>
+
+    <link
+      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.materialdesignicons.com/4.8.95/css/materialdesignicons.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+    />
+
+    <link rel="stylesheet" href="assets/css/gestionuser.css" />
+    <!-- Enlace al archivo CSS -->
+    <!-- SheetJS: genera el .xlsx de "Export" en el navegador, sin backend -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+      <!-- SIDEBAR: renderizado por assets/js/admin_sidebar.js -->
+      <div id="adminSidebar" data-active="users"></div>
+
+      <!-- MAIN -->
+      <main class="main">
+        <div class="topbar">
+          <div>
+            <h1>Usuarios</h1>
+            <p>Administrá los usuarios del sitio y sus accesos.</p>
+          </div>
+          <div class="topbar-actions">
+            <div class="search-box">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input type="text" placeholder="Buscar usuarios..." data-user-search />
+            </div>
+            <button class="btn btn-primary" id="openCreatePanel">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Crear usuario
+            </button>
+            <button class="btn btn-outline" id="logoutAdminBtn" type="button">Cerrar sesión</button>
+          </div>
+        </div>
+
+        <!-- STAT CARDS -->
+        <div class="stats">
+          <div class="stat-card">
+            <div class="stat-top">
+              <span class="stat-icon blue">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </span>
+              <div>
+                <div class="stat-label">Total de usuarios</div>
+                <div class="stat-value" id="totalUsersCount">—</div>
+              </div>
+            </div>
+            <div class="stat-sub">Todos los usuarios registrados</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top">
+              <span class="stat-icon green">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                  <polyline points="22 4 12 14.01 9 11.01" />
+                </svg>
+              </span>
+              <div>
+                <div class="stat-label">Usuarios activos</div>
+                <div class="stat-value" id="activeUsersCount">—</div>
+              </div>
+            </div>
+            <div class="stat-sub">Activos actualmente</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top">
+              <span class="stat-icon amber">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="8.5" cy="7" r="4" />
+                  <circle cx="19" cy="14" r="3" />
+                  <line x1="19" y1="13" x2="19" y2="14.5" />
+                  <line x1="19" y1="15.7" x2="19" y2="15.71" />
+                </svg>
+              </span>
+              <div>
+                <div class="stat-label">Usuarios inactivos</div>
+                <div class="stat-value" id="inactiveUsersCount">—</div>
+              </div>
+            </div>
+            <div class="stat-sub">No activos</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top">
+              <span class="stat-icon purple">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="8.5" cy="7" r="4" />
+                  <path d="M20 8v6" />
+                  <path d="M17 11h6" />
+                </svg>
+              </span>
+              <div>
+                <div class="stat-label">Usuarios bloqueados</div>
+                <div class="stat-value" id="lockedUsersCount">—</div>
+              </div>
+            </div>
+            <div class="stat-sub">Bloqueados actualmente</div>
+          </div>
+        </div>
+
+        <!-- BULK ACTIONS: aparece solo cuando hay usuarios seleccionados. -->
+        <div class="bulk-actions-bar" id="bulkActionsBar" style="display:none;">
+          <span id="bulkActionsCount">0 seleccionados</span>
+          <button type="button" class="btn btn-outline" id="bulkActivateBtn">Activar</button>
+          <button type="button" class="btn btn-outline" id="bulkDeactivateBtn">Desactivar</button>
+          <select id="bulkRoleSelect">
+            <option value="">Cambiar rol a...</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="bulkSetRoleBtn">Aplicar rol</button>
+        </div>
+
+        <!-- TABLE -->
+        <div class="table-card">
+          <div class="table-toolbar">
+            <div class="search-box">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Buscar por nombre, email o rol..."
+                data-user-search
+              />
+            </div>
+            <div class="toolbar-right">
+              <div class="filters-control">
+                <button class="btn btn-outline" id="openUserFilters">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polygon
+                      points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"
+                    />
+                  </svg>
+                  Filtros
+                </button>
+                <div class="filter-panel filter-panel-wide" id="userFilterPanel" style="display:none;">
+                  <label for="userStatusFilter">Estado</label>
+                  <select id="userStatusFilter">
+                    <option value="all">Todos</option>
+                    <option value="active">Activo</option>
+                    <option value="inactive">Inactivo</option>
+                  </select>
+                  <label for="userRoleFilter">Rol</label>
+                  <select id="userRoleFilter">
+                    <option value="all">Todos</option>
+                  </select>
+
+                  <div class="filter-section-title">Actividad</div>
+                  <label for="userDateJoinedFrom">Registrado desde</label>
+                  <input type="date" id="userDateJoinedFrom" />
+                  <label for="userDateJoinedTo">Registrado hasta</label>
+                  <input type="date" id="userDateJoinedTo" />
+                  <label for="userLastLoginFrom">Último login desde</label>
+                  <input type="date" id="userLastLoginFrom" />
+                  <label for="userLastLoginTo">Último login hasta</label>
+                  <input type="date" id="userLastLoginTo" />
+                  <label class="filter-checkbox-label">
+                    <input type="checkbox" id="userNeverLoggedIn" />
+                    Nunca inició sesión
+                  </label>
+                  <label for="userInactiveDays">Inactivo hace más de (días)</label>
+                  <input type="number" id="userInactiveDays" min="0" placeholder="Ej: 30" />
+
+                  <div class="filter-section-title">Seguridad</div>
+                  <label for="userLockedFilter">Bloqueado</label>
+                  <select id="userLockedFilter">
+                    <option value="all">Todos</option>
+                    <option value="true">Bloqueado</option>
+                    <option value="false">No bloqueado</option>
+                  </select>
+                  <label for="userFailedAttemptsFilter">Intentos fallidos</label>
+                  <select id="userFailedAttemptsFilter">
+                    <option value="all">Todos</option>
+                    <option value="0">0 intentos</option>
+                    <option value="1-2">1-2 intentos</option>
+                    <option value="cerca_de_bloquearse">Cerca de bloquearse</option>
+                  </select>
+
+                  <div class="filter-section-title">Origen</div>
+                  <label for="userAuthMethodFilter">Método de autenticación</label>
+                  <select id="userAuthMethodFilter">
+                    <option value="all">Todos</option>
+                    <option value="local">Local (email/password)</option>
+                    <option value="google">Google</option>
+                  </select>
+
+                  <div class="filter-section-title">Orden</div>
+                  <label for="userOrderingField">Ordenar por</label>
+                  <select id="userOrderingField">
+                    <option value="id">Sin ordenar</option>
+                    <option value="first_name">Nombre</option>
+                    <option value="email">Email</option>
+                    <option value="date_joined">Fecha de registro</option>
+                    <option value="last_login">Último login</option>
+                  </select>
+                  <label for="userOrderingDir">Dirección</label>
+                  <select id="userOrderingDir">
+                    <option value="asc">Ascendente</option>
+                    <option value="desc">Descendente</option>
+                  </select>
+
+                  <button type="button" class="btn btn-outline filter-clear-btn" id="clearUserFiltersBtn">
+                    Limpiar filtros
+                  </button>
+                </div>
+              </div>
+              <button class="btn btn-outline" id="exportUsersBtn" title="Exportar los usuarios seleccionados a Excel">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Exportar
+              </button>
+              <button class="btn btn-outline" id="exportUsersCsvBtn" title="Exportar a CSV (generado en el servidor): los seleccionados, o la lista filtrada actual si no hay selección">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                Exportar CSV
+              </button>
+              <button class="icon-btn" title="Actualizar">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path
+                    d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 36px"><input type="checkbox" id="selectAllUsers" title="Seleccionar todos" /></th>
+                <th style="width: 21%">
+                  <span class="th-sort"
+                    >Usuario
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <polyline points="7 15 12 20 17 15" />
+                      <polyline points="7 9 12 4 17 9" /></svg
+                  ></span>
+                </th>
+                <th style="width: 21%">
+                  <span class="th-sort"
+                    >Email
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <polyline points="7 15 12 20 17 15" />
+                      <polyline points="7 9 12 4 17 9" /></svg
+                  ></span>
+                </th>
+                <th style="width: 10%">
+                  <span class="th-sort"
+                    >Rol
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <polyline points="7 15 12 20 17 15" />
+                      <polyline points="7 9 12 4 17 9" /></svg
+                  ></span>
+                </th>
+                <th style="width: 12%">
+                  <span class="th-sort"
+                    >Estado
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <polyline points="7 15 12 20 17 15" />
+                      <polyline points="7 9 12 4 17 9" /></svg
+                  ></span>
+                </th>
+                <th style="width: 10%">
+                  <span class="th-sort"
+                    >Creado
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <polyline points="7 15 12 20 17 15" />
+                      <polyline points="7 9 12 4 17 9" /></svg
+                  ></span>
+                </th>
+                <th style="width: 8%">Pedidos</th>
+                <th style="width: 12%">Último pedido</th>
+                <th class="actions-col" style="width: 90px">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="usersBody">
+              <!-- rows injected by JS -->
+            </tbody>
+          </table>
+
+          <div class="pagination-bar">
+            <div class="showing" id="paginationInfo">Mostrando 0 usuarios</div>
+            <div class="pager" id="paginationControls">
+              <button title="Primera" data-page="first">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="11 17 6 12 11 7" />
+                  <polyline points="18 17 13 12 18 7" />
+                </svg>
+              </button>
+              <button title="Anterior" data-page="prev">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+              <span id="pageNumbers"></span>
+              <button title="Siguiente" data-page="next">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+              <button title="Última" data-page="last">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="13 17 18 12 13 7" />
+                  <polyline points="6 17 11 12 6 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </main>
+
+      <!-- CREATE USER PANEL -->
+      <div class="create-panel" id="createPanel" style="display: none">
+        <form id="createUserForm">
+          <div class="create-panel-head">
+            <h3 id="userFormTitle">Crear usuario</h3>
+            <button id="closeCreatePanel" type="button">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div class="field">
+            <label>Nombre completo</label>
+            <input id="fullNameInput" type="text" placeholder="Ingresá el nombre completo" required />
+          </div>
+          <div class="field">
+            <label>Email</label>
+            <input id="emailInput" type="email" placeholder="Ingresá el email" required />
+          </div>
+          <div class="field">
+            <label>Rol</label>
+<select id="roleSelect" required>
+              <option value="">Seleccioná un rol</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Estado</label>
+<select id="statusSelect" required>
+              <option value="">Seleccioná un estado</option>
+              <option value="active">Activo</option>
+              <option value="inactive">Inactivo</option>
+            </select>
+          </div>
+          <div class="field" id="passwordField">
+            <label>Contraseña</label>
+            <input id="passwordInput" type="password" placeholder="Ingresá la contraseña (opcional)" autocomplete="new-password" />
+            <p class="field-hint">Dejar vacío para usar una temporal (obliga a cambiarla).</p>
+          </div>
+          <div class="field field-checkbox">
+            <label class="filter-checkbox-label">
+              <input type="checkbox" id="forcePasswordChangeInput" />
+              <span>Forzar cambio de contraseña en el próximo login</span>
+            </label>
+          </div>
+          <div class="create-panel-actions">
+            <button class="btn btn-cancel" id="cancelCreate" type="button">Cancelar</button>
+            <button class="btn btn-primary" id="userFormSubmit" type="submit" style="justify-content: center">
+              Crear usuario
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- VIEW USER MODAL (solo lectura) -->
+      <div id="viewUserModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.5); z-index:100; align-items:center; justify-content:center;">
+        <div style="background:#fff; border-radius:14px; width:460px; max-width:90%; max-height:85vh; padding:24px; box-shadow:0 20px 45px rgba(15,23,42,.25); display:flex; flex-direction:column;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-shrink:0;">
+            <h3 style="margin:0; font-size:17px; font-weight:700;">Detalles del usuario</h3>
+            <button id="closeViewModal" type="button" style="border:none; background:transparent; cursor:pointer; color:#64748b; font-size:20px; line-height:1;">&times;</button>
+          </div>
+          <div id="viewUserContent" style="display:flex; flex-direction:column; gap:10px; overflow-y:auto;"></div>
+          <div style="display:flex; justify-content:flex-end; margin-top:20px; flex-shrink:0;">
+            <button id="closeViewModalBtn" type="button" class="btn btn-outline">Cerrar</button>
+          </div>
+        </div>
+      </div>
+
+      <script src="assets/js/config.js"></script>
+      <script src="assets/js/auth.js"></script>
+      <script src="assets/js/utils.js"></script>
+      <script src="assets/js/admin_common.js"></script>
+      <script src="assets/js/admin_sidebar.js"></script>
+      <script src="assets/js/usuarios.js"></script>
+    </div>
+  </body>
+</html>

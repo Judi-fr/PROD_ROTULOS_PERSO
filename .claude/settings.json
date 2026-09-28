@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git pull:*)",
+      "Bash(rm -rf:*)"
+    ],
+    "allow": [
+      "Bash(python manage.py test:*)",
+      "Bash(python manage.py check:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(cd backend && source venv/bin/activate && python manage.py test:*)",
+      "Bash(cd backend && source venv/bin/activate && python manage.py run_integrations_worker:*)",
+      "Bash(cd backend && source venv/bin/activate && python manage.py check:*)",
+      "Bash(cd backend && source venv/bin/activate && python manage.py migrate:*)"
+    ]
+  }
+}

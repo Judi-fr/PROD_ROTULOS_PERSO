@@ -1,0 +1,218 @@
+"""Registro de auditoría.
+
+``AuditLog`` es el único modelo de esta app: cada fila es un evento ya
+ocurrido (login, alta de usuario, cambio de rol, respuesta de soporte, ...).
+Es deliberadamente un modelo "plano" (sin ``GenericForeignKey``/
+``contenttypes``): ``target_type``/``target_id``/``target_repr`` alcanzan
+para leer el registro y son mucho más simples de consultar y testear.
+
+Es inmutable: ``save()`` rechaza cualquier intento de modificar una fila ya
+creada y ``delete()`` rechaza el borrado. No hay ningún endpoint de
+escritura/borrado sobre este modelo (ver ``views.py``): la única forma de
+crear una fila es ``apps.audit.services.record``.
+"""
+
+from __future__ import annotations
+
+from django.conf import settings
+from django.db import models
+
+
+class AuditLog(models.Model):
+    class Category(models.TextChoices):
+        AUTH = "auth", "Autenticación"
+        USERS = "users", "Usuarios"
+        ROLES = "roles", "Roles"
+        ORDERS = "orders", "Pedidos"
+        SUPPORT = "support", "Soporte"
+        LABELS = "labels", "Rótulos"
+        DOCUMENTS = "documents", "Documentos"
+        INTEGRATIONS = "integrations", "Integraciones"
+        # apps.processing: lectura de rótulos desde una foto/PDF (Claude).
+        PROCESSING = "processing", "Procesamiento"
+
+    class Action(models.TextChoices):
+        # auth
+        AUTH_LOGIN_SUCCESS = "auth.login_success", "Login exitoso"
+        AUTH_LOGIN_FAILED = "auth.login_failed", "Login fallido"
+        AUTH_LOCKOUT = "auth.lockout", "Bloqueo de cuenta"
+        AUTH_LOGOUT = "auth.logout", "Logout"
+        AUTH_PASSWORD_CHANGE = "auth.password_change", "Cambio de contraseña"
+        AUTH_PASSWORD_RESET = "auth.password_reset", "Restablecimiento de contraseña"
+        # users
+        USER_CREATE = "user.create", "Usuario creado"
+        USER_UPDATE = "user.update", "Usuario actualizado"
+        USER_DEACTIVATE = "user.deactivate", "Usuario desactivado"
+        USER_REACTIVATE = "user.reactivate", "Usuario reactivado"
+        USER_UNLOCK = "user.unlock", "Usuario desbloqueado"
+        USER_ROLE_CHANGE = "user.role_change", "Cambio de rol de usuario"
+        # roles
+        ROLE_CREATE = "role.create", "Rol creado"
+        ROLE_UPDATE = "role.update", "Rol actualizado"
+        ROLE_DELETE = "role.delete", "Rol eliminado"
+        ROLE_PERMISSIONS_UPDATE = "role.permissions_update", "Permisos de rol actualizados"
+        # orders
+        ORDER_CREATE = "order.create", "Pedido creado"
+        ORDER_STATUS_CHANGE = "order.status_change", "Cambio de estado de pedido"
+        ORDER_CANCEL = "order.cancel", "Pedido cancelado"
+        ORDER_SHIP = "order.ship", "Envío de pedido actualizado"
+        ORDER_IMPORT = "order.import", "Importación de pedidos"
+        ORDER_WEBHOOK_INGEST = "order.webhook_ingest", "Pedido recibido por webhook"
+        # support
+        SUPPORT_CREATE = "support.create", "Mensaje de soporte creado"
+        SUPPORT_STATUS_CHANGE = "support.status_change", "Cambio de estado de soporte"
+        SUPPORT_REPLY = "support.reply", "Respuesta de soporte"
+        # labels (rótulos)
+        LABEL_CREATE = "label.create", "Rótulo creado"
+        LABEL_UPDATE = "label.update", "Rótulo actualizado"
+        LABEL_DELETE = "label.delete", "Rótulo eliminado"
+        LABEL_RENDER = "label.render", "Rótulo renderizado (PDF)"
+        LABEL_BATCH = "label.batch", "Rótulos generados por lote"
+        TEMPLATE_CREATE = "template.create", "Plantilla de rótulo creada"
+        TEMPLATE_UPDATE = "template.update", "Plantilla de rótulo actualizada"
+        TEMPLATE_DELETE = "template.delete", "Plantilla de rótulo eliminada"
+        # labels: ElementLayout/LayoutElement/LayoutVariable, plantillas por
+        # elementos + catálogo de variables (distintas de LabelTemplate/
+        # TEMPLATE_* de arriba: no son el mismo concepto, ver
+        # apps/labels/models.py). Los VALORES guardados (columna izquierda)
+        # quedan igual que siempre: son datos ya escritos en AuditLog.
+        ELEMENT_LAYOUT_CREATE = "plantilla.create", "Plantilla estructurada creada"
+        ELEMENT_LAYOUT_UPDATE = "plantilla.update", "Plantilla estructurada actualizada"
+        ELEMENT_LAYOUT_DELETE = "plantilla.delete", "Plantilla estructurada eliminada"
+        LAYOUT_VARIABLE_CREATE = "variable_rotulo.create", "Variable de rótulo creada"
+        LAYOUT_VARIABLE_UPDATE = "variable_rotulo.update", "Variable de rótulo actualizada"
+        LAYOUT_VARIABLE_DELETE = "variable_rotulo.delete", "Variable de rótulo eliminada"
+        # documents
+        DOCUMENT_DELETE = "document.delete", "Documento eliminado"
+        # documents: archivo fuente subido para importar (UploadedLabelFile,
+        # distinto de Document/DOCUMENT_DELETE de arriba).
+        UPLOADED_FILE_CREATE = "documento.create", "Documento fuente subido"
+        UPLOADED_FILE_DELETE = "documento.delete", "Documento fuente eliminado"
+        # processing: lectura de un rótulo con Claude a partir de un UploadedLabelFile
+        LABEL_IMPORT_CREATE = "importacion_rotulo.create", "Importación de rótulo lanzada"
+        # integrations (apps.integrations)
+        INTEGRATION_KEY_CREATE = "integration_key.create", "Clave de integración creada"
+        INTEGRATION_KEY_DELETE = "integration_key.delete", "Clave de integración eliminada"
+        INCOMING_WEBHOOK_CREATE = "incoming_webhook.create", "Webhook entrante creado"
+        WEBHOOK_ENDPOINT_CREATE = "webhook_endpoint.create", "Webhook saliente creado"
+        STORE_CONNECT = "store.connect", "Tienda online conectada"
+        STORE_CLAIM = "store.claim", "Tienda online vinculada a una cuenta"
+        STORE_DISCONNECT = "store.disconnect", "Tienda online desconectada"
+        STORE_UPDATE = "store.update", "Tienda online editada"
+        PRIVACY_STORE_REDACT = "privacy.store_redact", "Datos de una tienda eliminados (privacidad)"
+        PRIVACY_CUSTOMER_REDACT = "privacy.customer_redact", "Datos de un comprador eliminados (privacidad)"
+        PRIVACY_DATA_REQUEST = "privacy.data_request", "Reporte de datos de un comprador (privacidad)"
+
+    # Cada acción pertenece a exactamente una categoría. Se guarda acá (en vez
+    # de derivarla del prefijo de la acción) porque los nombres no son
+    # simétricos: la categoría "users" agrupa acciones "user.*" (singular),
+    # "roles" agrupa "role.*", "orders" agrupa "order.*".
+    ACTION_CATEGORIES = {
+        Action.AUTH_LOGIN_SUCCESS: Category.AUTH,
+        Action.AUTH_LOGIN_FAILED: Category.AUTH,
+        Action.AUTH_LOCKOUT: Category.AUTH,
+        Action.AUTH_LOGOUT: Category.AUTH,
+        Action.AUTH_PASSWORD_CHANGE: Category.AUTH,
+        Action.AUTH_PASSWORD_RESET: Category.AUTH,
+        Action.USER_CREATE: Category.USERS,
+        Action.USER_UPDATE: Category.USERS,
+        Action.USER_DEACTIVATE: Category.USERS,
+        Action.USER_REACTIVATE: Category.USERS,
+        Action.USER_UNLOCK: Category.USERS,
+        Action.USER_ROLE_CHANGE: Category.USERS,
+        Action.ROLE_CREATE: Category.ROLES,
+        Action.ROLE_UPDATE: Category.ROLES,
+        Action.ROLE_DELETE: Category.ROLES,
+        Action.ROLE_PERMISSIONS_UPDATE: Category.ROLES,
+        Action.ORDER_CREATE: Category.ORDERS,
+        Action.ORDER_STATUS_CHANGE: Category.ORDERS,
+        Action.ORDER_CANCEL: Category.ORDERS,
+        Action.ORDER_SHIP: Category.ORDERS,
+        Action.ORDER_IMPORT: Category.ORDERS,
+        Action.ORDER_WEBHOOK_INGEST: Category.ORDERS,
+        Action.SUPPORT_CREATE: Category.SUPPORT,
+        Action.SUPPORT_STATUS_CHANGE: Category.SUPPORT,
+        Action.SUPPORT_REPLY: Category.SUPPORT,
+        Action.LABEL_CREATE: Category.LABELS,
+        Action.LABEL_UPDATE: Category.LABELS,
+        Action.LABEL_DELETE: Category.LABELS,
+        Action.LABEL_RENDER: Category.LABELS,
+        Action.LABEL_BATCH: Category.LABELS,
+        Action.TEMPLATE_CREATE: Category.LABELS,
+        Action.TEMPLATE_UPDATE: Category.LABELS,
+        Action.TEMPLATE_DELETE: Category.LABELS,
+        Action.ELEMENT_LAYOUT_CREATE: Category.LABELS,
+        Action.ELEMENT_LAYOUT_UPDATE: Category.LABELS,
+        Action.ELEMENT_LAYOUT_DELETE: Category.LABELS,
+        Action.LAYOUT_VARIABLE_CREATE: Category.LABELS,
+        Action.LAYOUT_VARIABLE_UPDATE: Category.LABELS,
+        Action.LAYOUT_VARIABLE_DELETE: Category.LABELS,
+        Action.DOCUMENT_DELETE: Category.DOCUMENTS,
+        Action.UPLOADED_FILE_CREATE: Category.DOCUMENTS,
+        Action.UPLOADED_FILE_DELETE: Category.DOCUMENTS,
+        Action.LABEL_IMPORT_CREATE: Category.PROCESSING,
+        Action.INTEGRATION_KEY_CREATE: Category.INTEGRATIONS,
+        Action.INTEGRATION_KEY_DELETE: Category.INTEGRATIONS,
+        Action.INCOMING_WEBHOOK_CREATE: Category.INTEGRATIONS,
+        Action.WEBHOOK_ENDPOINT_CREATE: Category.INTEGRATIONS,
+        Action.STORE_CONNECT: Category.INTEGRATIONS,
+        Action.STORE_CLAIM: Category.INTEGRATIONS,
+        Action.STORE_DISCONNECT: Category.INTEGRATIONS,
+        Action.STORE_UPDATE: Category.INTEGRATIONS,
+        Action.PRIVACY_STORE_REDACT: Category.INTEGRATIONS,
+        Action.PRIVACY_CUSTOMER_REDACT: Category.INTEGRATIONS,
+        Action.PRIVACY_DATA_REQUEST: Category.INTEGRATIONS,
+    }
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_entries",
+    )
+    # Snapshot del email al momento del evento: el registro sigue siendo
+    # legible aunque la cuenta cambie de email o el actor se borre (actor
+    # queda null por el SET_NULL). En eventos sin actor autenticado (login
+    # fallido) guarda el email intentado.
+    actor_email = models.CharField(max_length=254, blank=True, default="")
+
+    category = models.CharField(max_length=20, choices=Category.choices)
+    action = models.CharField(max_length=40, choices=Action.choices)
+
+    target_type = models.CharField(max_length=50, blank=True, default="")
+    # CharField (no IntegerField): los ids de Group (roles) también entran acá.
+    target_id = models.CharField(max_length=64, blank=True, default="")
+    target_repr = models.CharField(max_length=255, blank=True, default="")
+
+    # Diff {"campo": {"from": ..., "to": ...}}. Nunca contraseñas/hashes/
+    # tokens: si el campo es sensible se registra el nombre con "***".
+    changes = models.JSONField(default=dict, blank=True)
+
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "registro de auditoría"
+        verbose_name_plural = "registros de auditoría"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["-created_at"]),
+            models.Index(fields=["category"]),
+            models.Index(fields=["actor"]),
+        ]
+
+    def __str__(self):
+        return f"{self.action} ({self.actor_email or 'sistema'})"
+
+    def save(self, *args, **kwargs):
+        # Inmutable: solo se permite el INSERT inicial (pk todavía None).
+        if self.pk is not None:
+            raise ValueError(
+                "AuditLog es inmutable: no se puede modificar un registro existente."
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("AuditLog es inmutable: no se puede eliminar un registro.")

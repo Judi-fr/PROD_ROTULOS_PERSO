@@ -1,0 +1,215 @@
+:root {
+  --bg: #f5f7fb;
+  --card: #ffffff;
+  --border: #e7eaf1;
+  --text-dark: #0f172a;
+  --text-muted: #64748b;
+  --blue: #f97316;
+  --blue-light: #ffedd5;
+}
+
+/* TOPBAR */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 28px;
+  gap: 16px;
+}
+
+.btn {
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* base.css ya define .btn-outline, pero se carga ANTES que esta hoja: el .btn
+   de acá arriba le pisa el borde (y el fondo, donde lo define) con su shorthand.
+   Se repite para que el botón conserve borde y fondo propios. */
+.btn-outline {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-dark);
+}
+
+/* MAIN */
+.main {
+  flex: 1;
+  padding: 32px 28px 48px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.page-message.error {
+  background: #fdeeee;
+  color: #dc2626;
+  border: 1px solid #f6c9c9;
+}
+
+.page-message.success {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+/* CARDS */
+.profile-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 22px;
+  overflow: hidden;
+}
+
+.profile-card-title {
+  font-weight: 700;
+  font-size: 15.5px;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.field input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text-dark);
+  background: #fff;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--blue);
+}
+
+.field-static {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-dark);
+  font-size: 14px;
+}
+
+.form-message {
+  font-size: 13.5px;
+  margin: 4px 0 0;
+}
+
+.profile-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+@media (max-width: 640px) {
+
+}
+
+/* Mis mensajes (ayuda.html): lista de mensajes propios enviados a soporte,
+   con su estado y, cuando existe, la respuesta del admin. */
+.loading-text {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  margin: 0;
+}
+
+.support-msg-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.support-msg-item:last-child {
+  margin-bottom: 0;
+}
+
+.support-msg-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.support-msg-subject {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.support-msg-date {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.support-msg-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.support-msg-status.pending {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.support-msg-status.in_progress {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+.support-msg-status.resolved {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.support-msg-body {
+  font-size: 13.5px;
+  color: var(--text-dark);
+  white-space: pre-wrap;
+  margin: 0 0 8px;
+}
+
+.support-msg-response {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  white-space: pre-wrap;
+}
+
+.support-msg-response-label {
+  font-weight: 700;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}

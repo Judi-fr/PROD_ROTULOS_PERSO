@@ -1,0 +1,111 @@
+"""Serializers de documentos.
+
+Todos son de solo lectura: un ``Document`` no se crea ni edita a mano
+desde esta app — lo crea/actualiza el proceso que lo genera (hoy,
+``apps.labels.batch_views``); acá solo se lista, se descarga o se
+soft-borra (ver ``views.py``).
+"""
+
+from __future__ import annotations
+
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import serializers
+
+from .models import Document, UploadedLabelFile, validar_archivo
+
+
+class DocumentSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    file_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Document
+        fields = [
+            "id",
+            "name",
+            "kind",
+            "kind_label",
+            "status",
+            "status_label",
+            "file_name",
+            "item_count",
+            "size_bytes",
+            "error_message",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_file_name(self, obj):
+        if not obj.file:
+            return None
+        return obj.file.name.rsplit("/", 1)[-1]
+
+
+class AdminDocumentSerializer(DocumentSerializer):
+    """Lectura de documentos de TODOS los usuarios (panel admin,
+    ``documents.view_all``). Mismo criterio que ``AdminLabelSerializer``."""
+
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta(DocumentSerializer.Meta):
+        fields = ["id", "user", "user_email"] + [
+            f for f in DocumentSerializer.Meta.fields if f != "id"
+        ]
+        read_only_fields = fields
+
+class UploadedLabelFileSerializer(serializers.ModelSerializer):
+    """Un archivo fuente subido (para importar), distinto de ``Document``.
+
+    Todo lo que describe al archivo (``mime_type``, ``size_bytes``,
+    ``original_filename``) es de solo lectura y se deriva del contenido en
+    ``validate_file``: aceptarlos del cuerpo permitiría que el cliente
+    declare un tipo que no se corresponde con lo que mandó.
+    """
+
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UploadedLabelFile
+        fields = [
+            "id",
+            "file",
+            "file_url",
+            "original_filename",
+            "mime_type",
+            "size_bytes",
+            "uploaded_by",
+            "uploaded_at",
+        ]
+        read_only_fields = [
+            "id",
+            "file_url",
+            "original_filename",
+            "mime_type",
+            "size_bytes",
+            "uploaded_by",
+            "uploaded_at",
+        ]
+
+    def get_file_url(self, obj):
+        """URL absoluta del archivo, para que el frontend pueda previsualizarlo."""
+        if not obj.file:
+            return None
+        peticion = self.context.get("request")
+        url = obj.file.url
+        return peticion.build_absolute_uri(url) if peticion else url
+
+    def validate_file(self, file):
+        try:
+            validar_archivo(file)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return file
+
+    def create(self, validated_data):
+        file = validated_data["file"]
+        validated_data["mime_type"] = validar_archivo(file)
+        validated_data["original_filename"] = file.name[:255]
+        validated_data["size_bytes"] = file.size
+        return super().create(validated_data)

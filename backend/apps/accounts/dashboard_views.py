@@ -1,0 +1,198 @@
+"""Dashboard (menú) del usuario autenticado.
+
+Pantalla de aterrizaje para usuarios no administradores: la identidad sale
+siempre de ``request.user`` (JWT) y el menú se arma en el backend según el
+rol efectivo, para que el frontend no tenga que decidir qué ítems mostrar
+por rol.
+
+    GET /api/v1/auth/users/me/dashboard/
+"""
+
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .permissions_map import get_effective_role, user_has_permission
+
+
+class DashboardView(APIView):
+    """GET ``/api/v1/auth/users/me/dashboard/``
+
+    No recibe ningún id por parámetro: siempre responde sobre
+    ``request.user``, así que un usuario nunca puede pedir el dashboard (ni
+    filtrar datos) de otra cuenta por esta vía.
+
+    El ítem "users" (gestión de usuarios) solo se agrega al menú si el rol
+    efectivo es ``admin``. Las secciones que todavía no tienen pantalla
+    propia (documents/processing) se devuelven con ``enabled: False`` y sin
+    URL en vez de omitirse o inventar una ruta que no existe.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        role = get_effective_role(user)
+        is_admin = role == "admin"
+
+        full_name = " ".join(filter(None, [user.first_name, user.last_name])).strip()
+
+        menu = []
+        if is_admin:
+            menu.append(
+                {
+                    "key": "users",
+                    "label": "Gestión de usuarios",
+                    "url": "gestionuser.html",
+                    "enabled": True,
+                }
+            )
+            menu.append(
+                {
+                    "key": "audit",
+                    "label": "Registros de auditoría",
+                    "url": "auditoria.html",
+                    "enabled": True,
+                }
+            )
+            menu.append(
+                {
+                    "key": "support_inbox",
+                    "label": "Mensajes de soporte",
+                    "url": "soporte_admin.html",
+                    "enabled": True,
+                }
+            )
+            menu.append(
+                {
+                    "key": "integrations",
+                    "label": "Integraciones",
+                    "url": "integraciones.html",
+                    "enabled": True,
+                }
+            )
+
+        # Carga operativa de pedidos (stories 20-22): alta manual + importación
+        # CSV/Excel + plantillas de mapeo. Va a admin y operator (mismos roles
+        # que "orders.create_manual"/"orders.import", ver permissions_map),
+        # NO a designer/subscriber -- ellos solo tienen el self-service de
+        # "orders"/"addresses" ya listado más abajo.
+        if is_admin or user_has_permission(user, "orders.create_manual"):
+            menu.append(
+                {
+                    "key": "orders_ingestion",
+                    "label": "Carga e importación de pedidos",
+                    "url": "importar.html",
+                    "enabled": True,
+                }
+            )
+
+        # Direcciones y pedidos: self-service, disponible para los cuatro
+        # roles (ver apps.orders y los permisos orders.*/addresses.manage).
+        # "Direcciones guardadas" reusa la misma pantalla (pedidos.html ya
+        # tiene su propia sección de direcciones): no hace falta una página
+        # nueva para lo que ya es un CRUD completo ahí.
+        # Tiendas online conectadas (apps.integrations): mismo permiso que
+        # exige la API para conectarlas.
+        if user_has_permission(user, "orders.create"):
+            menu.append(
+                {"key": "stores", "label": "Tiendas conectadas", "url": "tiendas.html", "enabled": True}
+            )
+            # Los rótulos que la tienda pidió desde SU panel: solo lectura,
+            # para ver por qué falló uno (ver apps.integrations.store_labels).
+            menu.append(
+                {
+                    "key": "store_labels",
+                    "label": "Rótulos de la tienda",
+                    "url": "rotulos_tienda.html",
+                    "enabled": True,
+                }
+            )
+            # La tabla CP -> precio con la que cotizamos el envío en el
+            # checkout de esa tienda (ver apps.integrations.shipping_rates).
+            menu.append(
+                {
+                    "key": "shipping_rates",
+                    "label": "Tarifas de envío",
+                    "url": "tarifas_envio.html",
+                    "enabled": True,
+                }
+            )
+        menu.append(
+            {"key": "orders", "label": "Mis pedidos", "url": "pedidos.html", "enabled": True}
+        )
+        # Imprimir los rótulos de varios pedidos de una (apps.labels batch):
+        # mismo permiso que exige LabelBatchView.
+        if user_has_permission(user, "labels.batch"):
+            menu.append(
+                {
+                    "key": "labels_print",
+                    "label": "Imprimir rótulos",
+                    "url": "imprimir_rotulos.html",
+                    "enabled": True,
+                }
+            )
+        # Las direcciones NO son una entrada aparte: pedidos.html ya tiene
+        # su propia sección con el CRUD completo, y listarlas también acá
+        # era ofrecer dos puertas al mismo lugar.
+        menu.extend(
+            [
+                {"key": "labels", "label": "Mis rótulos", "url": "mis_rotulos.html", "enabled": True},
+                {
+                    "key": "templates",
+                    "label": "Plantillas",
+                    "url": "mis_plantillas.html",
+                    "enabled": True,
+                },
+                {
+                    "key": "documents",
+                    "label": "Mis documentos",
+                    "url": "documentos.html",
+                    "enabled": True,
+                },
+            ]
+        )
+        # Leer un rótulo de papel con el modelo y proponer la plantilla
+        # (apps.processing). Se llamaba "Generar rótulo", que describía otra
+        # cosa —generar rótulos ya se hace en mis_rotulos.html— y encima
+        # estaba deshabilitado teniendo el backend listo.
+        if user_has_permission(user, "processing.import"):
+            menu.append(
+                {
+                    "key": "processing",
+                    "label": "Importar rótulo desde una foto",
+                    "url": "importar_rotulo.html",
+                    "enabled": True,
+                }
+            )
+        # Editor de los diseños por elementos (ElementLayout): lo que produce
+        # la importación se puede corregir a mano acá.
+        if user_has_permission(user, "plantillas.edit"):
+            menu.append(
+                {
+                    "key": "element_layouts",
+                    "label": "Editor de diseños",
+                    "url": "editor_layout.html",
+                    "enabled": True,
+                }
+            )
+        menu.extend(
+            [
+                {"key": "profile", "label": "Mi perfil", "url": "perfil.html", "enabled": True},
+                {"key": "support", "label": "Ayuda / Soporte", "url": "ayuda.html", "enabled": True},
+            ]
+        )
+
+        return Response(
+            {
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "username": user.username,
+                    "full_name": full_name or user.email,
+                    "role": role,
+                    "is_admin": is_admin,
+                },
+                "menu": menu,
+            }
+        )

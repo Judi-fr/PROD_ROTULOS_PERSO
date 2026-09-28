@@ -1,0 +1,40 @@
+# Entorno
+.env
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+
+# IDE / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Dependencias PHP del prototipo de login con Google (assets/apis/access.php).
+# Se regeneran con `composer install` desde composer.json/composer.lock: son
+# ~500 MB que no tienen por qué vivir en el repositorio.
+frontend/assets/apis/vendor/
+
+# Bases locales y sus copias de respaldo
+db.sqlite3*
+*.sqlite3
+*.bak
+
+# Configuración personal (shell, git, herramientas locales)
+.claude/settings.local.json
+.mcp.json
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.ripgreprc

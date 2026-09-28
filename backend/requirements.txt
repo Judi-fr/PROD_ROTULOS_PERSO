@@ -1,0 +1,22 @@
+Django==6.0.7
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.5.1
+django-cors-headers==4.9.0
+django-environ==0.14.0
+psycopg[binary]==3.3.4
+gunicorn==26.0.0
+google-auth==2.38.0
+requests==2.32.3
+Pillow==11.1.0
+reportlab==5.0.1
+openpyxl==3.1.5
+
+# Nuevas funcionalidades integradas desde backend_echu
+# Lectura de rótulos desde una foto (Claude/Anthropic)
+anthropic==0.76.0
+# Render de QR y códigos de barras para las plantillas nuevas
+qrcode==8.2
+python-barcode==0.16.1
+
+# Integración con tiendas online: cifrado de los tokens OAuth guardados
+cryptography==50.0.1

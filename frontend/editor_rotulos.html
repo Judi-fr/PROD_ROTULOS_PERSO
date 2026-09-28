@@ -1,0 +1,1893 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Diseño de Rótulos</title>
+
+    <!-- Sin librería de QR/códigos de barras por CDN: el QR y el código de
+         barras de acá abajo se piden como imagen al backend
+         (GET /api/v1/labels/barcode/, ver api.js/fetchCodePreview), que es
+         la MISMA implementación (ReportLab) que arma el rótulo definitivo
+         — así lo que se ve acá es exactamente lo que se va a imprimir. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/print.js"></script>
+
+    <!-- Estilos comunes del frontend (header/topbar, botones, avatar). Va
+         ANTES del <style> propio del editor para que este último (más
+         específico en orden de aparición) siga ganando en cualquier
+         selector compartido y el canvas no cambie ni un píxel. -->
+    <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/labels_shared.css" />
+
+    <style>
+      :root {
+        --accent: #7c5cff;
+        --dark: #1e1b2e;
+        --bg: #f4f3f9;
+        --border: #ddd8ee;
+        --text: #2c2840;
+        --muted: #8f89a8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      main {
+        flex: 1;
+        padding: 32px 40px;
+        max-width: 1100px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      /* Título de la página (no confundir con el header.topbar común, que
+         viene de labels_shared.css: acá era ".topbar" en la versión vieja con
+         sidebar, renombrado para no chocar con esa clase). */
+      .editor-heading h1 {
+        margin: 0 0 4px;
+        font-size: 24px;
+      }
+      .editor-heading .subtitle {
+        margin: 0 0 24px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      /* Enlace "Volver a mis rótulos" dentro de la barra de herramientas
+         del editor: mismo look que los <button> de acá al lado. */
+      .toolbar-link {
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        padding: 8px 14px;
+        border-radius: 7px;
+        font-size: 13px;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      .toolbar-link:hover {
+        border-color: var(--accent);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-bottom: 28px;
+      }
+      .tool-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .tool-group label {
+        font-size: 12px;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .tool-group input[type="number"] {
+        width: 60px;
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      button {
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        padding: 8px 14px;
+        border-radius: 7px;
+        font-size: 13px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-weight: 600;
+      }
+      button.primary:hover {
+        background: #6a4de8;
+      }
+
+      .canvas-wrap {
+        display: flex;
+        justify-content: center;
+        padding: 30px;
+        background: repeating-conic-gradient(#eceafb 0% 25%, #f4f3f9 0% 50%) 0
+          0 / 20px 20px;
+        border-radius: 12px;
+      }
+
+      .label {
+        position: relative;
+        background: #fff;
+        box-shadow: 0 4px 20px rgba(30, 27, 46, 0.15);
+        overflow: hidden;
+        /* width/height set dynamically in cm via JS */
+      }
+
+      /* Estas reglas están calibradas contra apps/labels/label_rendering.py
+         (draw_label_page). Tres detalles importan para que lo que se ve sea
+         lo que se imprime:
+         - sin padding ni border: left/top anclan el TEXTO, como hace
+           percent_to_canvas_xy; el recuadro punteado va por outline, que no
+           ocupa lugar;
+         - line-height 1: el render dibuja una línea a font_size del borde;
+         - sin envoltura: el render recorta con "…" (_truncate_to_width), no
+           pasa a la línea siguiente.
+         El tamaño de letra y el ancho los pone applyRenderMetrics() en JS,
+         porque dependen del tamaño del rótulo. */
+      .field {
+        position: absolute;
+        padding: 0;
+        outline: 1px dashed rgba(124, 92, 255, 0.5);
+        background: rgba(124, 92, 255, 0.06);
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: grab;
+      }
+      /* Mientras se escribe se muestra todo: recortar lo que el usuario está
+         tipeando sería pelear con él. Al salir del campo vuelve el "…", que
+         es lo que va a pasar en el papel. */
+      .field[contenteditable="true"]:focus {
+        overflow: visible;
+        text-overflow: clip;
+        z-index: 40;
+      }
+      /* Capa de decoraciones: se ve, no se toca (el editor todavía no las
+         edita). pointer-events none para no robarle el arrastre a los campos. */
+      .preview-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 200;
+        padding: 20px;
+      }
+      .preview-overlay[hidden] {
+        display: none;
+      }
+      .preview-dialog {
+        background: #fff;
+        border-radius: 12px;
+        width: min(760px, 100%);
+        height: min(85vh, 900px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .preview-dialog-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid #e7eaf1;
+        flex-wrap: wrap;
+      }
+      .preview-dialog-head button {
+        margin-left: auto;
+      }
+      #serverPreviewFrame {
+        flex: 1;
+        width: 100%;
+        border: 0;
+      }
+
+      .decoration-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 1;
+      }
+      .deco-border {
+        position: absolute;
+        border-color: #111;
+      }
+      .deco-line {
+        position: absolute;
+        border-top-width: 1px;
+        border-top-color: #111;
+      }
+      .deco-text {
+        position: absolute;
+        line-height: 1;
+        white-space: nowrap;
+        color: #111;
+      }
+      /* La capa entera era pointer-events:none porque solo se miraba. Ahora
+         las líneas y los textos se seleccionan y se arrastran, así que ellos
+         (y solo ellos: el recuadro no se mueve, el render lo fija) vuelven a
+         recibir el puntero. */
+      .deco-line,
+      .deco-text {
+        pointer-events: auto;
+        cursor: grab;
+      }
+      /* Una línea de 0.6 pt es casi imposible de agarrar con el mouse: el
+         área sensible se agranda con un pseudo-elemento sin mover el pixel
+         que se ve, que es el que tiene que coincidir con el PDF. */
+      .deco-line::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: -5px;
+        bottom: -5px;
+      }
+      .deco-line.selected,
+      .deco-text.selected {
+        outline: 1px dashed var(--accent);
+        outline-offset: 2px;
+      }
+
+      .field:focus {
+        outline-color: var(--accent);
+        background: rgba(124, 92, 255, 0.1);
+      }
+      .field.dragging {
+        cursor: grabbing;
+        opacity: 0.85;
+        z-index: 50;
+        user-select: none;
+      }
+
+      #logoField {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .logo-placeholder {
+        font-size: 10px;
+        color: var(--muted);
+        text-align: center;
+        padding: 4px;
+      }
+      #logoImg {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      #qrField {
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #qrImg {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      #barcodeField {
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #barcodeImg {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      /* Barra de configuración del código seleccionado (QR/código de
+         barras): mismo look que el resto de la toolbar. */
+      .code-config-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      /* Estado limpio para exportar: sin bordes punteados ni fondos guía */
+      .label.exporting .field {
+        border-color: transparent;
+        background: transparent;
+      }
+
+      .hint {
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--muted);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
+    <header class="topbar" id="appTopbar" data-links='[{"href": "mis_rotulos.html", "label": "Volver a mis rótulos"}]'></header>
+
+    <script>
+      // Header común (avatar/nombre/email desde localStorage.user + logout),
+      // igual patrón que el resto del frontend (ver saved_labels.js/ayuda.js).
+      // Sesión y logout salen de assets/js/auth.js (window.Auth). Guard de
+      // sesión antes de pintar nada más.
+      (function () {
+        if (!window.Auth.getAccessToken()) {
+          window.location.replace("index.html");
+          return;
+        }
+
+        const user = window.Auth.getCurrentUser();
+        const email = user.email || "";
+        const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || email || "Usuario";
+        const nameEl = document.getElementById("userName");
+        const emailEl = document.getElementById("userEmail");
+        const avatarEl = document.getElementById("userAvatar");
+        if (nameEl) nameEl.textContent = name;
+        if (emailEl) emailEl.textContent = email || "—";
+        if (avatarEl) {
+          avatarEl.src = user.picture
+            ? user.picture
+            : `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email || "user")}`;
+        }
+
+        document.getElementById("logoutBtn")?.addEventListener("click", () => window.Auth.logout());
+      })();
+    </script>
+
+    <main>
+      <div class="editor-heading">
+        <h1>Diseño de Rótulos</h1>
+        <p class="subtitle">
+          Arrastrá cada dato a donde lo necesites en el rótulo. Hacé clic sobre
+          un texto para editarlo, o sobre el QR/código de barras para
+          configurarlos.
+        </p>
+      </div>
+
+      <div class="toolbar">
+        <div class="tool-group">
+          <a class="toolbar-link" href="mis_rotulos.html">← Mis rótulos</a>
+        </div>
+        <div class="tool-group" id="codeConfigGroup" hidden>
+          <span class="code-config-label"
+            >Código: <strong id="codeConfigTitle">QR</strong></span
+          >
+          <label id="codeSizeLabel">
+            Tamaño (cm)
+            <input
+              type="number"
+              id="codeSizeInput"
+              min="1"
+              max="10"
+              step="0.5"
+              style="width: 60px"
+            />
+          </label>
+          <label id="codeWidthLabel" hidden>
+            Ancho (cm)
+            <input
+              type="number"
+              id="codeWidthInput"
+              min="2"
+              max="20"
+              step="0.5"
+              style="width: 60px"
+            />
+          </label>
+          <label id="codeHeightLabel" hidden>
+            Alto (cm)
+            <input
+              type="number"
+              id="codeHeightInput"
+              min="0.5"
+              max="5"
+              step="0.1"
+              style="width: 60px"
+            />
+          </label>
+          <label id="codeSymbologyLabel" hidden>
+            Simbología
+            <select id="codeSymbologySelect">
+              <option value="code128">Code128</option>
+              <option value="ean13">EAN-13</option>
+            </select>
+          </label>
+          <label id="codeShowTextLabel" hidden>
+            <input type="checkbox" id="codeShowTextInput" />
+            Mostrar texto
+          </label>
+          <label
+            >Contenido
+            <input type="text" id="codeDataInput" style="width: 190px" />
+          </label>
+          <label
+            >Insertar marcador
+            <select id="codeMarkerSelect">
+              <option value="">— elegir —</option>
+              <option value="remitente">Remitente</option>
+              <option value="destinatario">Destinatario</option>
+              <option value="domicilio">Domicilio</option>
+              <option value="cp">CP</option>
+              <option value="localidad">Localidad</option>
+              <option value="pedido">N° de pedido</option>
+              <option value="tracking">Código de seguimiento</option>
+              <option value="tracking_url">URL de seguimiento</option>
+            </select>
+          </label>
+        </div>
+
+        <!-- Propiedades del campo de texto seleccionado. Mismo patrón que el
+             panel del QR/código de barras de acá arriba: se elige el elemento
+             en el lienzo y su configuración aparece acá. Estos estilos ya los
+             dibujaba el lienzo y los aplicaba el render; lo que faltaba era
+             poder editarlos sin tocar la base. -->
+        <div class="tool-group" id="fieldPropsGroup" hidden>
+          <span class="code-config-label"
+            >Campo: <strong id="fieldPropsTitle"></strong></span
+          >
+          <label>
+            Tamaño (pt)
+            <input
+              type="number"
+              id="propFontSize"
+              min="6"
+              max="72"
+              step="0.5"
+              placeholder="auto"
+              style="width: 70px"
+            />
+          </label>
+          <label>
+            <input type="checkbox" id="propBold" />
+            Negrita
+          </label>
+          <label>
+            Alineación
+            <select id="propAlign">
+              <option value="left">Izquierda</option>
+              <option value="center">Centro</option>
+              <option value="right">Derecha</option>
+            </select>
+          </label>
+          <label>
+            Ancho (%)
+            <input
+              type="number"
+              id="propWidth"
+              min="5"
+              max="100"
+              step="1"
+              placeholder="hasta el borde"
+              style="width: 80px"
+            />
+          </label>
+          <label title="Si todos sus datos vienen vacíos, no se imprime nada (ni la etiqueta)">
+            <input type="checkbox" id="propHideIfEmpty" />
+            Ocultar si queda vacío
+          </label>
+          <label title="Antes de recortar con puntos suspensivos, achica la letra hasta 6 pt">
+            <input type="checkbox" id="propShrink" />
+            Achicar para que entre
+          </label>
+        </div>
+        <!-- Decoraciones: recuadro de corte, líneas separadoras y textos
+             fijos. El render las dibujaba desde siempre y el editor pasó a
+             mostrarlas; esto es lo que faltaba para poder crearlas. -->
+        <div class="tool-group" id="decoGroup">
+          <span class="code-config-label">Decoraciones</span>
+          <label title="Marco de corte a 0,2 cm del borde, como lo dibuja el render">
+            <input type="checkbox" id="decoBorder" />
+            Recuadro
+          </label>
+          <label>
+            <input type="checkbox" id="decoBorderDashed" />
+            Punteado
+          </label>
+          <button type="button" class="btn btn-outline" id="addLineBtn">
+            + Línea
+          </button>
+          <button type="button" class="btn btn-outline" id="addDecoTextBtn">
+            + Texto fijo
+          </button>
+        </div>
+
+        <!-- Propiedades de la línea o el texto fijo seleccionado. Mismo patrón
+             que los dos paneles de arriba: se elige en el lienzo y aparece. -->
+        <div class="tool-group" id="decoPropsGroup" hidden>
+          <span class="code-config-label"
+            >Seleccionado: <strong id="decoPropsTitle"></strong></span
+          >
+          <label id="decoTextLabel" hidden>
+            Contenido
+            <input type="text" id="decoText" style="width: 190px" />
+          </label>
+          <label id="decoFontSizeLabel" hidden>
+            Tamaño (pt)
+            <input
+              type="number"
+              id="decoFontSize"
+              min="6"
+              max="72"
+              step="0.5"
+              placeholder="auto"
+              style="width: 70px"
+            />
+          </label>
+          <label id="decoBoldLabel" hidden>
+            <input type="checkbox" id="decoBold" />
+            Negrita
+          </label>
+          <label id="decoAlignLabel" hidden>
+            Alineación
+            <select id="decoAlign">
+              <option value="left">Izquierda</option>
+              <option value="center">Centro</option>
+              <option value="right">Derecha</option>
+            </select>
+          </label>
+          <label id="decoLeftLabel" hidden>
+            Desde (%)
+            <input type="number" id="decoLeft" min="0" max="100" step="1" style="width: 70px" />
+          </label>
+          <label id="decoRightLabel" hidden>
+            Hasta (%)
+            <input type="number" id="decoRight" min="0" max="100" step="1" style="width: 70px" />
+          </label>
+          <label id="decoDashedLabel" hidden>
+            <input type="checkbox" id="decoDashed" />
+            Punteada
+          </label>
+          <button type="button" class="btn btn-outline" id="decoDeleteBtn">
+            Eliminar
+          </button>
+        </div>
+
+        <div class="tool-group">
+          <label
+            >Nombre
+            <input
+              type="text"
+              id="nombreInput"
+              placeholder="Rótulo sin nombre"
+              style="width: 160px"
+          /></label>
+        </div>
+        <div class="tool-group">
+          <label
+            >Ancho
+            <input
+              type="number"
+              id="widthCm"
+              value="10"
+              min="5"
+              max="30"
+              step="0.5"
+            />
+            cm</label
+          >
+          <label
+            >Alto
+            <input
+              type="number"
+              id="heightCm"
+              value="15"
+              min="5"
+              max="40"
+              step="0.5"
+            />
+            cm</label
+          >
+        </div>
+        <div class="tool-group">
+          <button id="uploadLogoBtn">Subir logo</button>
+          <input type="file" id="logoInput" accept="image/*" hidden />
+          <button id="resetBtn">Restablecer posiciones</button>
+        </div>
+        <div class="tool-group">
+          <button id="saveBtn" class="primary">Guardar rótulo</button>
+          <button id="saveAsTemplateBtn">Guardar como plantilla</button>
+          <button id="previewServerBtn" title="Muestra el PDF que genera el servidor, que es lo que sale impreso">
+            Ver cómo sale impreso
+          </button>
+          <button id="exportPngBtn">Exportar PNG</button>
+          <button id="exportPdfBtn">Exportar PDF</button>
+          <!-- Vista previa rápida (arriba) vs. rótulo definitivo (acá): el
+               PNG/PDF de arriba los arma html2canvas sobre lo que se ve en
+               pantalla; este lo arma el backend con ReportLab a partir de
+               los datos guardados, es el que va a imprenta. Por eso exige
+               que el rótulo ya esté guardado (necesita un id). -->
+          <button id="exportServerPdfBtn" title="Guardá el rótulo primero para poder descargar el PDF del servidor">
+            Descargar PDF (servidor)
+          </button>
+          <button id="printBtn" title="Guardá el rótulo primero para poder imprimirlo">
+            Imprimir
+          </button>
+        </div>
+      </div>
+      <p id="saveStatus" class="hint" style="display: none"></p>
+
+      <div class="canvas-wrap">
+        <div id="label" class="label">
+          <div class="field" data-field="logo" id="logoField">
+            <div class="logo-placeholder" id="logoPlaceholder">+ Logo</div>
+            <img id="logoImg" style="display: none" alt="Logo" />
+          </div>
+
+          <div class="field" data-field="qr" id="qrField">
+            <img id="qrImg" alt="QR" />
+          </div>
+
+          <div class="field" data-field="barcode" id="barcodeField">
+            <img id="barcodeImg" alt="Código de barras" />
+          </div>
+
+          <div class="field" data-field="remitente" contenteditable="true">
+            Remitente: Juan Pérez
+          </div>
+          <div class="field" data-field="destinatario" contenteditable="true">
+            Destinatario: María Gómez
+          </div>
+          <div class="field" data-field="domicilio" contenteditable="true">
+            Domicilio: Av. Siempre Viva 742
+          </div>
+          <div class="field" data-field="cp" contenteditable="true">
+            CP: 1000
+          </div>
+          <div class="field" data-field="localidad" contenteditable="true">
+            Localidad/Provincia: CABA, Bs. As.
+          </div>
+          <div
+            class="field"
+            data-field="pedido"
+            id="pedidoField"
+            contenteditable="true"
+          >
+            N° de Pedido: 000123
+          </div>
+        </div>
+      </div>
+
+      <p class="hint">
+        Los campos se guardan en % del rótulo, así que si cambiás el tamaño, la
+        posición relativa se mantiene.
+      </p>
+    </main>
+
+    <div class="preview-overlay" id="serverPreviewOverlay" hidden>
+      <div class="preview-dialog">
+        <div class="preview-dialog-head">
+          <strong>Así sale impreso</strong>
+          <span class="hint">Generado por el servidor, con datos de muestra</span>
+          <button id="closeServerPreviewBtn">Cerrar</button>
+        </div>
+        <iframe id="serverPreviewFrame" title="Vista previa del rótulo"></iframe>
+      </div>
+    </div>
+
+    <script>
+      const label = document.getElementById("label");
+      const widthCmInput = document.getElementById("widthCm");
+      const heightCmInput = document.getElementById("heightCm");
+
+      // Posiciones por defecto (en % del rótulo) para un formato vertical típico
+      const DEFAULT_POSITIONS = {
+        logo: { left: 6, top: 5 },
+        qr: { left: 68, top: 5 },
+        barcode: { left: 6, top: 78 },
+        remitente: { left: 6, top: 22 },
+        destinatario: { left: 6, top: 38 },
+        domicilio: { left: 6, top: 47 },
+        cp: { left: 6, top: 56 },
+        localidad: { left: 6, top: 63 },
+        pedido: { left: 6, top: 88 },
+      };
+
+      function applyDefaultPositions() {
+        document.querySelectorAll(".field").forEach((el) => {
+          const pos = DEFAULT_POSITIONS[el.dataset.field];
+          if (pos) {
+            el.style.left = pos.left + "%";
+            el.style.top = pos.top + "%";
+          }
+        });
+      }
+      applyDefaultPositions();
+
+      // --- Espejo de apps/labels/label_rendering.py ------------------------
+      // El lienzo dibuja con CSS y el papel lo dibuja ReportLab. Para que
+      // coincidan, estas constantes y fórmulas son las MISMAS que las del
+      // render; si allá cambian, acá también. La verdad final igual la da el
+      // botón "Ver cómo sale impreso", que pide el render de verdad.
+      const TEXT_FIELDS = [
+        "remitente",
+        "destinatario",
+        "domicilio",
+        "cp",
+        "localidad",
+        "pedido",
+      ];
+
+      // Configuración del QR/código de barras. Vive en el script clásico
+      // (y no en el módulo) porque applyRenderMetrics necesita los tamaños
+      // para dibujar el lienzo a escala; el módulo la sigue leyendo y
+      // mutando, que es la dirección que sí funciona entre los dos ámbitos.
+      const CODE_DEFAULTS = {
+        qr: { size: 3, data: "{{tracking_url}}" },
+        barcode: {
+          width: 8,
+          height: 1.5,
+          symbology: "code128",
+          data: "{{tracking}}",
+          show_text: true,
+        },
+      };
+      const codeConfig = {
+        qr: { ...CODE_DEFAULTS.qr },
+        barcode: { ...CODE_DEFAULTS.barcode },
+      };
+
+      // Estilos por campo del diseño cargado (font_size, bold, align,
+      // width, hide_if_empty). El editor todavía no los edita, pero ahora
+      // al menos los DIBUJA: antes un diseño con "bold" o "font_size" se
+      // veía igual que uno sin ellos y salía distinto impreso.
+      let fieldStyles = {};
+
+      const CM_TO_POINTS = 72 / 2.54;
+      const MIN_FONT_SIZE_PT = 6; // max(6.0, ...) en draw_label_page
+      const FONT_SIZE_RATIO = 0.035; // height_pt * 0.035
+      const LOGO_BOX_RATIO = 0.22; // _box_size_cm: min(w,h) * 0.22
+      const LOGO_BOX_MIN_CM = 1.0;
+      const DEFAULT_QR_SIZE_CM = 3.0;
+      const DEFAULT_BARCODE_WIDTH_CM = 8.0;
+      const DEFAULT_BARCODE_HEIGHT_CM = 1.5;
+
+      function labelSizeCm() {
+        return {
+          widthCm: parseFloat(widthCmInput.value) || 10,
+          heightCm: parseFloat(heightCmInput.value) || 15,
+        };
+      }
+
+      // Píxeles por centímetro REALES del lienzo: se mide en vez de asumir
+      // 96 dpi, así el cálculo aguanta el zoom del navegador.
+      function pxPerCm() {
+        const { widthCm } = labelSizeCm();
+        const measured = label.getBoundingClientRect().width;
+        return measured > 0 ? measured / widthCm : 37.795;
+      }
+
+      // _fit_size_cm: achica proporcionalmente para que entre, nunca estira.
+      function fitCm(wCm, hCm, availWCm, availHCm) {
+        const scale = Math.min(
+          1,
+          wCm ? availWCm / wCm : 1,
+          hCm ? availHCm / hCm : 1,
+        );
+        return [wCm * scale, hCm * scale];
+      }
+
+      function fieldPercent(key, side) {
+        const el = document.querySelector(`.field[data-field="${key}"]`);
+        return parseFloat(el && el.style[side]) || 0;
+      }
+
+      // Aplica al lienzo las medidas con las que va a imprimir el backend.
+      function applyRenderMetrics() {
+        const { widthCm, heightCm } = labelSizeCm();
+        const perCm = pxPerCm();
+
+        // Tamaño de letra proporcional al alto del rótulo.
+        const fontPt = Math.max(
+          MIN_FONT_SIZE_PT,
+          heightCm * CM_TO_POINTS * FONT_SIZE_RATIO,
+        );
+        const fontPx = (fontPt / 72) * 2.54 * perCm;
+        document.querySelectorAll(".field").forEach((el) => {
+          const key = el.dataset.field;
+          if (!TEXT_FIELDS.includes(key)) return;
+          const style = (fieldStyles && fieldStyles[key]) || {};
+          const ownPt = parseFloat(style.font_size);
+          el.style.fontSize =
+            ((ownPt > 0 ? ownPt : fontPt) / 72) * 2.54 * perCm + "px";
+          el.style.fontWeight = style.bold ? "700" : "400";
+          el.style.textAlign = style.align || "left";
+          // El render mide el ancho desde la X del campo hasta el borde
+          // derecho, salvo que el diseño acote con "width" (en %).
+          const left = parseFloat(el.style.left) || 0;
+          el.style.width =
+            style.width != null
+              ? Math.min(parseFloat(style.width), 100 - left) + "%"
+              : 100 - left + "%";
+        });
+
+        // Logo: caja cuadrada proporcional al lado más corto.
+        const logoCm = Math.max(LOGO_BOX_MIN_CM, Math.min(widthCm, heightCm) * LOGO_BOX_RATIO);
+        const logoField = document.getElementById("logoField");
+        logoField.style.width = logoCm * perCm + "px";
+        logoField.style.height = logoCm * perCm + "px";
+
+        // QR: tamaño del diseño (default 3 cm), achicado si no entra.
+        const qrCm = parseFloat((codeConfig.qr && codeConfig.qr.size) || DEFAULT_QR_SIZE_CM);
+        const qrLeft = fieldPercent("qr", "left");
+        const qrTop = fieldPercent("qr", "top");
+        const [qrFit] = fitCm(
+          qrCm,
+          qrCm,
+          widthCm * (1 - qrLeft / 100),
+          heightCm * (1 - qrTop / 100),
+        );
+        const qrField = document.getElementById("qrField");
+        qrField.style.width = qrFit * perCm + "px";
+        qrField.style.height = qrFit * perCm + "px";
+
+        // Código de barras: 8 x 1,5 cm por defecto, también achicado si no entra.
+        const barcode = codeConfig.barcode || {};
+        const bcLeft = fieldPercent("barcode", "left");
+        const bcTop = fieldPercent("barcode", "top");
+        const [bcW, bcH] = fitCm(
+          parseFloat(barcode.width) || DEFAULT_BARCODE_WIDTH_CM,
+          parseFloat(barcode.height) || DEFAULT_BARCODE_HEIGHT_CM,
+          widthCm * (1 - bcLeft / 100),
+          heightCm * (1 - bcTop / 100),
+        );
+        const barcodeField = document.getElementById("barcodeField");
+        barcodeField.style.width = bcW * perCm + "px";
+        barcodeField.style.height = bcH * perCm + "px";
+
+        renderDecorations(perCm, widthCm, heightCm, fontPt);
+      }
+
+      // Decoraciones del diseño: recuadro, líneas y textos fijos. El backend
+      // las dibuja (_draw_decorations) y el editor no las dibujaba NUNCA, así
+      // que la plantilla del sistema salía impresa con un marco, rayas y
+      // textos que no estaban en pantalla. Ahora además se editan: se crean
+      // desde la barra, se arrastran y se configuran en decoPropsGroup.
+      let decorations = { border: null, lines: null, texts: null };
+
+      // Las mismas constantes que label_rendering.py. El editor dibujaba el
+      // recuadro con un `margin` y un `width` propios y las líneas con
+      // `width`/`thickness`, claves que el render IGNORA: usa un inset fijo,
+      // setLineWidth(0.6) y `left`/`right`. La pantalla prometía una cosa y
+      // el PDF hacía otra. Si estas cambian allá, cambian acá.
+      const BORDER_INSET_CM = 0.2;
+      const DECO_LINE_WIDTH_PT = 0.6;
+      const LINE_DEFAULT_LEFT = 4;
+      const LINE_DEFAULT_RIGHT = 96;
+
+      // {type: "line"|"text", index} del elemento elegido, o null.
+      let selectedDeco = null;
+
+      function ptToPx(pt, perCm) {
+        return (pt / 72) * 2.54 * perCm;
+      }
+
+      function renderDecorations(perCm, widthCm, heightCm, defaultFontPt) {
+        document.getElementById("decorationLayer")?.remove();
+        const layer = document.createElement("div");
+        layer.id = "decorationLayer";
+        layer.className = "decoration-layer";
+
+        const border = decorations.border;
+        if (border) {
+          const box = document.createElement("div");
+          box.className = "deco-border";
+          // Inset fijo en cm, no un porcentaje: el render usa BORDER_INSET_CM
+          // y por eso el marco no se escala con el tamaño del rótulo.
+          box.style.inset = BORDER_INSET_CM * perCm + "px";
+          box.style.borderWidth = ptToPx(DECO_LINE_WIDTH_PT, perCm) + "px";
+          box.style.borderStyle = border.dashed ? "dashed" : "solid";
+          layer.appendChild(box);
+        }
+
+        (decorations.lines || []).forEach((line, index) => {
+          const el = document.createElement("div");
+          el.className = "deco-line";
+          const left = line.left != null ? parseFloat(line.left) : LINE_DEFAULT_LEFT;
+          const right = line.right != null ? parseFloat(line.right) : LINE_DEFAULT_RIGHT;
+          el.style.left = left + "%";
+          el.style.top = (parseFloat(line.top) || 0) + "%";
+          el.style.width = Math.max(0, right - left) + "%";
+          el.style.borderTopWidth = ptToPx(DECO_LINE_WIDTH_PT, perCm) + "px";
+          el.style.borderTopStyle = line.dashed ? "dashed" : "solid";
+          if (selectedDeco?.type === "line" && selectedDeco.index === index) {
+            el.classList.add("selected");
+          }
+          attachDecoPointer(el, "line", index);
+          layer.appendChild(el);
+        });
+
+        (decorations.texts || []).forEach((item, index) => {
+          const el = document.createElement("div");
+          el.className = "deco-text";
+          el.style.left = (parseFloat(item.left) || 0) + "%";
+          el.style.top = (parseFloat(item.top) || 0) + "%";
+          const pt = parseFloat(item.font_size) || defaultFontPt;
+          el.style.fontSize = ptToPx(pt, perCm) + "px";
+          el.style.fontWeight = item.bold ? "700" : "400";
+          el.style.textAlign = item.align || "left";
+          el.textContent = item.text || "";
+          if (selectedDeco?.type === "text" && selectedDeco.index === index) {
+            el.classList.add("selected");
+          }
+          attachDecoPointer(el, "text", index);
+          layer.appendChild(el);
+        });
+
+        label.appendChild(layer);
+      }
+
+      // --- Seleccionar y arrastrar decoraciones --------------------------
+      // Aparte del arrastre de los campos: aquel mueve el elemento del DOM y
+      // lo lee al guardar; acá el dato manda, se escribe en `decorations` y
+      // se vuelve a dibujar. El DOM de la capa se regenera en cada render, así
+      // que guardar la posición en el estilo se perdería.
+      let activeDeco = null,
+        decoStartX = 0,
+        decoStartY = 0,
+        decoStartLeft = 0,
+        decoStartTop = 0;
+
+      function attachDecoPointer(el, type, index) {
+        el.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+          selectDeco(type, index);
+          const entry = decorations[type === "line" ? "lines" : "texts"][index];
+          activeDeco = { type, index };
+          decoStartX = event.clientX;
+          decoStartY = event.clientY;
+          decoStartLeft = parseFloat(entry.left) || 0;
+          decoStartTop = parseFloat(entry.top) || 0;
+        });
+      }
+
+      document.addEventListener("pointermove", (event) => {
+        if (!activeDeco) return;
+        const rect = label.getBoundingClientRect();
+        const entry =
+          decorations[activeDeco.type === "line" ? "lines" : "texts"][activeDeco.index];
+        if (!entry) return;
+
+        const dyPct = ((event.clientY - decoStartY) / rect.height) * 100;
+        entry.top = Math.max(0, Math.min(100, decoStartTop + dyPct));
+
+        if (activeDeco.type === "line") {
+          // Una línea separadora se mueve solo en vertical: su extensión
+          // horizontal son `left`/`right`, que se editan con números para que
+          // dos líneas queden alineadas de verdad y no "casi".
+          const width = (parseFloat(entry.right) || LINE_DEFAULT_RIGHT) -
+            (parseFloat(entry.left) || LINE_DEFAULT_LEFT);
+          const dxPct = ((event.clientX - decoStartX) / rect.width) * 100;
+          const newLeft = Math.max(0, Math.min(100 - width, decoStartLeft + dxPct));
+          entry.left = newLeft;
+          entry.right = newLeft + width;
+        } else {
+          const dxPct = ((event.clientX - decoStartX) / rect.width) * 100;
+          entry.left = Math.max(0, Math.min(100, decoStartLeft + dxPct));
+        }
+        applyRenderMetrics();
+      });
+
+      document.addEventListener("pointerup", () => {
+        if (!activeDeco) return;
+        activeDeco = null;
+        // El panel muestra los valores redondeados de la posición nueva.
+        refreshDecoPanel();
+      });
+
+      // Un click en el lienzo, fuera de una decoración, deselecciona.
+      label.addEventListener("pointerdown", () => selectDeco(null));
+
+      function updateLabelSize() {
+        label.style.width = (parseFloat(widthCmInput.value) || 10) + "cm";
+        label.style.height = (parseFloat(heightCmInput.value) || 15) + "cm";
+        applyRenderMetrics();
+      }
+      updateLabelSize();
+      widthCmInput.addEventListener("input", updateLabelSize);
+      heightCmInput.addEventListener("input", updateLabelSize);
+
+      document
+        .getElementById("resetBtn")
+        .addEventListener("click", applyDefaultPositions);
+
+      // --- Arrastrar campos ---
+      let activeEl = null,
+        startX = 0,
+        startY = 0,
+        startLeft = 0,
+        startTop = 0,
+        moved = false;
+
+      document.querySelectorAll(".field").forEach((el) => {
+        el.addEventListener("pointerdown", (e) => {
+          activeEl = el;
+          startX = e.clientX;
+          startY = e.clientY;
+          startLeft = parseFloat(el.style.left) || 0;
+          startTop = parseFloat(el.style.top) || 0;
+          moved = false;
+        });
+      });
+
+      document.addEventListener("pointermove", (e) => {
+        if (!activeEl) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+        moved = true;
+        activeEl.classList.add("dragging");
+
+        const rect = label.getBoundingClientRect();
+        const elRect = activeEl.getBoundingClientRect();
+        const dxPct = (dx / rect.width) * 100;
+        const dyPct = (dy / rect.height) * 100;
+        const elWpct = (elRect.width / rect.width) * 100;
+        const elHpct = (elRect.height / rect.height) * 100;
+
+        const newLeft = Math.max(0, Math.min(100 - elWpct, startLeft + dxPct));
+        const newTop = Math.max(0, Math.min(100 - elHpct, startTop + dyPct));
+        activeEl.style.left = newLeft + "%";
+        activeEl.style.top = newTop + "%";
+      });
+
+      document.addEventListener("pointerup", () => {
+        if (activeEl) activeEl.classList.remove("dragging");
+        activeEl = null;
+      });
+
+      // --- Logo ---
+      const logoInput = document.getElementById("logoInput");
+      document
+        .getElementById("uploadLogoBtn")
+        .addEventListener("click", () => logoInput.click());
+      logoInput.addEventListener("change", () => {
+        const file = logoInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          document.getElementById("logoImg").src = reader.result;
+          document.getElementById("logoImg").style.display = "block";
+          document.getElementById("logoPlaceholder").style.display = "none";
+        };
+        reader.readAsDataURL(file);
+      });
+
+      // El QR y el código de barras ya no se generan acá: son imágenes
+      // reales pedidas al backend (ver el <script type="module"> de más
+      // abajo, sección "Configuración del QR/código de barras").
+
+      // --- Exportar ---
+      async function captureLabel() {
+        label.classList.add("exporting");
+        const canvas = await html2canvas(label, {
+          scale: 4,
+          backgroundColor: "#ffffff",
+        });
+        label.classList.remove("exporting");
+        return canvas;
+      }
+
+      document
+        .getElementById("exportPngBtn")
+        .addEventListener("click", async () => {
+          const canvas = await captureLabel();
+          const link = document.createElement("a");
+          link.download = "rotulo.png";
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        });
+
+      document
+        .getElementById("exportPdfBtn")
+        .addEventListener("click", async () => {
+          const canvas = await captureLabel();
+          const imgData = canvas.toDataURL("image/png");
+          const wCm = parseFloat(widthCmInput.value) || 10;
+          const hCm = parseFloat(heightCmInput.value) || 15;
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF({
+            orientation: hCm >= wCm ? "portrait" : "landscape",
+            unit: "cm",
+            format: [wCm, hCm],
+          });
+          pdf.addImage(imgData, "PNG", 0, 0, wCm, hCm);
+          pdf.save("rotulo.pdf");
+        });
+    </script>
+
+    <script type="module">
+      import {
+        getRotulo,
+        createRotulo,
+        updateRotulo,
+        getOrderInfo,
+        downloadRotuloPdfServer,
+        fetchCodePreview,
+        getTemplate,
+        createTemplate,
+      } from "./assets/js/labels_api.js";
+
+      const params = new URLSearchParams(window.location.search);
+      const editingId = params.get("id");
+      const nombreInput = document.getElementById("nombreInput");
+      const saveStatus = document.getElementById("saveStatus");
+      const exportServerPdfBtn = document.getElementById("exportServerPdfBtn");
+      const printBtn = document.getElementById("printBtn");
+      const saveAsTemplateBtn = document.getElementById("saveAsTemplateBtn");
+      // El PDF del servidor (y la impresión, que lo reusa) lee el rótulo
+      // YA guardado (necesita un id): solo se habilitan editando uno
+      // existente, nunca antes del primer guardado.
+      exportServerPdfBtn.disabled = !editingId;
+      printBtn.disabled = !editingId;
+
+      exportServerPdfBtn.addEventListener("click", async () => {
+        if (!editingId) return;
+        exportServerPdfBtn.disabled = true;
+        try {
+          const blob = await downloadRotuloPdfServer(editingId);
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `rotulo-${editingId}.pdf`;
+          link.click();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          if (err.isSessionExpired) return;
+          showStatus(err.message || "No se pudo generar el PDF del servidor.");
+        } finally {
+          exportServerPdfBtn.disabled = false;
+        }
+      });
+
+      printBtn.addEventListener("click", () => {
+        if (!editingId) return;
+        window.PrintHelper.printFromBlobFn(() => downloadRotuloPdfServer(editingId), printBtn);
+      });
+
+      // Vínculo opcional con un pedido: si venimos con ?order=<id> (rótulo
+      // nuevo a partir de un envío concreto) o el rótulo cargado ya tenía
+      // uno asociado, se manda en el payload. El usuario puede seguir
+      // editando los campos autocompletados en el diseño.
+      let currentOrderId = params.get("order") ? Number(params.get("order")) : null;
+      // Vínculo opcional con la plantilla de origen (?template=<id>, o la
+      // que ya traía el rótulo cargado): se manda en el payload para que
+      // Label.template quede completo (ver api.js/toApiPayload).
+      let currentTemplateId = params.get("template") ? Number(params.get("template")) : null;
+
+      // --- Guardar como plantilla propia (privada) ------------------------
+      saveAsTemplateBtn.addEventListener("click", async () => {
+        const suggestedName = nombreInput.value.trim() || "Plantilla sin nombre";
+        const name = window.prompt("Nombre de la plantilla:", suggestedName);
+        if (!name) return;
+        saveAsTemplateBtn.disabled = true;
+        try {
+          await createTemplate({
+            nombre: name.trim(),
+            size: {
+              widthCm: parseFloat(document.getElementById("widthCm").value) || 10,
+              heightCm: parseFloat(document.getElementById("heightCm").value) || 15,
+            },
+            fields: collectFields(),
+          });
+          showStatus(`Plantilla "${name.trim()}" guardada.`);
+        } catch (err) {
+          if (err.isSessionExpired) return;
+          showStatus(err.message || "No se pudo guardar la plantilla.");
+        } finally {
+          saveAsTemplateBtn.disabled = false;
+        }
+      });
+
+      function showStatus(msg) {
+        saveStatus.textContent = msg;
+        saveStatus.style.display = "block";
+        setTimeout(() => (saveStatus.style.display = "none"), 2500);
+      }
+
+      // --- Configuración del QR/código de barras --------------------------
+      //
+      // Ya no son texto contenteditable: guardan su propia configuración
+      // (tamaño/simbología/contenido) y se muestran pidiendo el SVG real al
+      // backend (fetchCodePreview -> GET /api/v1/labels/barcode/), el mismo
+      // código que arma el PDF definitivo.
+      let selectedCodeField = null; // "qr" | "barcode" | null
+
+      const codeConfigGroup = document.getElementById("codeConfigGroup");
+      const codeConfigTitle = document.getElementById("codeConfigTitle");
+      const codeSizeLabel = document.getElementById("codeSizeLabel");
+      const codeSizeInput = document.getElementById("codeSizeInput");
+      const codeWidthLabel = document.getElementById("codeWidthLabel");
+      const codeWidthInput = document.getElementById("codeWidthInput");
+      const codeHeightLabel = document.getElementById("codeHeightLabel");
+      const codeHeightInput = document.getElementById("codeHeightInput");
+      const codeSymbologyLabel = document.getElementById("codeSymbologyLabel");
+      const codeSymbologySelect = document.getElementById("codeSymbologySelect");
+      const codeShowTextLabel = document.getElementById("codeShowTextLabel");
+      const codeShowTextInput = document.getElementById("codeShowTextInput");
+      const codeDataInput = document.getElementById("codeDataInput");
+      const codeMarkerSelect = document.getElementById("codeMarkerSelect");
+
+      function selectCodeField(fieldName) {
+        selectedCodeField = fieldName;
+        const isQr = fieldName === "qr";
+        const cfg = codeConfig[fieldName];
+        codeConfigGroup.hidden = false;
+        codeConfigTitle.textContent = isQr ? "QR" : "Código de barras";
+        codeSizeLabel.hidden = !isQr;
+        codeWidthLabel.hidden = isQr;
+        codeHeightLabel.hidden = isQr;
+        codeSymbologyLabel.hidden = isQr;
+        codeShowTextLabel.hidden = isQr;
+        if (isQr) {
+          codeSizeInput.value = cfg.size;
+        } else {
+          codeWidthInput.value = cfg.width;
+          codeHeightInput.value = cfg.height;
+          codeSymbologySelect.value = cfg.symbology;
+          codeShowTextInput.checked = cfg.show_text;
+        }
+        codeDataInput.value = cfg.data;
+      }
+
+      // --- Propiedades del campo de texto seleccionado ---------------------
+      // Escriben en fieldStyles, que es lo que applyRenderMetrics usa para
+      // dibujar y lo que collectFields devuelve al guardar. Así lo que se
+      // edita, lo que se ve y lo que se imprime son el mismo dato.
+      const fieldPropsGroup = document.getElementById("fieldPropsGroup");
+      const fieldPropsTitle = document.getElementById("fieldPropsTitle");
+      const propInputs = {
+        font_size: document.getElementById("propFontSize"),
+        bold: document.getElementById("propBold"),
+        align: document.getElementById("propAlign"),
+        width: document.getElementById("propWidth"),
+        hide_if_empty: document.getElementById("propHideIfEmpty"),
+        shrink_to_fit: document.getElementById("propShrink"),
+      };
+      const FIELD_LABELS = {
+        remitente: "Remitente",
+        destinatario: "Destinatario",
+        domicilio: "Domicilio",
+        cp: "CP",
+        localidad: "Localidad/Provincia",
+        pedido: "N° de pedido",
+      };
+      let selectedTextField = null;
+
+      function selectTextField(key) {
+        selectedTextField = key;
+        const style = fieldStyles[key] || {};
+        fieldPropsGroup.hidden = false;
+        fieldPropsTitle.textContent = FIELD_LABELS[key] || key;
+        // Vacío = "lo que decida el render": tamaño proporcional al rótulo y
+        // ancho hasta el borde derecho. No se rellenan con el valor
+        // calculado para no convertir un default en un valor fijo sin que
+        // el usuario lo pida.
+        propInputs.font_size.value = style.font_size != null ? style.font_size : "";
+        propInputs.width.value = style.width != null ? style.width : "";
+        propInputs.bold.checked = Boolean(style.bold);
+        propInputs.align.value = style.align || "left";
+        propInputs.hide_if_empty.checked = Boolean(style.hide_if_empty);
+        propInputs.shrink_to_fit.checked = Boolean(style.shrink_to_fit);
+      }
+
+      function updateSelectedFieldStyle(key, value) {
+        if (!selectedTextField) return;
+        const style = { ...(fieldStyles[selectedTextField] || {}) };
+        // Un valor vacío o apagado BORRA la clave en vez de guardarla en
+        // falso: el diseño queda con lo que el usuario puso y nada más.
+        if (value === "" || value === null || value === false) {
+          delete style[key];
+        } else {
+          style[key] = value;
+        }
+        fieldStyles[selectedTextField] = style;
+        applyRenderMetrics();
+      }
+
+      propInputs.font_size.addEventListener("input", (event) => {
+        const value = parseFloat(event.target.value);
+        updateSelectedFieldStyle("font_size", Number.isFinite(value) ? value : "");
+      });
+      propInputs.width.addEventListener("input", (event) => {
+        const value = parseFloat(event.target.value);
+        updateSelectedFieldStyle("width", Number.isFinite(value) ? value : "");
+      });
+      propInputs.bold.addEventListener("change", (event) =>
+        updateSelectedFieldStyle("bold", event.target.checked),
+      );
+      propInputs.align.addEventListener("change", (event) =>
+        // "left" es el default del render: no hace falta guardarlo.
+        updateSelectedFieldStyle("align", event.target.value === "left" ? "" : event.target.value),
+      );
+      propInputs.hide_if_empty.addEventListener("change", (event) =>
+        updateSelectedFieldStyle("hide_if_empty", event.target.checked),
+      );
+      propInputs.shrink_to_fit.addEventListener("change", (event) =>
+        updateSelectedFieldStyle("shrink_to_fit", event.target.checked),
+      );
+
+      // --- Decoraciones: crear, configurar y borrar -----------------------
+      // Escriben en `decorations`, que es lo que renderDecorations dibuja y lo
+      // que collectFields devuelve al guardar.
+      const decoPropsGroup = document.getElementById("decoPropsGroup");
+      const decoPropsTitle = document.getElementById("decoPropsTitle");
+      const decoInputs = {
+        text: document.getElementById("decoText"),
+        font_size: document.getElementById("decoFontSize"),
+        bold: document.getElementById("decoBold"),
+        align: document.getElementById("decoAlign"),
+        left: document.getElementById("decoLeft"),
+        right: document.getElementById("decoRight"),
+        dashed: document.getElementById("decoDashed"),
+      };
+      // Cada control vive dentro de su <label>: lo que se muestra u oculta es
+      // la etiqueta, no el input suelto.
+      const DECO_FIELDS_BY_TYPE = {
+        line: ["left", "right", "dashed"],
+        text: ["text", "font_size", "bold", "align"],
+      };
+
+      function decoEntry() {
+        if (!selectedDeco) return null;
+        const list = decorations[selectedDeco.type === "line" ? "lines" : "texts"];
+        return list ? list[selectedDeco.index] || null : null;
+      }
+
+      function selectDeco(type, index) {
+        selectedDeco = type ? { type, index } : null;
+        refreshDecoPanel();
+        applyRenderMetrics();
+      }
+
+      function refreshDecoPanel() {
+        const entry = decoEntry();
+        if (!entry) {
+          decoPropsGroup.hidden = true;
+          return;
+        }
+        decoPropsGroup.hidden = false;
+        const visible = DECO_FIELDS_BY_TYPE[selectedDeco.type];
+        Object.keys(decoInputs).forEach((name) => {
+          const label = decoInputs[name].closest("label");
+          if (label) label.hidden = !visible.includes(name);
+        });
+
+        if (selectedDeco.type === "line") {
+          decoPropsTitle.textContent = "Línea";
+          decoInputs.left.value = Math.round(
+            entry.left != null ? entry.left : LINE_DEFAULT_LEFT,
+          );
+          decoInputs.right.value = Math.round(
+            entry.right != null ? entry.right : LINE_DEFAULT_RIGHT,
+          );
+          decoInputs.dashed.checked = Boolean(entry.dashed);
+        } else {
+          decoPropsTitle.textContent = "Texto fijo";
+          decoInputs.text.value = entry.text || "";
+          // Vacío = lo que decida el render, igual que en las propiedades de
+          // los campos: no se rellena con el valor calculado.
+          decoInputs.font_size.value = entry.font_size != null ? entry.font_size : "";
+          decoInputs.bold.checked = Boolean(entry.bold);
+          decoInputs.align.value = entry.align || "left";
+        }
+      }
+
+      function updateDeco(key, value) {
+        const entry = decoEntry();
+        if (!entry) return;
+        // Misma regla que las propiedades de los campos: vacío o apagado BORRA
+        // la clave en vez de guardarla en falso.
+        if (value === "" || value === null || value === false) {
+          delete entry[key];
+        } else {
+          entry[key] = value;
+        }
+        applyRenderMetrics();
+      }
+
+      // Deja las casillas del recuadro igual que `decorations`, para cuando el
+      // estado no lo puso el usuario sino la plantilla recién cargada.
+      function syncDecoToolbar() {
+        const border = document.getElementById("decoBorder");
+        const dashed = document.getElementById("decoBorderDashed");
+        border.checked = Boolean(decorations.border);
+        dashed.checked = Boolean(decorations.border && decorations.border.dashed);
+      }
+
+      document.getElementById("decoBorder").addEventListener("change", (event) => {
+        const dashed = document.getElementById("decoBorderDashed");
+        decorations.border = event.target.checked
+          ? { dashed: dashed.checked || undefined }
+          : null;
+        applyRenderMetrics();
+      });
+
+      document.getElementById("decoBorderDashed").addEventListener("change", (event) => {
+        if (!decorations.border) return;
+        if (event.target.checked) decorations.border.dashed = true;
+        else delete decorations.border.dashed;
+        applyRenderMetrics();
+      });
+
+      document.getElementById("addLineBtn").addEventListener("click", () => {
+        decorations.lines = decorations.lines || [];
+        // Nace en el medio y con el ancho por defecto del render, para que se
+        // vea apenas se crea y se pueda arrastrar a su lugar.
+        decorations.lines.push({
+          top: 50,
+          left: LINE_DEFAULT_LEFT,
+          right: LINE_DEFAULT_RIGHT,
+        });
+        selectDeco("line", decorations.lines.length - 1);
+      });
+
+      document.getElementById("addDecoTextBtn").addEventListener("click", () => {
+        decorations.texts = decorations.texts || [];
+        decorations.texts.push({ text: "Texto fijo", left: 10, top: 50 });
+        selectDeco("text", decorations.texts.length - 1);
+        decoInputs.text.focus();
+        decoInputs.text.select();
+      });
+
+      document.getElementById("decoDeleteBtn").addEventListener("click", () => {
+        if (!selectedDeco) return;
+        const key = selectedDeco.type === "line" ? "lines" : "texts";
+        decorations[key].splice(selectedDeco.index, 1);
+        // Una lista vacía se borra: el diseño guardado queda sin la clave en
+        // vez de con un array vacío.
+        if (!decorations[key].length) decorations[key] = null;
+        selectDeco(null);
+      });
+
+      decoInputs.text.addEventListener("input", (event) =>
+        updateDeco("text", event.target.value),
+      );
+      decoInputs.font_size.addEventListener("input", (event) => {
+        const value = parseFloat(event.target.value);
+        updateDeco("font_size", Number.isFinite(value) ? value : "");
+      });
+      decoInputs.bold.addEventListener("change", (event) =>
+        updateDeco("bold", event.target.checked),
+      );
+      decoInputs.align.addEventListener("change", (event) =>
+        updateDeco("align", event.target.value === "left" ? "" : event.target.value),
+      );
+      decoInputs.left.addEventListener("input", (event) => {
+        const value = parseFloat(event.target.value);
+        updateDeco("left", Number.isFinite(value) ? value : "");
+      });
+      decoInputs.right.addEventListener("input", (event) => {
+        const value = parseFloat(event.target.value);
+        updateDeco("right", Number.isFinite(value) ? value : "");
+      });
+      decoInputs.dashed.addEventListener("change", (event) =>
+        updateDeco("dashed", event.target.checked),
+      );
+
+      document.querySelectorAll(".field").forEach((el) => {
+        const key = el.dataset.field;
+        if (!TEXT_FIELDS.includes(key)) return;
+        // El campo es contenteditable: el click lo enfoca para escribir y
+        // además abre sus propiedades. Las dos cosas conviven.
+        el.addEventListener("click", () => selectTextField(key));
+        el.addEventListener("focus", () => selectTextField(key));
+      });
+
+      document
+        .getElementById("qrField")
+        .addEventListener("click", () => selectCodeField("qr"));
+      document
+        .getElementById("barcodeField")
+        .addEventListener("click", () => selectCodeField("barcode"));
+
+      // Debounce por campo: no pedir un SVG nuevo en cada tecla.
+      const previewTimeouts = {};
+      const previewUrls = { qr: null, barcode: null };
+
+      function scheduleCodePreviewRefresh(fieldName) {
+        clearTimeout(previewTimeouts[fieldName]);
+        previewTimeouts[fieldName] = setTimeout(
+          () => refreshCodePreview(fieldName),
+          300,
+        );
+      }
+
+      async function refreshCodePreview(fieldName) {
+        const cfg = codeConfig[fieldName];
+        if (!cfg.data) return;
+        const queryParams =
+          fieldName === "qr"
+            ? { type: "qr", data: cfg.data, size: String(cfg.size) }
+            : {
+                type: cfg.symbology,
+                data: cfg.data,
+                width: String(cfg.width),
+                height: String(cfg.height),
+                show_text: cfg.show_text ? "true" : "false",
+              };
+        const blob = await fetchCodePreview(queryParams);
+        if (!blob) return;
+        const imgEl = document.getElementById(
+          fieldName === "qr" ? "qrImg" : "barcodeImg",
+        );
+        if (previewUrls[fieldName]) URL.revokeObjectURL(previewUrls[fieldName]);
+        previewUrls[fieldName] = URL.createObjectURL(blob);
+        imgEl.src = previewUrls[fieldName];
+      }
+
+      function applyCodeConfigChange() {
+        if (!selectedCodeField) return;
+        const cfg = codeConfig[selectedCodeField];
+        if (selectedCodeField === "qr") {
+          cfg.size = parseFloat(codeSizeInput.value) || CODE_DEFAULTS.qr.size;
+        } else {
+          cfg.width =
+            parseFloat(codeWidthInput.value) || CODE_DEFAULTS.barcode.width;
+          cfg.height =
+            parseFloat(codeHeightInput.value) || CODE_DEFAULTS.barcode.height;
+          cfg.symbology = codeSymbologySelect.value;
+          cfg.show_text = codeShowTextInput.checked;
+        }
+        cfg.data = codeDataInput.value;
+        scheduleCodePreviewRefresh(selectedCodeField);
+      }
+
+      [
+        codeSizeInput,
+        codeWidthInput,
+        codeHeightInput,
+        codeSymbologySelect,
+        codeShowTextInput,
+        codeDataInput,
+      ].forEach((el) => {
+        el.addEventListener("input", applyCodeConfigChange);
+        el.addEventListener("change", applyCodeConfigChange);
+      });
+
+      // Marcadores disponibles listados en un select, para no tener que
+      // escribirlos de memoria: al elegir uno se inserta en el punto del
+      // cursor del campo "Contenido".
+      codeMarkerSelect.addEventListener("change", () => {
+        const marker = codeMarkerSelect.value;
+        if (!marker) return;
+        const snippet = `{{${marker}}}`;
+        const start = codeDataInput.selectionStart ?? codeDataInput.value.length;
+        const end = codeDataInput.selectionEnd ?? codeDataInput.value.length;
+        codeDataInput.value =
+          codeDataInput.value.slice(0, start) +
+          snippet +
+          codeDataInput.value.slice(end);
+        codeMarkerSelect.value = "";
+        applyCodeConfigChange();
+      });
+
+      // --- Autocompletar domicilio/CP/localidad desde la dirección del
+      // pedido (?order=<id>). El destinatario/remitente los sigue
+      // completando el usuario: la dirección del pedido no guarda un
+      // nombre de destinatario.
+      async function prefillFromOrder(orderId) {
+        const order = await getOrderInfo(orderId);
+        const addr = order?.address;
+        if (!addr) return;
+        const setText = (field, text) => {
+          const el = document.querySelector(`.field[data-field="${field}"]`);
+          if (el) el.textContent = text;
+        };
+        setText("domicilio", `Domicilio: ${[addr.street, addr.number].filter(Boolean).join(" ")}`);
+        setText("cp", `CP: ${addr.postal_code || ""}`);
+        setText(
+          "localidad",
+          `Localidad/Provincia: ${[addr.city, addr.state].filter(Boolean).join(", ")}`,
+        );
+      }
+
+      // Aplica un bloque design/fields (de un rótulo o de una plantilla) al
+      // canvas: posiciones + textos de los campos de texto, y la config de
+      // qr/barcode. Compartido entre "cargar rótulo existente" y "cargar
+      // plantilla" para no duplicar el mismo mapeo dos veces.
+      function applyFields(fields) {
+        if (!fields) return;
+        Object.entries(fields).forEach(([key, val]) => {
+          const el = document.querySelector(`.field[data-field="${key}"]`);
+          if (!el) return;
+          if (val.left != null) el.style.left = val.left + "%";
+          if (val.top != null) el.style.top = val.top + "%";
+          if (TEXT_FIELDS.includes(key) && val.text != null) el.textContent = val.text;
+        });
+        // Un diseño viejo puede no traer qr/barcode todavía, o traer el qr
+        // en el formato viejo (solo left/top): se completa con los
+        // defaults, nunca se pisa lo que sí vino.
+        if (fields.qr) codeConfig.qr = { ...CODE_DEFAULTS.qr, ...fields.qr };
+        if (fields.barcode) codeConfig.barcode = { ...CODE_DEFAULTS.barcode, ...fields.barcode };
+
+        // Estilos por campo y decoraciones: el editor no los editaba y
+        // tampoco los mostraba, así que un diseño con negrita, tamaños
+        // propios o un recuadro salía impreso distinto de lo diseñado.
+        fieldStyles = {};
+        TEXT_FIELDS.forEach((key) => {
+          const entry = fields[key];
+          if (entry && typeof entry === "object") fieldStyles[key] = entry;
+        });
+        decorations = {
+          border: fields.border || null,
+          lines: Array.isArray(fields.lines) ? fields.lines : null,
+          texts: Array.isArray(fields.texts) ? fields.texts : null,
+        };
+        // La barra tiene que reflejar el diseño que se acaba de abrir: si no,
+        // el recuadro se ve en el lienzo con la casilla en "no".
+        syncDecoToolbar();
+        selectDeco(null);
+        applyRenderMetrics();
+      }
+
+      // --- Cargar una plantilla como punto de partida (?template=<id>),
+      // solo para un rótulo NUEVO: uno existente ya trae su propio diseño.
+      async function loadFromTemplate(templateId) {
+        const template = await getTemplate(templateId);
+        if (!template) {
+          showStatus("No se encontró esa plantilla. Empezando en blanco.");
+          currentTemplateId = null;
+          return;
+        }
+        if (template.size) {
+          document.getElementById("widthCm").value = template.size.widthCm;
+          document.getElementById("heightCm").value = template.size.heightCm;
+          updateLabelSize();
+        }
+        applyFields(template.fields);
+      }
+
+      // --- Cargar rótulo existente si venimos con ?id= ---
+      async function loadExisting() {
+        if (!editingId) {
+          if (currentTemplateId) await loadFromTemplate(currentTemplateId);
+          if (currentOrderId) await prefillFromOrder(currentOrderId);
+        } else {
+          const r = await getRotulo(editingId);
+          if (!r) {
+            showStatus("No se encontró ese rótulo. Empezando uno nuevo.");
+          } else {
+            currentOrderId = r.order || currentOrderId;
+            currentTemplateId = r.template || currentTemplateId;
+            nombreInput.value = r.nombre || "";
+            if (r.size) {
+              document.getElementById("widthCm").value = r.size.widthCm;
+              document.getElementById("heightCm").value = r.size.heightCm;
+              updateLabelSize();
+            }
+            if (r.logo) {
+              document.getElementById("logoImg").src = r.logo;
+              document.getElementById("logoImg").style.display = "block";
+              document.getElementById("logoPlaceholder").style.display = "none";
+            }
+            applyFields(r.fields);
+          }
+        }
+        // Vista previa inicial de ambos códigos, con la config que haya
+        // quedado (la del rótulo/plantilla cargados, o los defaults de uno
+        // nuevo en blanco).
+        refreshCodePreview("qr");
+        refreshCodePreview("barcode");
+      }
+
+      // --- Generar una miniatura liviana (JPEG) para la lista del dashboard ---
+      async function generateThumbnail() {
+        label.classList.add("exporting");
+        const canvas = await html2canvas(label, {
+          scale: 1.5,
+          backgroundColor: "#ffffff",
+        });
+        label.classList.remove("exporting");
+
+        const maxWidth = 320;
+        const ratio = maxWidth / canvas.width;
+        const small = document.createElement("canvas");
+        small.width = maxWidth;
+        small.height = canvas.height * ratio;
+        small
+          .getContext("2d")
+          .drawImage(canvas, 0, 0, small.width, small.height);
+        return small.toDataURL("image/jpeg", 0.75);
+      }
+
+      // Posición actual (left/top en %) de un campo del canvas.
+      function fieldPosition(el) {
+        return {
+          left: parseFloat(el.style.left) || 0,
+          top: parseFloat(el.style.top) || 0,
+        };
+      }
+
+      // --- Vista previa REAL -----------------------------------------------
+      // El lienzo de arriba es una aproximación calibrada; esto es el render
+      // de verdad. Si alguna vez se separan, manda esto (ver
+      // apps/labels/views.py, PreviewLabelView).
+      const PREVIEW_URL = `${window.APP_CONFIG.API_BASE}/labels/preview/`;
+      const serverPreviewOverlay = document.getElementById("serverPreviewOverlay");
+      const serverPreviewFrame = document.getElementById("serverPreviewFrame");
+      let serverPreviewUrl = null;
+
+      function closeServerPreview() {
+        serverPreviewOverlay.hidden = true;
+        serverPreviewFrame.removeAttribute("src");
+        if (serverPreviewUrl) {
+          URL.revokeObjectURL(serverPreviewUrl);
+          serverPreviewUrl = null;
+        }
+      }
+
+      document
+        .getElementById("closeServerPreviewBtn")
+        .addEventListener("click", closeServerPreview);
+      serverPreviewOverlay.addEventListener("click", (event) => {
+        if (event.target === serverPreviewOverlay) closeServerPreview();
+      });
+
+      document
+        .getElementById("previewServerBtn")
+        .addEventListener("click", async () => {
+          const button = document.getElementById("previewServerBtn");
+          button.disabled = true;
+          try {
+            const response = await window.Auth.apiFetch(PREVIEW_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                design: collectFields(),
+                width_cm: parseFloat(widthCmInput.value) || 10,
+                height_cm: parseFloat(heightCmInput.value) || 15,
+                template_id: currentTemplateId || null,
+              }),
+            });
+            if (!response.ok) {
+              const data = await response.json().catch(() => ({}));
+              throw new Error(
+                (data && (data.detail || data.design)) ||
+                  "No se pudo generar la vista previa.",
+              );
+            }
+            if (serverPreviewUrl) URL.revokeObjectURL(serverPreviewUrl);
+            serverPreviewUrl = URL.createObjectURL(await response.blob());
+            serverPreviewFrame.src = serverPreviewUrl;
+            serverPreviewOverlay.hidden = false;
+          } catch (err) {
+            if (err && err.isSessionExpired) return;
+            console.error("Error en la vista previa:", err);
+            showStatus(err.message || "No se pudo generar la vista previa.");
+          } finally {
+            button.disabled = false;
+          }
+        });
+
+      function collectFields() {
+        const fields = {};
+        document.querySelectorAll(".field").forEach((el) => {
+          const key = el.dataset.field;
+          // qr/barcode no son texto: se arman aparte, con su config
+          // (tamaño/simbología/data) en vez de leer el DOM.
+          if (key === "qr" || key === "barcode") return;
+          fields[key] = fieldPosition(el);
+          if (TEXT_FIELDS.includes(key)) {
+            // Los estilos que el editor todavía no edita (font_size, bold,
+            // align, width, hide_if_empty, shrink_to_fit) se devuelven tal
+            // como vinieron. Sin esto, abrir una plantilla y guardarla le
+            // borraba el formato.
+            const previous = fieldStyles[key] || {};
+            const { left, top, text, ...keep } = previous;
+            fields[key] = { ...keep, ...fields[key], text: el.textContent };
+          }
+        });
+        fields.qr = {
+          ...fieldPosition(document.getElementById("qrField")),
+          size: codeConfig.qr.size,
+          data: codeConfig.qr.data,
+        };
+        fields.barcode = {
+          ...fieldPosition(document.getElementById("barcodeField")),
+          width: codeConfig.barcode.width,
+          height: codeConfig.barcode.height,
+          symbology: codeConfig.barcode.symbology,
+          data: codeConfig.barcode.data,
+          show_text: codeConfig.barcode.show_text,
+        };
+        // Decoraciones: mismo criterio que los estilos. El editor las
+        // dibuja pero no las edita, así que se conservan intactas en vez de
+        // perderse al guardar.
+        if (decorations.border) fields.border = decorations.border;
+        if (decorations.lines) fields.lines = decorations.lines;
+        if (decorations.texts) fields.texts = decorations.texts;
+        return fields;
+      }
+
+      document.getElementById("saveBtn").addEventListener("click", async () => {
+        const thumbnail = await generateThumbnail();
+        const payload = {
+          nombre: nombreInput.value.trim() || "Rótulo sin nombre",
+          cliente: document
+            .querySelector('.field[data-field="destinatario"]')
+            .textContent.trim(),
+          thumbnail,
+          size: {
+            widthCm: parseFloat(document.getElementById("widthCm").value) || 10,
+            heightCm:
+              parseFloat(document.getElementById("heightCm").value) || 15,
+          },
+          logo:
+            document.getElementById("logoImg").style.display !== "none"
+              ? document.getElementById("logoImg").src
+              : null,
+          fields: collectFields(),
+          order: currentOrderId,
+          template: currentTemplateId,
+        };
+
+        if (editingId) {
+          await updateRotulo(editingId, payload);
+        } else {
+          await createRotulo(payload);
+        }
+        window.location.href = "mis_rotulos.html";
+      });
+
+      loadExisting();
+    </script>
+  </body>
+</html>
