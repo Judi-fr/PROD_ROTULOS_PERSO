@@ -2234,7 +2234,8 @@ and the email moved under the name (no Email column; email order stays in "Orden
   las páginas grandes existentes sin pedirlo.
 - **Funciones compartidas del frontend van en `assets/js/utils.js`** — no copiarlas en cada página.
 - Después de crear una migración, correr `python manage.py migrate` sobre la base local además de probarla.
-- `git commit` y `git push` solo en la rama `marco` (autorizado por el usuario, 2026-11-06). Nunca a otra rama, y nunca `git pull` ni merges a `master`.
+- `git commit`, `git push` y `git pull` solo cuando el usuario lo pide explícitamente; nunca por iniciativa
+  propia. Antes de commitear, revisar que no se suba ningún secreto (`.env`, bases, `backups/`).
 - Nunca modificar tests para que pasen: corregir la implementación.
 - Nunca usar URLs placeholder. La API real es `http://127.0.0.1:8000/api/v1/`.
 - No borrar archivos de Google/OAuth (`google.js`, `google_test.js`, `access.php`, `oauth-test/`,
