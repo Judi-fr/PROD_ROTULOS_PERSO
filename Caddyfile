@@ -19,12 +19,26 @@
 		reverse_proxy api:8000
 	}
 
-	# Archivos subidos y generados (logos de tiendas, PDFs de los lotes).
-	# Los sirve Caddy directo desde el volumen compartido: hacerlos pasar por
-	# Django sería gastar un worker de gunicorn en mandar un archivo.
+	# Archivos subidos y generados. Caddy sirve DIRECTO, sin login, solo las
+	# imágenes que el frontend muestra con <img src> (que no puede mandar el
+	# token): miniaturas de rótulos (nombre UUID, no adivinable), vistas
+	# previas de plantillas y logos.
+	#
+	# Todo lo demás de /media tiene datos de compradores y NO se sirve acá:
+	# PDFs de lotes (documents/), rótulos pedidos por la tienda (store_labels/),
+	# planillas de pedidos importadas (orders/imports/) y fotos subidas para
+	# importar (rotulos/). Esos salen solo por la API, que exige sesión o token:
+	# /api/v1/documents/<id>/download/ y la descarga firmada de store_labels.
+	# Una carpeta nueva bajo media/ queda cerrada hasta que se la agregue acá.
 	handle /media/* {
-		root * /srv
-		file_server
+		@media_publica path /media/labels/thumbs/* /media/labels/templates/* /media/labels/logos/* /media/store_logos/*
+		handle @media_publica {
+			root * /srv
+			file_server
+		}
+		handle {
+			respond 404
+		}
 	}
 
 	# Estáticos de Django (los del admin, básicamente): los deja

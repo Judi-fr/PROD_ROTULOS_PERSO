@@ -34,6 +34,24 @@ DATABASES = {
 }
 
 # ---------------------------------------------------------------------------
+# Caché: en la misma base, para que los contadores de los throttles de DRF
+# (login 5/min, reset de contraseña, ingesta...) sean UNO solo. El default de
+# Django es memoria por proceso: con los 3 workers de gunicorn cada uno lleva
+# su propia cuenta (el límite real queda hasta 3x) y se pierde al reiniciar.
+# Postgres alcanza para este volumen sin sumar Redis al despliegue. La tabla
+# la crea `createcachetable` al arrancar (ver docker-compose.prod.yml).
+# MAX_ENTRIES alto: al pasarlo Django borra un tercio de las claves, y eso
+# incluye contadores de throttle vigentes.
+# ---------------------------------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+        "OPTIONS": {"MAX_ENTRIES": 10000},
+    }
+}
+
+# ---------------------------------------------------------------------------
 # REST Framework: solo JSONRenderer, sin la API navegable que dev.py agrega.
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [  # noqa: F405

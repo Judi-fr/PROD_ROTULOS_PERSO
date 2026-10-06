@@ -24,6 +24,22 @@ class LabelImportThrottle(UserRateThrottle):
     scope = "importacion_rotulo"
 
 
+class LabelImportDailyThrottle(UserRateThrottle):
+    """Tope diario por usuario de llamadas al modelo.
+
+    El de minuto solo frena ráfagas: 20/min sostenido son casi 29.000 lecturas
+    por día, que con una cuenta robada o un abuso es mucha plata. El techo real
+    de gasto igual es el límite mensual de la consola de Anthropic.
+    """
+
+    scope = "label_import_daily"
+
+
+# Acciones que llaman al modelo: las únicas que pasan por los límites propios.
+# Listar o ver una lectura ya hecha no cuesta nada y no debe gastar el cupo.
+MODEL_CALLING_ACTIONS = {"create", "retry"}
+
+
 class LabelImportViewSet(
     mixins.CreateModelMixin,
     mixins.ListModelMixin,
@@ -41,7 +57,11 @@ class LabelImportViewSet(
     """
 
     serializer_class = LabelImportSerializer
-    throttle_classes = [LabelImportThrottle]
+
+    def get_throttles(self):
+        if self.action in MODEL_CALLING_ACTIONS:
+            return [LabelImportThrottle(), LabelImportDailyThrottle()]
+        return super().get_throttles()
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("processing.import")]

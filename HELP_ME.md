@@ -7,6 +7,7 @@ técnico del código vive en `CLAUDE.md`.
 - [Conectar una tienda de Tiendanube](#conectar-una-tienda-de-tiendanube)
 - [Conectar un cliente que NO tiene Tiendanube](#conectar-un-cliente-que-no-tiene-tiendanube)
 - [Poner la app en un servidor](#poner-la-app-en-un-servidor)
+- [Backups y cómo restaurar](#backups-y-cómo-restaurar)
 
 ---
 
@@ -325,19 +326,30 @@ veces.
 
 **1.** Clonar el repo en el servidor.
 
-**2.** Crear un `.env` en la raíz, al lado de `docker-compose.prod.yml`. Las
-variables mínimas están listadas en el encabezado de ese archivo. Las que más
-se olvidan:
+**2.** Crear el `.env` en la raíz, al lado de `docker-compose.prod.yml`, a
+partir de la plantilla, y completar cada `<...>`:
+
+```bash
+cp .env.prod.example .env && chmod 600 .env
+```
+
+La plantilla trae todas las variables y el comando para generar cada secreto
+(se generan en el servidor, no se reusan los de la PC). Las que más se olvidan:
 
 ```
 DOMINIO=rotulos.tudominio.com
 ALLOWED_HOSTS=rotulos.tudominio.com
 FRONTEND_URL=https://rotulos.tudominio.com
 INTEGRATIONS_PUBLIC_BASE_URL=https://rotulos.tudominio.com
+TIENDANUBE_USER_AGENT=Rotulos (contacto@tudominio.com)
 ```
 
-> Las cuatro tienen que ser el dominio real. `ALLOWED_HOSTS` **no puede ser
-> `*`**: `prod.py` se niega a arrancar, a propósito.
+> Las de dominio tienen que ser el dominio real. `ALLOWED_HOSTS` **no puede
+> ser `*`**: `prod.py` se niega a arrancar, a propósito. Sin
+> `TIENDANUBE_USER_AGENT`, Tiendanube contesta 400 a todo.
+>
+> `INTEGRATIONS_ENCRYPTION_KEY` se genera una sola vez y se guarda aparte: si
+> se pierde, todas las tiendas conectadas tienen que volver a conectarse.
 
 **3.** Levantar todo:
 
@@ -382,4 +394,67 @@ docker compose -f docker-compose.prod.yml ps               # qué está sano
 
 El error más común la primera vez es que el certificado no sale porque el
 dominio todavía no resuelve al servidor. Se ve en los logs de Caddy.
+
+---
+
+## Backups y cómo restaurar
+
+El servicio `backup` arranca solo con el resto. Todos los días a las 03:00
+(y una vez cada vez que el contenedor arranca) copia **la base** (`pg_dump`) y
+**la carpeta media** a `./backups/AAAA-MM-DD_HHMM/`, al lado de
+`docker-compose.prod.yml`, y guarda las últimas 7. Si `RESTIC_REPOSITORY` está
+configurado en el `.env`, además las sube **cifradas** afuera del servidor
+(7 diarias, 4 semanales, 6 mensuales).
+
+Lo que NO está en el backup y hay que guardar aparte, en un gestor de
+contraseñas: **el `.env`**. Sin `INTEGRATIONS_ENCRYPTION_KEY` los tokens de las
+tiendas restaurados no se pueden leer, y sin `RESTIC_PASSWORD` las copias
+externas no se pueden abrir.
+
+### ¿Está funcionando?
+
+```bash
+docker compose -f docker-compose.prod.yml ps backup        # tiene que decir (healthy)
+docker compose -f docker-compose.prod.yml logs --tail 30 backup
+ls backups/
+```
+
+`unhealthy` = pasaron más de 26 horas sin un backup completo (incluida la
+copia externa, si está configurada). Los logs dicen por qué.
+
+### Hacer un backup ahora (por ejemplo, antes de actualizar la app)
+
+```bash
+docker compose -f docker-compose.prod.yml exec backup backup.sh
+```
+
+### Restaurar
+
+Reemplaza la base y la carpeta media por las de la copia: todo lo que se haya
+cargado después de esa copia se pierde.
+
+```bash
+# 1. Frenar lo que usa la base
+docker compose -f docker-compose.prod.yml stop api worker
+
+# 2. Ver qué haría (no cambia nada)
+docker compose -f docker-compose.prod.yml run --rm restore latest
+
+# 3. Hacerlo
+docker compose -f docker-compose.prod.yml run --rm restore latest --yes
+
+# 4. Volver a arrancar
+docker compose -f docker-compose.prod.yml start api worker
+```
+
+- En vez de `latest` se puede poner una copia puntual: `2026-10-06_0300`.
+- Si el servidor murió y la carpeta `backups/` no existe, desde la copia
+  externa: `run --rm restore latest --restic --yes` (en un servidor nuevo, con
+  el mismo `.env`).
+- Antes de tocar nada verifica que la copia no esté corrupta, y si la API
+  sigue conectada a la base se niega a seguir.
+
+> Un backup que nunca se restauró es una suposición. Cada tanto (o después de
+> cambiar algo del servidor) conviene probar el restore en una máquina de
+> prueba, no en producción.
 

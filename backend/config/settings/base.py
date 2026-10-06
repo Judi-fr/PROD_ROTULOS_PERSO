@@ -175,6 +175,19 @@ REST_FRAMEWORK = {
         # paga por token, así que se limita por usuario para que un bucle en el
         # frontend no gaste dinero antes de que nadie lo note.
         "importacion_rotulo": env("IMPORTACION_THROTTLE_RATE", default="20/min"),
+        # Tope DIARIO de lecturas por usuario: el de minuto solo frena ráfagas
+        # (20/min sostenido son ~29.000 por día). El techo de gasto real es el
+        # límite mensual configurado en la consola de Anthropic.
+        "label_import_daily": env("IMPORTACION_DAILY_THROTTLE_RATE", default="100/day"),
+        # Correos (ver auth_views): el cupo diario del SMTP es compartido; si
+        # alguien lo agota, nadie más recibe resets ni verificaciones.
+        "password_reset_email": env("PASSWORD_RESET_EMAIL_THROTTLE_RATE", default="3/hour"),
+        "password_reset_daily": env("PASSWORD_RESET_DAILY_THROTTLE_RATE", default="20/day"),
+        "register_daily": env("REGISTER_DAILY_THROTTLE_RATE", default="20/day"),
+        "email_verification_hourly": env("EMAIL_VERIFICATION_HOURLY_THROTTLE_RATE", default="3/hour"),
+        # Dibujar rótulos ocupa un worker de gunicorn (hay 3): ver labels/throttles.py.
+        "labels_batch": env("LABELS_BATCH_THROTTLE_RATE", default="10/min"),
+        "labels_render": env("LABELS_RENDER_THROTTLE_RATE", default="60/min"),
     },
 }
 

@@ -45,6 +45,7 @@ from .label_rendering import (
     render_code_svg,
     render_label_pdf,
 )
+from .throttles import RENDER_THROTTLES
 from .zpl import DEFAULT_DPMM, SUPPORTED_DPMM, render_label_zpl
 from .element_layout_render import render_element_layout_pdf, render_element_layout_png
 from .element_layout_render.fonts import FontNotAvailable, available_font_families
@@ -171,7 +172,7 @@ class LabelViewSet(viewsets.ModelViewSet):
             self.get_serializer(copy).data, status=status.HTTP_201_CREATED
         )
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], throttle_classes=RENDER_THROTTLES)
     def pdf(self, request, pk=None):
         """GET /api/v1/labels/labels/<id>/pdf/
 
@@ -327,7 +328,7 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
             self.get_serializer(copy).data, status=status.HTTP_201_CREATED
         )
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], throttle_classes=RENDER_THROTTLES)
     def preview(self, request, pk=None):
         """GET /api/v1/labels/templates/<id>/preview/
 
@@ -421,6 +422,8 @@ class PreviewLabelView(APIView):
     real.
     """
 
+    throttle_classes = RENDER_THROTTLES
+
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.render")]
 
@@ -485,6 +488,8 @@ class RenderLabelView(APIView):
     correspondan, así que errarle no rompe nada pero saca la etiqueta a
     otra escala. Ver ``apps.labels.zpl``.
     """
+
+    throttle_classes = RENDER_THROTTLES
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.render")]
@@ -825,7 +830,7 @@ class ElementLayoutViewSet(viewsets.ModelViewSet):
             target_repr=target_repr,
         )
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], throttle_classes=RENDER_THROTTLES)
     def render(self, request, pk=None):
         """POST /api/v1/labels/element-layouts/<id>/render/
 

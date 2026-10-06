@@ -29,6 +29,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .throttles import BATCH_THROTTLES
+
 from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
@@ -356,6 +358,9 @@ class LabelBatchView(APIView):
     (8 = 203 dpi por defecto, 12 = 300) y ``page_layout`` se ignora: no hay
     hoja que aprovechar, el rollo ya viene troquelado.
     """
+
+    # Cada lote ocupa un worker varios segundos: límite propio (ver throttles.py).
+    throttle_classes = BATCH_THROTTLES
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.batch")]

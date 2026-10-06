@@ -11,16 +11,8 @@
 #   - el frontend y Caddy, que en desarrollo no hacen falta
 #   - la base NO expone el puerto al exterior
 #
-# Antes de levantar hace falta un .env en esta carpeta con, como mínimo:
-#   DOMINIO=rotulos.tudominio.com
-#   SECRET_KEY=...
-#   POSTGRES_PASSWORD=...
-#   ALLOWED_HOSTS=rotulos.tudominio.com
-#   FRONTEND_URL=https://rotulos.tudominio.com
-#   INTEGRATIONS_PUBLIC_BASE_URL=https://rotulos.tudominio.com
-#   PASSWORD_RESET_URL=https://rotulos.tudominio.com/reset-password.html
-#   EMAIL_VERIFICATION_URL=https://rotulos.tudominio.com/verify-email.html
-#   TIENDANUBE_APP_ID=...  TIENDANUBE_CLIENT_SECRET=...  FERNET_KEY=...
+# Antes de levantar hace falta un .env en esta carpeta: copiarlo de
+# .env.prod.example, que lista todas las variables y cómo generar cada secreto.
 
 name: rotulos-perso-prod
 
@@ -54,6 +46,7 @@ services:
     # un paso aparte para que no corran en paralelo.
     command: >
       sh -c "python manage.py migrate --noinput &&
+             python manage.py createcachetable &&
              python manage.py collectstatic --noinput &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile -"
     volumes:
@@ -71,7 +64,9 @@ services:
       # (SECURE_SSL_REDIRECT), y esta consulta va por HTTP plano contra el
       # propio contenedor. Sin la cabecera, Django contesta 301 y el
       # contenedor quedaría marcado como caído estando perfecto.
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.Request('http://127.0.0.1:8000/api/v1/health/ready/', headers={'X-Forwarded-Proto':'https','Host':'127.0.0.1'}); sys.exit(0 if urllib.request.urlopen(r, timeout=5).status==200 else 1)\""]
+      # El Host es el DOMINIO, no 127.0.0.1: ALLOWED_HOSTS solo tiene el
+      # dominio real, y con otro Host Django contesta 400 (DisallowedHost).
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.Request('http://127.0.0.1:8000/api/v1/health/ready/', headers={'X-Forwarded-Proto':'https','Host':'${DOMINIO}'}); sys.exit(0 if urllib.request.urlopen(r, timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -121,6 +116,59 @@ services:
     depends_on:
       - api
       - web
+
+  # Backup diario de la base y de media (ver backup/backup.sh y HELP_ME.md).
+  # Las copias quedan en ./backups, una carpeta del servidor y NO un volumen:
+  # `docker compose down -v` borra los volúmenes, y se llevaría los datos y
+  # sus backups juntos.
+  backup:
+    build: ./backup
+    environment: &backup_env
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-rotulos}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-rotulos}
+      TZ: ${BACKUP_TZ:-America/Argentina/Buenos_Aires}
+      BACKUP_HOUR: ${BACKUP_HOUR:-03:00}
+      BACKUP_KEEP_LOCAL: ${BACKUP_KEEP_LOCAL:-7}
+      BACKUP_RUN_ON_START: ${BACKUP_RUN_ON_START:-1}
+      # Copia externa cifrada (opcional): vacío = solo copia local.
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    # Solo lo que necesita, no el .env entero: este contenedor no tiene por
+    # qué ver SECRET_KEY ni las credenciales de Tiendanube.
+    volumes:
+      - media:/media:ro
+      - ./backups:/backups
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Sano = hubo un backup completo (local y, si está configurada, la
+      # copia externa) en las últimas 26 horas.
+      test: ["CMD-SHELL", "test -f /backups/.ultimo-ok && [ $$(( $$(date +%s) - $$(cat /backups/.ultimo-ok) )) -lt 93600 ]"]
+      interval: 5m
+      timeout: 10s
+      start_period: 10m
+
+  # Restauración: NO arranca con `up` (profile). Se usa a mano, con la API y
+  # el worker frenados:  docker compose -f docker-compose.prod.yml run --rm restore
+  # Es aparte del backup porque necesita escribir en media, y el servicio que
+  # corre todos los días no tiene por qué poder hacerlo.
+  restore:
+    build: ./backup
+    profiles: ["restore"]
+    entrypoint: ["restore.sh"]
+    environment: *backup_env
+    volumes:
+      - media:/media
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:

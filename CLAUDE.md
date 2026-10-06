@@ -98,6 +98,31 @@ failed events are visible in the Django admin (`IntegrationEvent`, filters by st
 tests/dev work without Docker or Postgres. `backend/db.sqlite3*` is gitignored: databases
 never go in the repository.
 
+No Redis anywhere. In production (`prod.py`) the cache is `DatabaseCache` (table `django_cache`, created
+by `createcachetable` in the `api` command of `docker-compose.prod.yml`) so DRF throttle counters are
+shared by all gunicorn workers; dev/tests keep Django's per-process `LocMemCache`.
+
+Rate limits (`DEFAULT_THROTTLE_RATES`, all overridable from `.env`): besides the general `anon`/`user`
+ones, anything that **sends email** is limited per destination email and per day per IP (`auth_views`:
+`PasswordResetEmailThrottle`, `PasswordResetDailyThrottle`, `RegisterDailyThrottle` — the SMTP daily quota
+is shared, exhausting it stops everyone's resets); anything that **draws labels** uses
+`labels/throttles.py` (`BATCH_THROTTLES`, `RENDER_THROTTLES`, one shared counter for all renders); anything
+that **calls Claude** has a per-minute and a per-day limit, applied only to `create`/`retry`
+(`processing/views.py`). Per-account login lockout is `LoginLockout` (3 failures → 1 h), not a throttle.
+A new endpoint of one of those kinds must use the matching throttle.
+
+`/media` in production is a whitelist (`Caddyfile`): Caddy serves without auth only what the frontend shows
+with `<img src>` — `labels/thumbs/`, `labels/templates/`, `labels/logos/`, `store_logos/`. Everything else
+(`documents/`, `store_labels/`, `orders/imports/`, `rotulos/`) holds buyer data and answers 404 there; it
+leaves only through authenticated API views (`documents/<id>/download/`, the signed store-label download).
+A new `upload_to` folder is closed until it is added to that list — never add one with buyer data.
+
+Backups: the `backup` service (`backup/`, image = `postgres:17-alpine` + restic) dumps the DB
+(`pg_dump -Fc`) and tars `media` daily into `./backups/` (a host folder, not a volume, so `down -v` can't
+take data and backups together), optionally pushing them encrypted with restic (`RESTIC_REPOSITORY`).
+Restore is the `restore` service (profile `restore`, the only one that mounts `media` read-write); it
+refuses while other connections are open. If the DB major version changes, change both images together.
+
 ### Frontend
 
 No build step. Open the HTML files directly or serve `frontend/` with any static server. The API base URL

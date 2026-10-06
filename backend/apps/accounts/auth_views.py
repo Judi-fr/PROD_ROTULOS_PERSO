@@ -8,6 +8,7 @@ haya autenticado el usuario:
     {"access": "<JWT>", "refresh": "<JWT>", "user": {...}}
 """
 
+import hashlib
 import re
 from math import ceil
 
@@ -25,7 +26,8 @@ from google.oauth2 import id_token
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.settings import api_settings
+from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.token_blacklist.models import (
@@ -50,6 +52,68 @@ def normalize_email(raw):
     email tal cual) podría crear una cuenta duplicada frente al login manual.
     """
     return (raw or "").strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# Throttles de las vistas que mandan correos.
+#
+# Los de minuto por IP (scopes "password_reset"/"email_verification") frenan
+# ráfagas, pero no alcanzan: una sola IP puede pedir miles de correos por día
+# y agotar el cupo diario del SMTP (un Gmail ronda los 500), y entonces nadie
+# más recibe resets ni verificaciones. Y desde muchas IPs se le llena la
+# casilla a una víctima. Por eso se suman límites por EMAIL destino y por día.
+# ---------------------------------------------------------------------------
+
+
+class PasswordResetEmailThrottle(SimpleRateThrottle):
+    """Pedidos de reset hacia un mismo email, vengan de la IP que vengan.
+
+    La clave es un hash del email, no el email: la tabla de caché no tiene por
+    qué guardar direcciones. Cuenta exista o no la cuenta, así el 429 tampoco
+    revela qué emails están registrados.
+    """
+
+    scope = "password_reset_email"
+
+    def get_cache_key(self, request, view):
+        email = normalize_email(request.data.get("email"))
+        if not email:
+            return None  # sin email la vista ya responde 400
+        digest = hashlib.sha256(email.encode("utf-8")).hexdigest()
+        return self.cache_format % {"scope": self.scope, "ident": digest}
+
+
+class IPDailyThrottle(SimpleRateThrottle):
+    """Cuenta por IP SIEMPRE, con o sin sesión.
+
+    AnonRateThrottle ignora a los usuarios logueados: bastaría con crearse una
+    cuenta para pedir resets hacia cualquier email sin tope diario.
+    """
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+class PasswordResetDailyThrottle(IPDailyThrottle):
+    """Tope diario de pedidos de reset por IP."""
+
+    scope = "password_reset_daily"
+
+
+class RegisterDailyThrottle(IPDailyThrottle):
+    """Tope diario de altas por IP: cada alta manda un correo de verificación."""
+
+    scope = "register_daily"
+
+
+class EmailVerificationHourlyThrottle(SimpleRateThrottle):
+    """Reenvíos del correo de verificación por usuario y por hora."""
+
+    scope = "email_verification_hourly"
+
+    def get_cache_key(self, request, view):
+        ident = request.user.pk if request.user.is_authenticated else self.get_ident(request)
+        return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
 def tokens_for_user(user):
@@ -426,6 +490,8 @@ class RegisterView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # Los límites generales más un tope diario por IP (ver RegisterDailyThrottle).
+    throttle_classes = [*api_settings.DEFAULT_THROTTLE_CLASSES, RegisterDailyThrottle]
 
     def post(self, request):
         email = normalize_email(request.data.get("email"))
@@ -572,8 +638,9 @@ class PasswordResetRequestView(APIView):
     """
 
     permission_classes = [AllowAny]
-    # Frena el envío masivo de correos (email bombing) a una víctima.
-    throttle_classes = [ScopedRateThrottle]
+    # Frena el envío masivo de correos (email bombing) a una víctima: ráfagas
+    # por IP, pedidos hacia un mismo email y un tope diario por IP.
+    throttle_classes = [ScopedRateThrottle, PasswordResetEmailThrottle, PasswordResetDailyThrottle]
     throttle_scope = "password_reset"
 
     # Respuesta única: no revela si el email está registrado o no.
@@ -776,7 +843,7 @@ class EmailVerificationResendView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ScopedRateThrottle, EmailVerificationHourlyThrottle]
     throttle_scope = "email_verification"
 
     def post(self, request):
