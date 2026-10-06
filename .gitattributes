@@ -1,0 +1,8 @@
+# Archivos que se ejecutan o se leen DENTRO de los contenedores Linux: siempre
+# con fin de línea LF, aunque el repo se clone en Windows con core.autocrlf.
+# Un script con CRLF falla con "not found" (el intérprete pasa a ser "sh\r")
+# y el contenedor del frontend queda reiniciándose en loop.
+*.sh          text eol=lf
+Dockerfile    text eol=lf
+Caddyfile     text eol=lf
+*.conf        text eol=lf

@@ -31,6 +31,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import account_settings_for
+from .throttles import BATCH_THROTTLES
+
 from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
@@ -358,6 +360,9 @@ class LabelBatchView(APIView):
     impresora (lo que dijeran ``output``/``dpmm`` no aplica) y la respuesta
     trae ``print_job`` — o ``print_error`` si el lote no salió.
     """
+
+    # Cada lote ocupa un worker varios segundos: límite propio (ver throttles.py).
+    throttle_classes = BATCH_THROTTLES
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.batch")]

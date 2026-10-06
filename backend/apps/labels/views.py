@@ -46,6 +46,7 @@ from .label_rendering import (
 from . import label_images
 from .template_versions import record_version, restore_version
 from .thumbnails import refresh_template_thumbnail
+from .throttles import RENDER_THROTTLES
 from .zpl import DEFAULT_DPMM, SUPPORTED_DPMM, render_label_zpl
 from .serializers import (
     LabelImageSerializer,
@@ -301,7 +302,7 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
             self.get_serializer(copy).data, status=status.HTTP_201_CREATED
         )
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], throttle_classes=RENDER_THROTTLES)
     def preview(self, request, pk=None):
         """GET /api/v1/labels/templates/<id>/preview/
 
@@ -339,7 +340,7 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
     def _get_version(self, template, number):
         return get_object_or_404(template.versions, number=number)
 
-    @action(detail=True, methods=["get"], url_path=r"versions/(?P<number>\d+)/preview")
+    @action(detail=True, methods=["get"], throttle_classes=RENDER_THROTTLES, url_path=r"versions/(?P<number>\d+)/preview")
     def version_preview(self, request, pk=None, number=None):
         """GET /api/v1/labels/templates/<id>/versions/<n>/preview/ — el PDF de
         ejemplo de esa versión, igual que ``preview`` con la actual."""
@@ -473,6 +474,8 @@ class PreviewLabelView(APIView):
     real.
     """
 
+    throttle_classes = RENDER_THROTTLES
+
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.render")]
 
@@ -598,6 +601,8 @@ class RenderLabelView(APIView):
     correspondan, así que errarle no rompe nada pero saca la etiqueta a
     otra escala. Ver ``apps.labels.zpl``.
     """
+
+    throttle_classes = RENDER_THROTTLES
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.render")]
