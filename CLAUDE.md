@@ -550,7 +550,8 @@ permission (UI-only gating; the backend re-checks every permission server-side).
   las páginas grandes existentes sin pedirlo.
 - **Funciones compartidas del frontend van en `assets/js/utils.js`** — no copiarlas en cada página.
 - Después de crear una migración, correr `python manage.py migrate` sobre la base local además de probarla.
-- Nunca ejecutar `git pull`, `git push` ni `git commit`. Solo copia local.
+- `git commit`, `git push` y `git pull` solo cuando el usuario lo pide explícitamente; nunca por iniciativa
+  propia. Antes de commitear, revisar que no se suba ningún secreto (`.env`, bases, `backups/`).
 - Nunca modificar tests para que pasen: corregir la implementación.
 - Nunca usar URLs placeholder. La API real es `http://127.0.0.1:8000/api/v1/`.
 - Antes de modificar: inspeccionar el código, identificar la causa exacta, cambio mínimo. Nada de
