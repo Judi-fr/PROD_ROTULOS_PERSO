@@ -44,6 +44,12 @@ source venv/bin/activate
 `DJANGO_SETTINGS_MODULE` selects `config.settings.dev` or `config.settings.prod`; both import from
 `config/settings/base.py`. `manage.py` defaults to `dev`.
 
+**CI** (`.github/workflows/ci.yml`, every push/PR to `main`): the suite runs against **Postgres 17**, not
+SQLite — an in-memory SQLite ignores things Postgres enforces (closing a connection inside a test's
+transaction was invisible locally and broke 13 tests there). It also builds the production images and
+runs `shellcheck` on the backup scripts. `tblib` is installed only in CI so a test failing in parallel
+shows its real error instead of "cannot pickle 'traceback'".
+
 **Logging** is configured in `base.py`, not only in prod. Everything under the `apps.` namespace goes to
 a formatted console handler at `LOG_LEVEL` (default `INFO`; `prod.py` starts it at `WARNING`), and the
 `django` logger is declared with `propagate: False` so its records don't come out twice — once bare from

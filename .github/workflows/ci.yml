@@ -1,0 +1,117 @@
+# CI: corre en cada push y en cada pull request contra main.
+#
+# Tres trabajos en paralelo, cada uno atrapa una clase distinta de error:
+#   - tests:   la suite de Django contra Postgres 17, el mismo motor y versión
+#              que producción (SQLite deja pasar errores que Postgres no).
+#   - docker:  construye las imágenes de docker-compose.prod.yml. Un Dockerfile
+#              roto no lo ve ningún test, y se descubre recién en el servidor.
+#   - scripts: shellcheck sobre los scripts de backup/restore, que corren en
+#              producción sin que nadie los mire hasta el día que hacen falta.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Un push nuevo a la misma rama cancela la corrida anterior: solo importa la última.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (Django + Postgres 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      # Valores solo para tests: no son secretos de ningún entorno real.
+      SECRET_KEY: ci-solo-para-tests-no-es-un-secreto-real-0123456789
+      DEBUG: "False"
+      CORS_ALLOWED_ORIGINS: http://localhost:8001
+      EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"   # la misma que backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # Las mismas fuentes que instala la imagen de producción: los tests del
+      # render PNG las usan.
+      - name: Fuentes TTF
+        run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+
+      - name: Dependencias
+        # tblib no es de producción: sin él, un test que falla en paralelo
+        # tira "cannot pickle 'traceback'" y esconde el error real.
+        run: pip install -r requirements.txt tblib
+
+      - name: Chequeo de Django
+        run: python manage.py check
+
+      - name: Migraciones al día
+        # Falla si alguien cambió un modelo y no generó la migración.
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Tests
+        run: python manage.py test --parallel auto --noinput
+
+  docker:
+    name: Imágenes Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker-compose.prod.yml exige un .env (env_file y ${DOMINIO:?...}).
+      # Se arma desde la plantilla con valores de mentira: solo se construye.
+      - name: .env de prueba
+        run: |
+          cp .env.prod.example .env
+          sed -i 's|^DOMINIO=.*|DOMINIO=ci.example.com|; s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci|' .env
+
+      - name: Configuración de Compose válida
+        run: docker compose -f docker-compose.prod.yml config --quiet
+
+      - name: Construir imágenes
+        run: docker compose -f docker-compose.prod.yml build api web backup
+
+  scripts:
+    name: Scripts de backup (shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        # sh y no bash: corren en Alpine (busybox).
+        run: shellcheck --shell=sh --severity=warning backup/*.sh frontend/docker-entrypoint.sh

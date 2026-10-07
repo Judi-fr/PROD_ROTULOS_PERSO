@@ -9,10 +9,25 @@ o para probar a mano).
 import time
 
 from django.core.management.base import BaseCommand
-from django.db import close_old_connections
+from django.db import connections
 
 from apps.integrations.events import process_due_events
 from apps.integrations.store_labels import expire_stale_requests
+
+
+def close_stale_connections():
+    """Como ``close_old_connections()``, pero sin tocar una conexión que está
+    dentro de una transacción abierta.
+
+    Cerrarla le cortaría la transacción a quien llamó al comando (un
+    ``call_command`` dentro de ``atomic()``, o un TestCase sobre Postgres:
+    con SQLite en memoria Django ignora el cierre y el problema no se ve).
+    Django hace lo mismo en el ciclo de un request: nunca cierra conexiones a
+    mitad de una transacción.
+    """
+    for conn in connections.all(initialized_only=True):
+        if not conn.in_atomic_block:
+            conn.close_if_unusable_or_obsolete()
 
 
 class Command(BaseCommand):
@@ -33,7 +48,7 @@ class Command(BaseCommand):
             while True:
                 # Un worker de larga duración no puede quedarse con una
                 # conexión a la base que el servidor ya cerró.
-                close_old_connections()
+                close_stale_connections()
                 # Antes del lote: los rótulos que la tienda pidió y quedaron
                 # pendientes demasiado tiempo se dan por fallidos con motivo,
                 # en vez de dejar que la plataforma los venza en silencio.
