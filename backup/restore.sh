@@ -44,7 +44,7 @@ else
 fi
 
 [ -n "$DIR" ] && [ -f "$DIR/base.dump" ] && [ -f "$DIR/media.tar.gz" ] \
-    || fallar "no encontré una copia completa (buscaba '$ORIGEN'). Copias locales: $(ls /backups 2>/dev/null | grep '^20' | tr '\n' ' ')"
+    || fallar "no encontré una copia completa (buscaba '$ORIGEN'). Copias locales: $(find /backups -mindepth 1 -maxdepth 1 -type d -name '20*' -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
 
 # --- 2. Verificar que la copia está sana --------------------------------------
 (cd "$DIR" && sha256sum -c -s SHA256SUMS) || fallar "la copia $DIR está corrupta (no coinciden las sumas SHA256)."
