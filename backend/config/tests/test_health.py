@@ -60,3 +60,24 @@ class ReadinessTests(TestCase):
 
     def test_no_necesita_autenticacion(self):
         self.assertEqual(self.client.get(self.URL).status_code, 200)
+
+
+class HealthWithoutCacheTableTests(TestCase):
+    """Producción guarda los contadores de throttle en una tabla de la base
+    (django_cache). Si esa tabla falta, las sondas no pueden caerse por eso:
+    la imagen no la crea sola, y un 500 acá hace que ECS mate la tarea."""
+
+    CACHE_SIN_TABLA = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": "tabla_de_cache_que_no_existe",
+        }
+    }
+
+    def test_liveness_no_depende_de_la_cache(self):
+        with self.settings(CACHES=self.CACHE_SIN_TABLA):
+            self.assertEqual(self.client.get("/api/v1/health/").status_code, 200)
+
+    def test_readiness_no_depende_de_la_cache(self):
+        with self.settings(CACHES=self.CACHE_SIN_TABLA):
+            self.assertEqual(self.client.get("/api/v1/health/ready/").status_code, 200)

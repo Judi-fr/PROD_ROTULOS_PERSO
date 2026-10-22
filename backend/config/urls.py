@@ -12,6 +12,10 @@ urlpatterns = [
     # Dos sondas, con jobs distintos: liveness no toca nada y readiness
     # consulta la base (ver config/health.py).
     path("api/v1/health/", LivenessView.as_view(), name="health"),
+    # La misma sonda sin barra final: el health check del balanceador de AWS
+    # quedó configurado así, y con APPEND_SLASH Django le contestaría un 301
+    # que el balanceador cuenta como falla (y ECS reemplaza la tarea en loop).
+    path("api/v1/health", LivenessView.as_view()),
     path("api/v1/health/ready/", ReadinessView.as_view(), name="health-ready"),
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/", include("apps.accounts.user_admin_urls")),  # CRUD de usuarios (admin)
