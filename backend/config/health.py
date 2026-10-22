@@ -39,6 +39,12 @@ class LivenessView(APIView):
     # ni token ni sesión.
     authentication_classes = []
     permission_classes = [AllowAny]
+    # Sin throttle: los contadores viven en la caché, que en producción es
+    # una tabla de Postgres (prod.py). Con el throttle por defecto, esta
+    # sonda tocaba la base en cada llamada — y daba 500 si la tabla
+    # django_cache no existía, con lo que ECS reemplazaba la tarea en loop.
+    # Además el balanceador no puede quedar limitado por cuota.
+    throttle_classes = []
 
     def get(self, request):
         return Response({"status": "ok", "service": SERVICE_NAME})
@@ -54,6 +60,9 @@ class ReadinessView(APIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    # Sin throttle, por lo mismo que liveness: un problema de la base tiene
+    # que salir como 503 desde _check_database, no como 500 desde la caché.
+    throttle_classes = []
 
     def get(self, request):
         checks = {"database": self._check_database()}
