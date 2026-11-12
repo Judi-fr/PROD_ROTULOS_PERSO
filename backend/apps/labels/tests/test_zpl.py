@@ -488,7 +488,13 @@ class BatchZplTests(APITestCase):
     URL = "/api/v1/labels/batch/"
 
     def setUp(self):
+        from django.core.cache import cache
+
         from apps.documents.models import Document
+
+        # El límite de lotes (labels_batch, 10/min) cuenta en la caché, que
+        # sobrevive entre tests: esta clase pide más de 10 lotes seguidos.
+        cache.clear()
 
         self.Document = Document
         subscriber, _ = Group.objects.get_or_create(name="subscriber")
