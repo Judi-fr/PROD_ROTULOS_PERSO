@@ -6,19 +6,25 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
     <title>Mis Documentos</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <link
-      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
 
     <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
     <link rel="stylesheet" href="assets/css/documentos.css" />
   </head>
-  <body>
+  <body data-requires="documents.view">
     <div class="layout">
       <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
-      <header class="topbar" id="appTopbar" data-links='[{"href": "dashboard.html", "label": "Volver al panel"}]'></header>
+      <header class="topbar" id="appTopbar" data-links='[{"href": "imprimir_rotulos.html", "label": "Imprimir rótulos", "perm": "labels.batch"}, {"href": "cola_impresion.html", "label": "Cola de impresión", "perm": "labels.batch"}, {"href": "dashboard.html", "label": "Volver al panel"}]'></header>
 
       <main class="main">
         <div class="main-heading">
@@ -40,7 +46,7 @@
         <section class="profile-card">
           <div class="profile-card-title">
             <span>Documentos</span>
-            <a class="btn btn-primary btn-small" href="mis_rotulos.html">
+            <a class="btn btn-primary btn-small" href="imprimir_rotulos.html">
               + Generar por lote
             </a>
           </div>
@@ -61,7 +67,7 @@
             </div>
 
             <div id="documentList" class="document-list">
-              <p class="empty-state">Cargando documentos...</p>
+              <p class="empty-state"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
             </div>
           </div>
         </section>

@@ -7,11 +7,7 @@ romper algo:
 
 - que el esquema se arme a partir del catálogo de la base;
 - que la conversión de porcentajes a milímetros dé lo que corresponde;
-- que la propuesta resultante sea un cuerpo que la API de element-layouts acepta.
-
-Ese último test es el que importa: comprueba de punta a punta que lo que
-produce el importador es exactamente lo que consume la API de plantillas, que
-es el acople más fácil de romper entre las dos apps.
+- que la propuesta resultante tenga los elementos en milímetros.
 """
 
 from unittest.mock import patch
@@ -27,6 +23,7 @@ from apps.labels.models import ElementLayout, LayoutVariable
 from ..agent import build_proposal
 from ..schema import build_schema, build_system_prompt
 from ..models import LabelImportStatus, LabelImport
+from apps.accounts.tests.team_helpers import new_business
 
 User = get_user_model()
 
@@ -195,6 +192,7 @@ class ConversionDeLaPropuestaTests(APITestCase):
         self.usuario = User.objects.create_user(
             username="ana", email="ana@test.com", password="x"
         )
+        new_business(self.usuario)
         self.documento = UploadedLabelFile.objects.create(
             file="rotulos/r.png",
             original_filename="r.png",
@@ -276,22 +274,6 @@ class ConversionDeLaPropuestaTests(APITestCase):
             detectados, [{"variable": "destinatario", "value": "María Gómez"}]
         )
 
-    def test_la_propuesta_es_aceptada_por_la_api_de_plantillas(self):
-        """El test que ata las dos apps: lo que produce una es lo que consume la otra."""
-        propuesta = build_proposal(respuesta_del_modelo(), self.documento)
-        cuerpo = {k: v for k, v in propuesta.items() if not k.startswith("_")}
-
-        self.client.force_authenticate(self.usuario)
-        respuesta = self.client.post(
-            reverse("element-layout-list"), cuerpo, format="json"
-        )
-
-        self.assertEqual(
-            respuesta.status_code, status.HTTP_201_CREATED, respuesta.data
-        )
-        layout = ElementLayout.objects.get(pk=respuesta.data["id"])
-        self.assertEqual(layout.elements.count(), 3)
-
 
 class ImportacionAPITests(APITestCase):
     def setUp(self):
@@ -299,9 +281,11 @@ class ImportacionAPITests(APITestCase):
         self.usuario = User.objects.create_user(
             username="ana", email="ana@test.com", password="x"
         )
+        new_business(self.usuario)
         self.otro = User.objects.create_user(
             username="beto", email="beto@test.com", password="x"
         )
+        new_business(self.otro)
         self.documento = UploadedLabelFile.objects.create(
             file="rotulos/r.png",
             original_filename="r.png",

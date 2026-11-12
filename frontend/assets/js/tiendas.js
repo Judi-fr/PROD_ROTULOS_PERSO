@@ -1,10 +1,16 @@
 // Tiendas conectadas (backend: apps.integrations).
 //
-// - Conectar Tiendanube: pide la URL de autorización y lleva al comerciante
-//   a Tiendanube.
+// - Conectar una tienda: connectStore pide la URL de autorización y lleva al
+//   comerciante a su plataforma. Lo propio de cada plataforma (sus
+//   formularios, la conexión manual, el plugin de Woo...) está en
+//   assets/js/<plataforma>/tiendas_<plataforma>.js, que tiendas.html carga
+//   DESPUÉS de este archivo: usan las funciones de acá, y este archivo los
+//   llama (renderPrintPlugin, openVtexReconnect, renderRatesPush,
+//   openMagentoReconnect, renderEmpretiendaImport, openEmpretiendaReconnect)
+//   recién al dibujar las tiendas, cuando ya cargaron.
 // - Vuelta de la instalación: el backend redirige a esta página con
 //   ?store_connected=<id>, ?store_claim=<token> o ?store_error=<código>
-//   (ver TiendanubeCallbackView). Un store_claim se canjea para vincular la
+//   (ver StoreOAuthCallbackView). Un store_claim se canjea para vincular la
 //   tienda a la cuenta; si no hay sesión, se guarda y se retoma después del
 //   login (index.html vuelve acá cuando existe pendingStoreClaim).
 // - Lista de tiendas con su estado, errores y la acción de desconectar.
@@ -15,17 +21,23 @@
 const INTEGRATIONS_API = `${window.APP_CONFIG.API_BASE}/integrations`;
 const STORES_URL = `${INTEGRATIONS_API}/stores/`;
 const TEMPLATES_URL = `${window.APP_CONFIG.API_BASE}/labels/templates/`;
-const INSTALL_URL = `${INTEGRATIONS_API}/tiendanube/install-url/`;
+// Transportistas (apps/carriers): para elegir con cuál se despacha desde el
+// admin de cada tienda.
+const CARRIERS_URL = `${window.APP_CONFIG.API_BASE}/carriers/`;
 const PENDING_CLAIM_KEY = "pendingStoreClaim";
+const PLATFORM_LABELS = { tiendanube: "Tiendanube", shopify: "Shopify", woocommerce: "WooCommerce", vtex: "VTEX", magento: "Magento", empretienda: "Empretienda" };
 
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
 
+// La vuelta del OAuth no dice de qué plataforma venía: los textos no la nombran.
 const STORE_ERROR_MESSAGES = {
-  missing_code: "Tiendanube no devolvió el código de autorización. Probá conectar la tienda de nuevo.",
-  authorization_cancelled: "Se canceló la autorización en Tiendanube: la tienda no se conectó.",
-  invalid_state: "El enlace de instalación venció o no es válido. Tocá “Conectar Tiendanube” otra vez.",
-  authorization_rejected: "Tiendanube rechazó la autorización (el código venció o ya se usó). Probá de nuevo.",
-  provider_unavailable: "No pudimos comunicarnos con Tiendanube. Probá de nuevo en unos minutos.",
+  missing_code: "La plataforma no devolvió el código de autorización. Probá conectar la tienda de nuevo.",
+  authorization_cancelled: "Se canceló la autorización: la tienda no se conectó.",
+  invalid_state: "El enlace de instalación venció o no es válido. Volvé a tocar “Conectar”.",
+  invalid_signature: "No pudimos verificar que la instalación venga de la plataforma. Volvé a tocar “Conectar”.",
+  invalid_shop: "El dominio de la tienda no es válido. Revisalo y volvé a intentar.",
+  authorization_rejected: "La plataforma rechazó la autorización (el código venció o ya se usó). Probá de nuevo.",
+  provider_unavailable: "No pudimos comunicarnos con la plataforma. Probá de nuevo en unos minutos.",
   owned_by_other_account: "Esa tienda ya está vinculada a otra cuenta. Si es tuya, escribinos desde Ayuda / Soporte.",
 };
 
@@ -52,8 +64,55 @@ function createElement(tag, className, text) {
   return node;
 }
 
+// Cartel con el resultado de conectar una tienda, debajo de los formularios
+// de conexión (el #pageMessage de arriba queda fuera de la vista desde ahí).
+// code: el número de error (estado HTTP) o el código que devolvió la
+// plataforma; se muestra para que el comerciante lo pueda citar en soporte.
+function showConnectResult(text, type = "error", code = null) {
+  setConnectCardOpen(true);
+  const el = document.getElementById("connectMessage");
+  if (!el) {
+    showMessage(code ? `Error ${code}: ${text}` : text, type);
+    return;
+  }
+  el.replaceChildren();
+  if (type === "error" && code) {
+    el.appendChild(createElement("span", "connect-message-code", `Error ${code}: `));
+  }
+  el.appendChild(document.createTextNode(text));
+  el.className = `page-message connect-message ${type}`;
+  el.hidden = false;
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// "Conectar una tienda" es un desplegable: con tiendas ya conectadas arranca
+// cerrado (lo que se busca suele ser "Mis tiendas"), sin ninguna arranca
+// abierto. Una vez que el comerciante lo abre o cierra, no se lo cambiamos
+// solos, salvo para mostrarle el resultado de una conexión.
+let connectCardTouched = false;
+
+function setConnectCardOpen(open) {
+  const card = document.getElementById("connectCard");
+  if (card) card.open = open;
+}
+
+function syncConnectCard(stores) {
+  if (connectCardTouched) return;
+  const message = document.getElementById("connectMessage");
+  if (message && !message.hidden) return;
+  setConnectCardOpen(!stores.length);
+}
+
+// Error con el número a mostrar: el estado HTTP de la respuesta. Un fallo de
+// red no tiene respuesta, y un aviso de validación del navegador, tampoco.
+function connectError(message, code = null) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 // ---------------------------------------------------------------------------
-// Vuelta de la instalación en Tiendanube
+// Vuelta de la instalación
 // ---------------------------------------------------------------------------
 
 // Lee el resultado de la query string y la limpia enseguida: el token de
@@ -73,9 +132,9 @@ function readInstallResult() {
 
 function showInstallResult(result) {
   if (result.error) {
-    showMessage(STORE_ERROR_MESSAGES[result.error] || "No se pudo conectar la tienda.");
+    showConnectResult(STORE_ERROR_MESSAGES[result.error] || "No se pudo conectar la tienda.", "error", result.error);
   } else if (result.connected) {
-    showMessage(
+    showConnectResult(
       "¡Listo! Tu tienda quedó conectada. Estamos importando sus pedidos: pueden tardar unos minutos en aparecer.",
       "success"
     );
@@ -110,31 +169,38 @@ async function claimStore(token) {
 // Conectar / desconectar
 // ---------------------------------------------------------------------------
 
-async function connectTiendanube(event) {
-  const button = event?.currentTarget;
+// platform: "tiendanube" | "shopify". shop: dominio de la tienda, solo
+// Shopify (el backend lo valida y lo normaliza).
+async function connectStore(platform, { button, shop } = {}) {
+  const label = PLATFORM_LABELS[platform] || platform;
   if (button) button.disabled = true;
   try {
-    const response = await apiFetch(INSTALL_URL);
+    const query = shop ? `?${new URLSearchParams({ shop })}` : "";
+    const response = await apiFetch(`${INTEGRATIONS_API}/${platform}/install-url/${query}`);
     const data = await response.json().catch(() => ({}));
     if (response.status === 503) {
-      throw new Error("La conexión con Tiendanube todavía no está configurada en el servidor.");
+      throw connectError(`La conexión con ${label} todavía no está configurada en el servidor.`, 503);
     }
     if (!response.ok || !data.authorize_url) {
-      throw new Error(getErrorMessage(data, "No se pudo iniciar la conexión con Tiendanube."));
+      throw connectError(getErrorMessage(data, `No se pudo iniciar la conexión con ${label}.`), response.status);
     }
     window.location.assign(data.authorize_url);
   } catch (err) {
     if (err.isSessionExpired) return;
-    showMessage(err.message || "No se pudo iniciar la conexión con Tiendanube.");
+    showConnectResult(
+      err.code ? err.message : "No pudimos comunicarnos con el servidor. Revisá tu conexión y probá de nuevo.",
+      "error",
+      err.code || null
+    );
     if (button) button.disabled = false;
   }
 }
 
 async function disconnectStore(store, button) {
   const name = store.name || `la tienda ${store.external_store_id}`;
-  const confirmed = window.confirm(
+  const confirmed = await appConfirm(
     `¿Desconectar ${name}? Sus pedidos nuevos van a dejar de entrar. ` +
-      "Para desinstalar la app del todo, hacelo también desde el panel de Tiendanube."
+      `Para desinstalar la app del todo, hacelo también desde el panel de ${store.platform_label || "tu tienda"}.`
   );
   if (!confirmed) return;
 
@@ -165,6 +231,7 @@ function addDetail(list, label, value) {
 
 function renderStoreCard(store) {
   const card = createElement("article", "store-card");
+  card.dataset.storeId = store.id;
 
   const head = createElement("div", "store-card-head");
   const title = createElement("div");
@@ -195,12 +262,32 @@ function renderStoreCard(store) {
   }
 
   card.appendChild(renderSenderForm(store));
+  if (store.platform === "woocommerce" && store.status === "active") {
+    card.appendChild(renderPrintPlugin(store));
+  }
+  if (store.platform === "magento" && store.status === "active") {
+    card.appendChild(renderMagentoModule(store));
+  }
+  if (store.supports_rates_push && store.status === "active") {
+    card.appendChild(renderRatesPush(store));
+  }
+  if (store.platform === "empretienda" && store.status === "active") {
+    card.appendChild(renderEmpretiendaImport(store));
+  }
 
   const actions = createElement("div", "store-actions");
   if (store.status !== "active") {
     const reconnect = createElement("button", "btn btn-primary btn-small", "Volver a conectar");
     reconnect.type = "button";
-    reconnect.addEventListener("click", connectTiendanube);
+    // Shopify y WooCommerce reconectan la misma tienda: su dominio / sitio.
+    const shop =
+      store.platform === "shopify" ? store.external_store_id : store.platform === "woocommerce" ? store.store_url : "";
+    reconnect.addEventListener("click", () => {
+      if (store.platform === "vtex") openVtexReconnect(store);
+      else if (store.platform === "magento") openMagentoReconnect(store);
+      else if (store.platform === "empretienda") openEmpretiendaReconnect(store);
+      else connectStore(store.platform, { button: reconnect, shop });
+    });
     actions.appendChild(reconnect);
   }
   if (store.status !== "revoked") {
@@ -238,15 +325,29 @@ const PRINTER_OPTIONS = [
   { value: "24", label: "Zebra 600 dpi" },
 ];
 
+// Formularios "Rótulos de esta tienda" abiertos, por id de tienda: cada
+// loadStores recrea las tarjetas, y uno abierto no tiene que cerrarse solo
+// (por ejemplo, al guardar).
+const openSenderForms = new Set();
+
 function renderSenderForm(store) {
-  const wrapper = createElement("div", "store-sender");
-  wrapper.appendChild(createElement("h4", "store-sender-title", "Rótulos de esta tienda"));
+  // Desplegable: con varias tiendas, la lista no es una pila de formularios.
+  const wrapper = createElement("details", "store-sender store-sender-collapsible");
+  wrapper.open = openSenderForms.has(store.id);
+  wrapper.addEventListener("toggle", () => {
+    if (wrapper.open) openSenderForms.add(store.id);
+    else openSenderForms.delete(store.id);
+  });
+  const summary = createElement("summary", "store-sender-summary");
+  summary.appendChild(createElement("h4", "store-sender-title", "Rótulos de esta tienda"));
+  wrapper.appendChild(summary);
   wrapper.appendChild(
     createElement(
       "p",
       "store-sender-help",
       "Remitente, logo, plantilla e impresora que se usan al imprimir los rótulos de esta " +
-        "tienda. Si dejás el remitente vacío se usa el nombre de la tienda."
+        "tienda, y con qué transportista se despacha desde su panel. Si dejás el remitente " +
+        "vacío se usa el nombre de la tienda."
     )
   );
 
@@ -299,6 +400,31 @@ function renderSenderForm(store) {
   printerField.appendChild(printerSelect);
   wrapper.appendChild(printerField);
 
+  // Con qué transportista sale "Despachar" desde el admin de la tienda (sin
+  // elegir: el único conectado, o el que la tienda ofrece en su checkout).
+  let carrierSelect = null;
+  if (carriersCache.length) {
+    const carrierField = createElement("div", "field");
+    const carrierLabel = createElement("label", null, "Despachar desde la tienda con");
+    carrierLabel.setAttribute("for", `dispatch_carrier_${store.id}`);
+    carrierSelect = document.createElement("select");
+    carrierSelect.id = `dispatch_carrier_${store.id}`;
+    const automatic = document.createElement("option");
+    automatic.value = "";
+    automatic.textContent = "Que se elija solo (el único conectado)";
+    carrierSelect.appendChild(automatic);
+    carriersCache.forEach((carrier) => {
+      const option = document.createElement("option");
+      option.value = carrier.code;
+      option.textContent = carrier.account.ready ? carrier.name : `${carrier.name} (sin cuenta lista)`;
+      carrierSelect.appendChild(option);
+    });
+    carrierSelect.value = store.dispatch_carrier || "";
+    carrierField.appendChild(carrierLabel);
+    carrierField.appendChild(carrierSelect);
+    wrapper.appendChild(carrierField);
+  }
+
   // Logo: archivo de imagen. Se manda como data URL, igual que el editor.
   const logoField = createElement("div", "field");
   const logoLabel = createElement("label", null, "Logo");
@@ -336,7 +462,12 @@ function renderSenderForm(store) {
     });
     payload.default_template = templateSelect.value ? Number(templateSelect.value) : null;
     payload.label_printer_dpmm = printerSelect.value ? Number(printerSelect.value) : null;
+    if (carrierSelect) payload.dispatch_carrier = carrierSelect.value;
     if (logoInput.files && logoInput.files[0]) {
+      if (logoInput.files[0].size > 2 * 1024 * 1024) {
+        showFeedback(feedback, "El logo pesa más de 2 MB: elegí una imagen más liviana.", false);
+        return;
+      }
       try {
         payload.logo = await readFileAsDataUrl(logoInput.files[0]);
       } catch {
@@ -358,6 +489,20 @@ function readFileAsDataUrl(file) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+// Aviso dentro de una sección de la tarjeta de una tienda, después de
+// redibujar la lista (las tarjetas se recrean en cada loadStores).
+function showStoreFeedback(storeId, sectionSelector, text, ok) {
+  const section = document.querySelector(`[data-store-id="${storeId}"] ${sectionSelector}`);
+  if (section?.tagName === "DETAILS") section.open = true;
+  const feedback = section?.querySelector(".store-sender-msg");
+  if (!feedback) {
+    showMessage(text, ok ? "success" : "error");
+    return;
+  }
+  showFeedback(feedback, text, ok);
+  feedback.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function showFeedback(feedback, text, ok) {
@@ -383,6 +528,21 @@ function fillTemplateOptions(select, selectedId) {
     if (template.id === selectedId) option.selected = true;
     select.appendChild(option);
   });
+}
+
+// Los transportistas y el estado de la cuenta del usuario en cada uno
+// (GET /carriers/, permiso orders.create): sin permiso, no hay selector.
+let carriersCache = [];
+
+async function loadCarriers() {
+  try {
+    const response = await apiFetch(CARRIERS_URL);
+    if (!response.ok) return;
+    carriersCache = (await response.json()).results || [];
+  } catch (err) {
+    if (err.isSessionExpired) return;
+    console.error("Error al cargar transportistas:", err);
+  }
 }
 
 async function loadTemplates() {
@@ -414,8 +574,10 @@ async function saveSettings(store, payload, button, feedback) {
       throw new Error(getErrorMessage(data, "No se pudo guardar."));
     }
     // El logo puede haber cambiado (o borrado): se redibuja la lista con lo
-    // que devolvió el backend, que es la fuente de verdad.
+    // que devolvió el backend, que es la fuente de verdad. El aviso va en la
+    // tarjeta NUEVA de esa tienda: la anterior ya no está en la página.
     await loadStores();
+    showStoreFeedback(store.id, ".store-sender:not(.store-plugin)", "Cambios guardados.", true);
     return;
   } catch (err) {
     if (err.isSessionExpired) return;
@@ -427,10 +589,15 @@ async function saveSettings(store, payload, button, feedback) {
 }
 
 function renderStores(stores) {
+  syncConnectCard(stores);
   const list = document.getElementById("storesList");
   list.replaceChildren();
   if (!stores.length) {
-    list.appendChild(createElement("p", "muted-text", "Todavía no conectaste ninguna tienda."));
+    list.insertAdjacentHTML("beforeend", appEmptyState({
+      icon: "store",
+      title: "Todavía no conectaste ninguna tienda",
+      text: "Elegí tu plataforma en «Conectar una tienda», acá arriba: desde ese momento tus pedidos entran solos.",
+    }));
     return;
   }
   stores.forEach((store) => list.appendChild(renderStoreCard(store)));
@@ -458,8 +625,8 @@ async function loadStores() {
 async function init() {
   const result = readInstallResult();
 
-  if (!window.Auth.getAccessToken()) {
-    // Instaló la app desde Tiendanube sin haber iniciado sesión: se guarda
+  if (!window.Auth.hasSession()) {
+    // Instaló la app desde su plataforma sin haber iniciado sesión: se guarda
     // el enlace de vinculación y se retoma al volver del login.
     if (result.claim) localStorage.setItem(PENDING_CLAIM_KEY, result.claim);
     window.location.replace("index.html");
@@ -467,18 +634,45 @@ async function init() {
   }
 
   window.AppTopbar.render();
+  const permissions = window.Auth.getCurrentUser()?.permissions || [];
+  document.getElementById("apiConnectLink").hidden = !permissions.includes("integrations.manage");
   showInstallResult(result);
 
   const claimToken = result.claim || localStorage.getItem(PENDING_CLAIM_KEY);
   if (claimToken) await claimStore(claimToken);
 
-  // Las plantillas primero: el select de cada tienda las necesita.
-  await loadTemplates();
+  // Las plantillas y los transportistas primero: los selects de cada tienda los necesitan.
+  await Promise.all([loadTemplates(), loadCarriers()]);
   await loadStores();
 }
 
-document.getElementById("connectTiendanubeBtn")?.addEventListener("click", connectTiendanube);
+// Primero se elige la plataforma y aparecen solo sus pasos: las seis juntas, con
+// sus instrucciones técnicas a la vista, abrumaban a quien tiene una sola tienda.
+document.querySelectorAll("[data-platform-pick]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const chosen = button.dataset.platformPick;
+    // Eligió con la lista de tiendas todavía cargando: que no se le cierre la tarjeta.
+    connectCardTouched = true;
+    document.querySelectorAll("[data-platform-pick]").forEach((other) => {
+      const active = other === button;
+      other.setAttribute("aria-pressed", active ? "true" : "false");
+      other.classList.toggle("btn-primary", active);
+      other.classList.toggle("btn-outline", !active);
+    });
+    document.querySelectorAll("[data-platform]").forEach((section) => {
+      section.hidden = section.dataset.platform !== chosen;
+    });
+    const message = document.getElementById("connectMessage");
+    if (message) message.hidden = true;
+  });
+});
+
 document.getElementById("refreshStoresBtn")?.addEventListener("click", loadStores);
+// Se marca con el clic en el título y no con el evento "toggle": ese evento
+// también salta cuando lo abre o cierra setConnectCardOpen.
+document.querySelector("#connectCard > summary")?.addEventListener("click", () => {
+  connectCardTouched = true;
+});
 document.getElementById("logoutBtn")?.addEventListener("click", () => window.Auth.logout());
 
 init();

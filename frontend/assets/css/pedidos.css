@@ -1,177 +1,7 @@
-:root {
-  --bg: #f5f7fb;
-  --card: #ffffff;
-  --border: #e7eaf1;
-  --text-dark: #0f172a;
-  --text-muted: #64748b;
-  --blue: #f97316;
-  --blue-light: #ffedd5;
-  --green: #16a34a;
-  --green-light: #e9f9ee;
-  --amber: #d97706;
-  --amber-light: #fef6e6;
-  --purple: #7c3aed;
-  --purple-light: #f2ecfe;
-  --red: #dc2626;
-  --red-light: #fdeeee;
-}
-
-/* TOPBAR (igual que perfil.html/dashboard.html) */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
-  padding: 16px 28px;
-  gap: 16px;
-}
-
-.btn {
-  border-radius: 8px;
-  padding: 9px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid transparent;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* base.css ya define .btn-outline, pero se carga ANTES que esta hoja: el .btn
-   de acá arriba le pisa el borde (y el fondo, donde lo define) con su shorthand.
-   Se repite para que el botón conserve borde y fondo propios. */
-.btn-outline {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--text-dark);
-}
-
-.btn-small {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.btn-danger-text {
-  background: transparent;
-  border: none;
-  color: var(--red);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 6px 8px;
-}
-
-.btn-danger-text:hover {
-  text-decoration: underline;
-}
-
-/* MAIN */
-.main {
-  flex: 1;
-  padding: 32px 28px 48px;
-  max-width: 780px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.page-message.error {
-  background: var(--red-light);
-  color: var(--red);
-  border: 1px solid #f6c9c9;
-}
-
-.page-message.success {
-  background: var(--green-light);
-  color: var(--green);
-  border: 1px solid #bfe8cc;
-}
-
-/* CARDS (mismo shell que perfil.html) */
-.profile-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  margin-bottom: 22px;
-  overflow: hidden;
-}
-
-.profile-card-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 700;
-  font-size: 15.5px;
-  padding: 16px 22px;
-  border-bottom: 1px solid var(--border);
-}
-
-.field {
-  margin-bottom: 16px;
-}
-
-.field label {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
-.field input,
-.field select {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--text-dark);
-  background: #fff;
-}
-
-.field input:focus,
-.field select:focus {
-  outline: none;
-  border-color: var(--blue);
-}
-
-.field-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.field-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.field-checkbox input {
-  width: auto;
-}
-
-.form-message {
-  font-size: 13.5px;
-  margin: 4px 0 0;
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 6px;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  font-size: 14px;
-  padding: 8px 0;
-}
+/* Lo propio de los pedidos: la lista y cada pedido, su estado, las tiendas
+   con su color, las direcciones y el paginador. Lo carga quien muestra
+   pedidos (Mis pedidos, Imprimir rótulos, las acciones masivas, Direcciones),
+   siempre DESPUÉS de app.css, que tiene la barra, botones, tarjetas y campos. */
 
 /* DIRECCIONES */
 .address-list {
@@ -188,31 +18,34 @@
   gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .address-item-info strong {
-  font-size: 14.5px;
+  font-size: var(--text-base);
 }
 
 .address-item-info p {
   margin: 4px 0 0;
-  font-size: 13.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
+
+.address-item-info .address-item-alias { margin-top: 2px; font-size: var(--text-sm); }
+.address-item-info .address-item-warning { color: var(--warning-500); font-weight: 600; }
 
 .address-item-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .badge-default {
   display: inline-block;
   padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 11.5px;
+  border-radius: var(--radius-xl);
+  font-size: var(--text-xs);
   font-weight: 700;
   background: var(--blue-light);
   color: var(--blue);
@@ -228,7 +61,7 @@
 
 .order-item {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 16px;
 }
 
@@ -242,24 +75,114 @@
 
 .order-item-title {
   font-weight: 700;
-  font-size: 14.5px;
+  font-size: var(--text-base);
 }
 
 .store-tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 9px;
-  border-radius: 20px;
-  font-size: 11.5px;
+  border-radius: var(--radius-xl);
+  font-size: var(--text-xs);
   font-weight: 600;
-  background: var(--purple-light);
-  color: var(--purple);
+  background: var(--store-bg, var(--purple-light));
+  color: var(--store-fg, var(--purple));
   margin-left: 8px;
   vertical-align: middle;
 }
 
+/* FILTRO POR TIENDA: un botón por tienda, con el mismo color que marca sus
+   pedidos en la lista (store-color-N, asignado en pedidos.js). */
+.store-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+}
+
+.store-filter-label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.store-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.store-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  color: var(--text-dark);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.store-chip:hover {
+  border-color: var(--store-fg, var(--text-muted));
+}
+
+.store-chip:focus-visible {
+  outline: 2px solid var(--store-fg, var(--blue));
+  outline-offset: 2px;
+}
+
+.store-chip[aria-pressed="true"] {
+  background: var(--store-bg, var(--text-dark));
+  border-color: var(--store-fg, var(--text-dark));
+  color: var(--store-fg, var(--n-0));
+}
+
+.store-chip.muted {
+  opacity: 0.75;
+}
+
+.store-chip-hint {
+  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.store-chip[aria-pressed="true"] .store-chip-hint {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.store-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--store-fg, currentColor);
+  flex-shrink: 0;
+}
+
+/* Pedido de tienda: borde izquierdo del color de su tienda. */
+.order-item.from-store {
+  border-left: 4px solid var(--store-fg);
+}
+
+/* Paleta de tiendas: distinta de los colores de estado (naranja, verde,
+   ámbar, violeta, rojo) para que una tienda no se lea como un estado. */
+.store-color-0 { --store-fg: #0f766e; --store-bg: #e6f6f4; }
+.store-color-1 { --store-fg: #4338ca; --store-bg: #eceefe; }
+.store-color-2 { --store-fg: #be185d; --store-bg: #fdecf4; }
+.store-color-3 { --store-fg: #0369a1; --store-bg: #e6f3fb; }
+.store-color-4 { --store-fg: #4d7c0f; --store-bg: #eff6e4; }
+.store-color-5 { --store-fg: #475569; --store-bg: #eef1f5; }
+
 .order-item-address {
   margin: 6px 0 0;
-  font-size: 13.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -268,8 +191,8 @@
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12.5px;
+  border-radius: var(--radius-xl);
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
@@ -302,10 +225,10 @@
 }
 
 .order-timeline-step {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   background: var(--bg);
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   padding: 3px 10px;
 }
 
@@ -316,10 +239,6 @@
 }
 
 @media (max-width: 640px) {
-
-  .field-row {
-    grid-template-columns: 1fr;
-  }
   .address-item {
     flex-direction: column;
   }
@@ -332,6 +251,6 @@
   justify-content: center;
   gap: 12px;
   margin: 14px 0 0;
-  font-size: 13.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }

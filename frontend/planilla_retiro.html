@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+
+    <title>Planilla de retiro</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+    <link rel="stylesheet" href="assets/css/pedidos.css" />
+    <link rel="stylesheet" href="assets/css/imprimir_rotulos.css" />
+    <link rel="stylesheet" href="assets/css/acciones_masivas.css" />
+  </head>
+  <body data-requires="orders.manifest">
+    <div class="layout">
+      <header class="topbar" id="appTopbar" data-links='[{"href": "imprimir_rotulos.html", "label": "Imprimir rótulos"}, {"href": "dashboard.html", "label": "Volver al panel"}]'></header>
+
+      <main class="main">
+        <div class="main-heading">
+          <h1>Planilla de retiro</h1>
+          <p>
+            La lista de los pedidos que se lleva el transportista, para que la
+            firme al retirarlos.
+          </p>
+        </div>
+
+        <p id="pageMessage" class="page-message" role="status" aria-live="polite" style="display:none;"></p>
+
+        <!-- Filtros y lista: los dibuja createOrderPicker (utils.js). -->
+        <div id="orderPicker"></div>
+
+        <section class="profile-card">
+          <div class="profile-card-title">Planilla</div>
+          <div class="profile-card-body">
+            <div class="filters-row">
+              <div class="field">
+                <label for="carrierInput">Transportista (opcional)</label>
+                <input type="text" id="carrierInput" maxlength="100" placeholder="Si lo dejás vacío, queda una línea para completar a mano" />
+              </div>
+            </div>
+            <div class="field-checkbox">
+              <input type="checkbox" id="markDispatched" />
+              <label for="markDispatched" style="margin:0;">
+                Marcar los pedidos como despachados
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary" id="generateBtn">Generar planilla</button>
+            </div>
+            <div id="bulkResult"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/dispatch_manifest.js"></script>
+  </body>
+</html>

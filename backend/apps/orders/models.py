@@ -143,6 +143,9 @@ class Order(models.Model):
     # Por dónde entró el pedido (reportes/depuración): default "web" porque
     # es el único origen que existía antes de esta migración.
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.WEB)
+    # Pedido de ejemplo (sample_views): para que un comercio nuevo pruebe
+    # imprimir sin conectar nada; se borran todos juntos con un botón.
+    is_sample = models.BooleanField(default=False)
 
     # --- Integración con el courier (pendiente hasta tener la API) ---
     carrier = models.CharField(max_length=100, blank=True, default="")
@@ -176,6 +179,10 @@ class Order(models.Model):
     # Última modificación EN LA TIENDA: un aviso viejo que llega tarde no
     # pisa datos más nuevos (ver ingestion.upsert_store_order).
     external_updated_at = models.DateTimeField(null=True, blank=True)
+    # La primera vez que salió su rótulo (lote, impresión desde la tienda o
+    # rótulo + etiqueta del transportista; ver print_marks). Es lo que separa
+    # "para imprimir" de "para despachar" en el panel (summary_views).
+    labels_printed_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

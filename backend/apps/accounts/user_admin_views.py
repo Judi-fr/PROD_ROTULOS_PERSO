@@ -4,8 +4,9 @@ from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.models import Group
-from django.db.models import Count, Max, Q
-from django.db.models.functions import TruncMonth
+from django.db import transaction
+from django.db.models import Case, Count, Exists, F, IntegerField, Max, OuterRef, Q, Value, When
+from django.db.models.functions import Concat, Lower, Trim, TruncMonth
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
@@ -15,11 +16,13 @@ from rest_framework.response import Response
 
 from apps.audit.services import record
 from apps.common.date_filters import date_range_q
+from apps.common.spreadsheet import safe_cell, xlsx_bytes
 
-from .models import LoginLockout
+from .models import LoginLockout, Team
 from .pagination import UserAdminPagination
-from .permissions_map import get_effective_role, user_has_permission
+from .permissions_map import DEFAULT_ROLE, LEGACY_ROLE_ALIASES, get_effective_role, user_has_permission
 from .serializers import ROLE_CHOICES, UserAdminSerializer, ensure_role_groups
+from .teams import internal_users_q
 
 User = get_user_model()
 
@@ -34,8 +37,16 @@ def is_google_account_q():
     return Q(password__startswith=UNUSABLE_PASSWORD_PREFIX)
 
 
+def people():
+    """Los usuarios que son personas: sin los usuarios de datos de los
+    comercios (``Team.data_user``), que no se listan, no se cuentan en los
+    resúmenes ni en los reportes y no se pueden tocar desde acá (desactivar
+    o borrar uno se llevaría los datos de un comercio)."""
+    return User.objects.exclude(internal_users_q())
+
+
 class UserAdminViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all().order_by("id")
+    queryset = people().order_by("id")
     serializer_class = UserAdminSerializer
     pagination_class = UserAdminPagination
     # La autenticación continúa siendo obligatoria; el permiso atómico se
@@ -82,10 +93,9 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         if role_param == "administrator":
             role_param = "admin"
 
-        # "user" es alias legacy: usuarios normales sin rol admin/designer/operator
+        # "user" es alias legacy: usuarios normales, sin rol admin
         if role_param == "user":
-            special_roles = ["admin", "designer", "operator"]
-            return Q(is_staff=False) & ~Q(groups__name__in=special_roles)
+            return Q(is_staff=False) & ~Q(groups__name="admin")
 
         if role_param in ROLE_CHOICES:
             ensure_role_groups()
@@ -218,15 +228,46 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             return ~is_google
         return Q()
 
+    # Lo que piden los encabezados de la tabla que no es una columna:
+    # "name" ordena por lo que muestra la columna Usuario (nombre y apellido,
+    # o el email si no tiene), sin distinguir mayúsculas; "role"
+    # por el rol que se ve (administrador, personal de la plataforma,
+    # comerciante) y "status" por activo/inactivo.
+    ORDERING_ALIASES = {
+        "name": ("name_sort",),
+        "role": ("role_rank",),
+        "status": ("is_active",),
+    }
+    ORDERING_FIELDS = {
+        "id", "email", "first_name", "last_name", "is_active", "is_staff",
+        "date_joined", "last_login", "orders_count", "last_order_at",
+    }
+
+    @staticmethod
+    def _with_role_rank(queryset):
+        """``role_rank``: 0 administrador, 1 personal de la plataforma (rol
+        personalizado), 2 comerciante — la misma regla que
+        ``get_effective_role``: un Group canónico (o su alias) gana, después un
+        Group personalizado, después ``is_staff``."""
+        admin_names = ["admin"] + [name for name, role in LEGACY_ROLE_ALIASES.items() if role == "admin"]
+        merchant_names = [DEFAULT_ROLE] + [name for name, role in LEGACY_ROLE_ALIASES.items() if role == DEFAULT_ROLE]
+        memberships = User.groups.through.objects.filter(user_id=OuterRef("pk"))
+        return queryset.annotate(
+            role_rank=Case(
+                When(Exists(memberships.filter(group__name__in=admin_names)), then=Value(0)),
+                When(Exists(memberships.filter(group__name__in=merchant_names)), then=Value(2)),
+                When(Exists(memberships), then=Value(1)),
+                When(is_staff=True, then=Value(0)),
+                default=Value(2),
+                output_field=IntegerField(),
+            )
+        )
+
     def _get_ordering(self, queryset):
         ordering_param = self.request.query_params.get("ordering", "").strip()
         if not ordering_param:
             return queryset.order_by("id")
 
-        allowed_fields = {
-            "id", "email", "first_name", "last_name", "is_active", "is_staff",
-            "date_joined", "last_login",
-        }
         ordering_fields = []
         for raw_field in ordering_param.split(","):
             field = raw_field.strip()
@@ -234,11 +275,26 @@ class UserAdminViewSet(viewsets.ModelViewSet):
                 continue
             descending = field.startswith("-")
             field_name = field[1:] if descending else field
-            if field_name in allowed_fields:
-                ordering_fields.append(f"-{field_name}" if descending else field_name)
+            if field_name in self.ORDERING_ALIASES:
+                names = self.ORDERING_ALIASES[field_name]
+            elif field_name in self.ORDERING_FIELDS:
+                names = (field_name,)
+            else:
+                continue
+            if "role_rank" in names and "role_rank" not in queryset.query.annotations:
+                queryset = self._with_role_rank(queryset)
+            if "name_sort" in names and "name_sort" not in queryset.query.annotations:
+                full_name = Trim(Concat("first_name", Value(" "), "last_name"))
+                queryset = queryset.annotate(
+                    name_sort=Lower(Case(When(first_name="", last_name="", then=F("email")), default=full_name))
+                )
+            for name in names:
+                # Sin pedidos o sin ingreso van siempre al final, en las dos direcciones.
+                ordering_fields.append(F(name).desc(nulls_last=True) if descending else F(name).asc(nulls_last=True))
 
         if ordering_fields:
-            return queryset.order_by(*ordering_fields)
+            # "id" desempata: con el mismo valor el orden de las páginas no salta.
+            return queryset.order_by(*ordering_fields, "id")
         return queryset.order_by("id")
 
     def get_queryset(self):
@@ -247,9 +303,11 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         # serializer solo lee los atributos ya calculados por el ORM.
         # distinct=True porque los otros filtros (groups, login_lockout)
         # pueden multiplicar filas antes de agregar.
+        # Los pedidos son de los comercios (cuelgan de su usuario de datos):
+        # se cuentan los de los comercios de los que es dueño.
         queryset = super().get_queryset().annotate(
-            orders_count=Count("orders", distinct=True),
-            last_order_at=Max("orders__created_at"),
+            orders_count=Count("owned_teams__data_user__orders", distinct=True),
+            last_order_at=Max("owned_teams__data_user__orders__created_at"),
         )
         filters = (
             self._get_status_filter()
@@ -271,11 +329,12 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         """Lista usuarios con resumen global y metadatos de paginación."""
         self._require_permission("users.view")
         response = super().list(request, *args, **kwargs)
+        everyone = people()
         response.data["summary"] = {
-            "total": User.objects.count(),
-            "active": User.objects.filter(is_active=True).count(),
-            "inactive": User.objects.filter(is_active=False).count(),
-            "locked": User.objects.filter(
+            "total": everyone.count(),
+            "active": everyone.filter(is_active=True).count(),
+            "inactive": everyone.filter(is_active=False).count(),
+            "locked": everyone.filter(
                 login_lockout__locked_until__gt=timezone.now()
             ).count(),
         }
@@ -388,8 +447,34 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             )
 
         if request.query_params.get("permanent", "").lower() == "true":
+            # Borrar para siempre tiene su permiso (migración 0029); desactivar
+            # sigue siendo "users.deactivate".
+            self._require_permission("users.delete")
+            # Comercios con equipo (teams.py): los datos de un comercio con
+            # empleados son del comercio; primero hay que pasar la titularidad
+            # o quitar a los empleados. Si no, su comercio se borra con él.
+            owned_teams = list(Team.objects.filter(owner=instance, closed_at=None).select_related("data_user"))
+            if any(team.members.exclude(user=instance).exists() for team in owned_teams):
+                return Response(
+                    {
+                        "detail": (
+                            "Es dueño de un comercio con empleados: pasale la titularidad a otro "
+                            "o quitá a los empleados antes de eliminarlo."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             email, pk = instance.email, instance.pk
-            instance.delete()
+            with transaction.atomic():
+                # Sus comercios sin empleados se van con él, con sus datos
+                # (cuelgan de su usuario de datos). Los dados de baja quedan
+                # archivados, sin dueño.
+                for team in owned_teams:
+                    data_user = team.data_user
+                    team.delete()
+                    if data_user.pk != instance.pk:
+                        data_user.delete()
+                instance.delete()
             record(
                 request,
                 category="users",
@@ -451,7 +536,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         respuesta detalla qué se aplicó y qué se saltó (y por qué).
 
         Body: {"ids": [1,2,3], "action": "activate"|"deactivate"|"set_role",
-               "role": "designer"}  (role solo requerido para "set_role")
+               "role": "subscriber"}  (role solo requerido para "set_role")
         """
         action_name = str(request.data.get("action", "")).strip().lower()
         raw_ids = request.data.get("ids")
@@ -485,7 +570,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             UserAdminSerializer._ensure_groups_exist(role_group_names)
             target_groups = list(Group.objects.filter(name__in=role_group_names))
 
-        found_users = {user.id: user for user in User.objects.filter(id__in=ids)}
+        found_users = {user.id: user for user in people().filter(id__in=ids)}
         updated, skipped = [], []
 
         for user_id in ids:
@@ -561,15 +646,16 @@ class UserAdminViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="export")
     def export(self, request, *args, **kwargs):
-        """GET /api/v1/users/export/?<mismos filtros que el listado>&ids=1,2,3
+        """GET /api/v1/users/export/?<mismos filtros que el listado>&ids=1,2,3&file_type=csv|xlsx
 
         Exporta a CSV el resultado de ``get_queryset()`` con los filtros de
         query params ya activos (misma lógica que el listado paginado) o,
         si viene ``ids``, solo esos usuarios (para exportar la selección
-        actual del panel). Genera el archivo en el backend (módulo ``csv``
-        estándar), no en el navegador.
+        actual del panel). Genera el archivo en el backend, no en el
+        navegador: CSV (módulo ``csv``, por defecto) o Excel (``file_type=xlsx``)
+        con las mismas columnas.
         """
-        self._require_permission("users.view")
+        self._require_permission("users.export")
 
         queryset = self.get_queryset().select_related("login_lockout")
         raw_ids = request.query_params.get("ids", "").strip()
@@ -580,20 +666,20 @@ class UserAdminViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"ids": "Todos los IDs deben ser números enteros."})
             queryset = queryset.filter(id__in=ids)
 
-        today = timezone.now().strftime("%Y-%m-%d")
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="usuarios-{today}.csv"'
+        file_type = request.query_params.get("file_type", "csv").strip().lower()
+        if file_type not in ("csv", "xlsx"):
+            raise ValidationError({"file_type": "El formato tiene que ser csv o xlsx."})
 
-        writer = csv.writer(response)
-        writer.writerow([
+        columns = [
             "id", "nombre", "email", "rol", "estado", "fecha_registro",
             "ultimo_login", "metodo_autenticacion", "bloqueado",
             "total_pedidos", "fecha_ultimo_pedido",
-        ])
+        ]
+        rows = []
         for user in queryset:
             lockout = getattr(user, "login_lockout", None)
             full_name = " ".join(filter(None, [user.first_name, user.last_name])).strip()
-            writer.writerow([
+            rows.append([
                 user.id,
                 full_name or user.email,
                 user.email,
@@ -606,6 +692,24 @@ class UserAdminViewSet(viewsets.ModelViewSet):
                 user.orders_count or 0,
                 user.last_order_at.isoformat() if user.last_order_at else "",
             ])
+
+        today = timezone.now().strftime("%Y-%m-%d")
+        if file_type == "xlsx":
+            # Excel con el mismo contenido (apps.common.spreadsheet: texto
+            # forzado a string y fórmulas neutralizadas, como las otras exportaciones).
+            response = HttpResponse(
+                xlsx_bytes(columns, rows, "Usuarios"),
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            response["Content-Disposition"] = f'attachment; filename="usuarios-{today}.xlsx"'
+            return response
+
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="usuarios-{today}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(columns)
+        # Nombres y mails los escribió cada usuario: sin fórmulas (inyección CSV).
+        writer.writerows([safe_cell(value) for value in row] for row in rows)
         return response
 
     def _month_range(self, cutoff):
@@ -629,7 +733,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
 
         signups = {
             row["month"].strftime("%Y-%m"): row["count"]
-            for row in User.objects.filter(date_joined__gte=cutoff)
+            for row in people().filter(date_joined__gte=cutoff)
             .annotate(month=TruncMonth("date_joined"))
             .values("month")
             .annotate(count=Count("id"))
@@ -656,10 +760,10 @@ class UserAdminViewSet(viewsets.ModelViewSet):
     def _metrics_active_users(self):
         now = timezone.now()
         return {
-            "last_7_days": User.objects.filter(last_login__gte=now - timedelta(days=7)).count(),
-            "last_30_days": User.objects.filter(last_login__gte=now - timedelta(days=30)).count(),
-            "last_90_days": User.objects.filter(last_login__gte=now - timedelta(days=90)).count(),
-            "never_logged_in": User.objects.filter(last_login__isnull=True).count(),
+            "last_7_days": people().filter(last_login__gte=now - timedelta(days=7)).count(),
+            "last_30_days": people().filter(last_login__gte=now - timedelta(days=30)).count(),
+            "last_90_days": people().filter(last_login__gte=now - timedelta(days=90)).count(),
+            "never_logged_in": people().filter(last_login__isnull=True).count(),
         }
 
     def _metrics_retention(self, cutoff):
@@ -667,7 +771,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         # no lo setea (no llama authenticate()), así que un last_login no nulo
         # solo puede venir de un login real posterior al alta.
         cohorts_qs = (
-            User.objects.filter(date_joined__gte=cutoff)
+            people().filter(date_joined__gte=cutoff)
             .annotate(month=TruncMonth("date_joined"))
             .values("month")
             .annotate(
@@ -726,7 +830,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
 
     def _metrics_account_age(self):
         now = timezone.now()
-        users = list(User.objects.all().prefetch_related("groups"))
+        users = list(people().prefetch_related("groups"))
         if not users:
             return {"average_days": None, "by_role": []}
 
@@ -751,7 +855,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         from .models import EmailVerification
 
         now = timezone.now()
-        total_users = User.objects.count()
+        total_users = people().count()
         unverified_qs = EmailVerification.objects.filter(is_verified=False)
         unverified = unverified_qs.count()
         expired = unverified_qs.filter(expires_at__lt=now).count()
@@ -775,8 +879,8 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         is_google = is_google_account_q()
         result = []
         for key, qs in (
-            ("google", User.objects.filter(is_google)),
-            ("local", User.objects.exclude(is_google)),
+            ("google", people().filter(is_google)),
+            ("local", people().exclude(is_google)),
         ):
             total = qs.count()
             unverified = qs.filter(id__in=unverified_ids).count()
@@ -794,7 +898,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         (``apps.orders``), ``support-messages/metrics/`` y ``audit/metrics/``
         para pedidos/soporte/auditoría.
         """
-        self._require_permission("users.view")
+        self._require_permission("reports.view")
 
         raw_months = request.query_params.get("months", "6").strip()
         try:
@@ -808,7 +912,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         # la precedencia Group/is_staff en SQL — el volumen de usuarios de
         # este proyecto no justifica esa duplicación.
         role_counts = {}
-        for user in User.objects.all().prefetch_related("groups"):
+        for user in people().prefetch_related("groups"):
             role = get_effective_role(user)
             role_counts[role] = role_counts.get(role, 0) + 1
         role_distribution = [
@@ -820,7 +924,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
         signups_qs = (
-            User.objects.filter(date_joined__gte=cutoff)
+            people().filter(date_joined__gte=cutoff)
             .annotate(month=TruncMonth("date_joined"))
             .values("month")
             .annotate(count=Count("id"))
@@ -834,8 +938,8 @@ class UserAdminViewSet(viewsets.ModelViewSet):
 
         is_google = is_google_account_q()
         auth_method = {
-            "google": User.objects.filter(is_google).count(),
-            "local": User.objects.exclude(is_google).count(),
+            "google": people().filter(is_google).count(),
+            "local": people().exclude(is_google).count(),
         }
 
         return Response({

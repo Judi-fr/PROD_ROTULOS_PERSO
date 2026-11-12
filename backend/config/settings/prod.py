@@ -10,28 +10,11 @@ DEBUG = False
 # coma), con default ["localhost", "127.0.0.1"]. Achica el riesgo de un
 # despliegue mal configurado: en producción nunca puede quedar en ["*"]
 # (eso es solo para dev.py).
-if "*" in ALLOWED_HOSTS:  # noqa: F405
+if ALLOWED_HOSTS == ["*"]:  # noqa: F405
     raise ImproperlyConfigured(
         "ALLOWED_HOSTS no puede ser '*' en producción: definí los "
         "hosts/dominios reales en la variable ALLOWED_HOSTS del .env."
     )
-
-# Rangos de red cuyas IPs se aceptan como Host (lista separada por coma en
-# el .env). Django no entiende comodines tipo "172.31.*" en ALLOWED_HOSTS, y
-# detrás de un balanceador de AWS los health checks llegan con la IP privada
-# del contenedor, que cambia en cada despliegue. 172.31.0.0/16 es la VPC por
-# defecto de AWS; vacío desactiva el mecanismo. La validación la hace
-# config/host_validation.py: Django queda con "*" solo porque ese
-# middleware, primero en la lista, ya filtró el Host.
-ALLOWED_CIDR_NETS = [
-    net.strip()
-    for net in env.list("ALLOWED_CIDR_NETS", default=["172.31.0.0/16"])  # noqa: F405
-    if net.strip()
-]
-if ALLOWED_CIDR_NETS:
-    ALLOWED_HOSTS_ORIGINAL = ALLOWED_HOSTS  # noqa: F405
-    ALLOWED_HOSTS = ["*"]
-    MIDDLEWARE = ["config.host_validation.AllowedCIDRMiddleware", *MIDDLEWARE]  # noqa: F405
 
 # ---------------------------------------------------------------------------
 # CORS: únicamente los orígenes explícitos de CORS_ALLOWED_ORIGINS (ya
@@ -51,24 +34,6 @@ DATABASES = {
 }
 
 # ---------------------------------------------------------------------------
-# Caché: en la misma base, para que los contadores de los throttles de DRF
-# (login 5/min, reset de contraseña, ingesta...) sean UNO solo. El default de
-# Django es memoria por proceso: con los 3 workers de gunicorn cada uno lleva
-# su propia cuenta (el límite real queda hasta 3x) y se pierde al reiniciar.
-# Postgres alcanza para este volumen sin sumar Redis al despliegue. La tabla
-# la crea `createcachetable` al arrancar (ver docker-compose.prod.yml).
-# MAX_ENTRIES alto: al pasarlo Django borra un tercio de las claves, y eso
-# incluye contadores de throttle vigentes.
-# ---------------------------------------------------------------------------
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
-        "LOCATION": "django_cache",
-        "OPTIONS": {"MAX_ENTRIES": 10000},
-    }
-}
-
-# ---------------------------------------------------------------------------
 # REST Framework: solo JSONRenderer, sin la API navegable que dev.py agrega.
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [  # noqa: F405
@@ -81,12 +46,6 @@ REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [  # noqa: F405
 # protegido (no hace falta "acordarse" de setear cada una).
 # ---------------------------------------------------------------------------
 SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)  # noqa: F405
-# Las sondas de salud quedan fuera de la redirección: el balanceador de AWS
-# las llama por HTTP directo al contenedor, sin X-Forwarded-Proto, y un 301
-# lo hace marcar la tarea como no saludable y reemplazarla en loop. No
-# exponen nada (ver config/health.py). Sin "/" inicial: así compara Django;
-# con o sin barra final, porque el balanceador la llama sin ella.
-SECURE_REDIRECT_EXEMPT = [r"^api/v1/health(/|$)"]
 SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=True)  # noqa: F405
 CSRF_COOKIE_SECURE = env.bool("CSRF_COOKIE_SECURE", default=True)  # noqa: F405
 SECURE_HSTS_SECONDS = env.int(  # noqa: F405

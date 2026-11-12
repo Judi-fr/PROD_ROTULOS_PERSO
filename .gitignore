@@ -23,21 +23,29 @@ Thumbs.db
 # ~500 MB que no tienen por qué vivir en el repositorio.
 frontend/assets/apis/vendor/
 
-# Bases locales y sus copias de respaldo
-db.sqlite3*
-*.sqlite3
-*.bak
+# Cobertura de los tests (backend/.coveragerc).
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
-# Configuración personal (shell, git, herramientas locales)
-.claude/settings.local.json
-.mcp.json
-.bash_profile
-.bashrc
-.profile
-.zprofile
-.zshrc
-.gitconfig
-.ripgreprc
+# El agente de impresión empaquetado para Windows (lo arma el pipeline de CI).
+backend/apps/printing/agent/dist/
+backend/apps/printing/agent/build/
+backend/apps/printing/agent/*.spec
 
-# Copias locales del servicio backup (docker-compose.prod.yml)
-/backups/
+# Bocetos y registros de trabajo de las skills (brainstorming, ejecución de planes)
+.superpowers/
+
+# Backups de producción (scripts/backup.sh)
+backups/
+
+# Pruebas de navegador
+frontend/e2e/node_modules/
+frontend/e2e/test-results/
+frontend/e2e/playwright-report/
+frontend/e2e/.auth-*.json
+frontend/e2e/backend.log
+
+# Archivos de trabajo de la skill de diseño (capturas del inspector, dirección sorteada)
+.taste-skill/

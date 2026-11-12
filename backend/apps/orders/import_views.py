@@ -21,6 +21,7 @@ from rest_framework.views import APIView
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
 from apps.integrations.webhooks import dispatch_event, webhooks_suspended
+from apps.accounts.teams import data_owner
 
 from .import_parsing import ImportFileError, parse_tabular_file
 from .ingestion import TARGET_FIELDS, apply_mapping, auto_detect_mapping, create_order_from_data, validate_mapped_row
@@ -98,7 +99,7 @@ class OrderImportUploadView(APIView):
         file_obj.seek(0)
 
         order_import = OrderImport.objects.create(
-            user=request.user,
+            user=data_owner(request.user),
             file=file_obj,
             original_filename=file_obj.name,
             status=OrderImport.Status.PENDING,
@@ -131,7 +132,7 @@ class OrderImportValidateView(APIView):
         return [IsAuthenticated(), HasRolePermission("orders.import")]
 
     def post(self, request, pk):
-        order_import = get_object_or_404(OrderImport, pk=pk, user=request.user)
+        order_import = get_object_or_404(OrderImport, pk=pk, user=data_owner(request.user))
         mapping = request.data.get("mapping")
         if not isinstance(mapping, dict) or not mapping:
             raise ValidationError({"mapping": "Es obligatorio y no puede estar vacío."})
@@ -140,14 +141,18 @@ class OrderImportValidateView(APIView):
 
         valid_count = 0
         errors = []
+        rows_without_postal_code = []
         seen_external_ids = set()
         for row_number, row in enumerate(rows, start=2):
             data = apply_mapping(row, mapping)
             row_errors = validate_mapped_row(data)
+            # No es un error (el pedido se puede cargar), pero el rótulo sale incompleto.
+            if not row_errors and not (data.get("cp") or "").strip():
+                rows_without_postal_code.append(row_number)
             external_id = (data.get("external_id") or "").strip()
             if external_id:
                 if external_id in seen_external_ids:
-                    row_errors.append(f"external_id {external_id!r} repetido en el archivo.")
+                    row_errors.append(f"ID externo {external_id!r} repetido en el archivo.")
                 seen_external_ids.add(external_id)
             if row_errors:
                 errors.append({"fila": row_number, "columna": None, "mensaje": " ".join(row_errors)})
@@ -165,6 +170,7 @@ class OrderImportValidateView(APIView):
                 "valid_count": valid_count,
                 "error_count": len(errors),
                 "errors": errors,
+                "rows_without_postal_code": rows_without_postal_code,
             }
         )
 
@@ -191,7 +197,7 @@ class OrderImportConfirmView(APIView):
         return [IsAuthenticated(), HasRolePermission("orders.import")]
 
     def post(self, request, pk):
-        order_import = get_object_or_404(OrderImport, pk=pk, user=request.user)
+        order_import = get_object_or_404(OrderImport, pk=pk, user=data_owner(request.user))
         mapping = request.data.get("mapping") or order_import.mapping
         if not mapping:
             raise ValidationError(
@@ -216,7 +222,7 @@ class OrderImportConfirmView(APIView):
                     errors.append({"fila": row_number, "columna": None, "mensaje": " ".join(row_errors)})
                     continue
                 try:
-                    order, created = create_order_from_data(request.user, data, source=Order.Source.IMPORT)
+                    order, created = create_order_from_data(data_owner(request.user), data, source=Order.Source.IMPORT)
                 except Exception as exc:  # noqa: BLE001 - una fila rota no aborta el resto
                     errors.append({"fila": row_number, "columna": None, "mensaje": str(exc)})
                     continue
@@ -228,7 +234,7 @@ class OrderImportConfirmView(APIView):
 
         if created_order_ids:
             dispatch_event(
-                request.user,
+                data_owner(request.user),
                 "orders.imported",
                 {"count": len(created_order_ids), "source": Order.Source.IMPORT, "order_ids": created_order_ids},
             )
@@ -268,10 +274,10 @@ class ImportMappingViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), HasRolePermission("orders.import_mappings")]
 
     def get_queryset(self):
-        return ImportMapping.objects.filter(user=self.request.user)
+        return ImportMapping.objects.filter(user=data_owner(self.request.user))
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(user=data_owner(self.request.user))
 
 
 class OrderImportTemplateView(APIView):

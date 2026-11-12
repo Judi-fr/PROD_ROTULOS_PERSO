@@ -1,22 +1,13 @@
-// Módulo de acceso a la API de rótulos (apps.labels), usado por
-// editor_rotulos.html y por assets/js/saved_labels.js y templates.js
-// (import dinámico, ver esos archivos). La sesión y el
-// apiFetch (manejo de 401 con refresh y de 403 con cambio de contraseña
+// Módulo de acceso a la API de plantillas (apps.labels), usado por
+// editor_rotulos.html y por assets/js/templates.js (import dinámico). La sesión y
+// el apiFetch (manejo de 401 con refresh y de 403 con cambio de contraseña
 // pendiente) salen de assets/js/auth.js: este módulo ES no puede "cargarse
 // antes" como un script clásico, pero lee su API en window.Auth igual — la
 // página que importa este módulo debe cargar assets/js/config.js y
-// assets/js/auth.js antes (ver editor_rotulos.html / saved_labels.js).
-//
-// El editor (editor_rotulos.html) arma/consume el payload con SU propio
-// formato ({nombre, cliente, thumbnail, size:{widthCm,heightCm}, logo,
-// fields, order}) — acá se adapta ese formato al que espera el backend
-// ({name, client, thumbnail, width_cm, height_cm, logo, design, order}) en
-// vez de tocar el editor.
+// assets/js/auth.js antes.
 
 const API_BASE = `${window.APP_CONFIG.API_BASE}/labels`;
-const LABELS_URL = `${API_BASE}/labels/`;
 const TEMPLATES_URL = `${API_BASE}/templates/`;
-const ORDERS_URL = `${window.APP_CONFIG.API_BASE}/orders/`;
 const BARCODE_URL = `${API_BASE}/barcode/`;
 
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
@@ -25,43 +16,6 @@ const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
 // que este módulo (ver editor_rotulos.html) y sus `function` de nivel
 // superior quedan en `window`, igual criterio que window.Auth arriba.
 const getErrorMessage = window.getErrorMessage;
-
-// --- Adaptadores entre el formato del editor y el de la API ----------------
-
-function toApiPayload(rotulo) {
-  const payload = {
-    name: rotulo.nombre,
-    client: rotulo.cliente,
-    width_cm: rotulo.size?.widthCm,
-    height_cm: rotulo.size?.heightCm,
-    design: rotulo.fields || {},
-  };
-  if (rotulo.thumbnail) payload.thumbnail = rotulo.thumbnail;
-  if (rotulo.logo) payload.logo = rotulo.logo;
-  if (rotulo.order) payload.order = rotulo.order;
-  // La plantilla de origen (si el rótulo se creó a partir de una, ver
-  // editor_rotulos.html?template=<id>): sin esto Label.template nunca se
-  // completa y no queda rastro de qué plantilla generó qué rótulo.
-  if (rotulo.template) payload.template = rotulo.template;
-  return payload;
-}
-
-function fromApiLabel(label) {
-  return {
-    id: label.id,
-    nombre: label.name,
-    cliente: label.client,
-    order: label.order,
-    template: label.template || null,
-    thumbnail: label.thumbnail || null,
-    logo: label.logo || null,
-    size: { widthCm: Number(label.width_cm), heightCm: Number(label.height_cm) },
-    fields: label.design || {},
-    isActive: label.is_active,
-    createdAt: label.created_at,
-    updatedAt: label.updated_at,
-  };
-}
 
 // --- Plantillas (apps.labels.LabelTemplate) --------------------------------
 //
@@ -93,6 +47,7 @@ function toApiTemplateUpdatePayload(plantilla) {
   if (plantilla.size?.widthCm != null) payload.width_cm = plantilla.size.widthCm;
   if (plantilla.size?.heightCm != null) payload.height_cm = plantilla.size.heightCm;
   if (plantilla.fields != null) payload.design = plantilla.fields;
+  if (plantilla.versionNote != null) payload.version_note = plantilla.versionNote;
   return payload;
 }
 
@@ -107,6 +62,11 @@ function fromApiTemplate(template) {
     size: { widthCm: Number(template.width_cm), heightCm: Number(template.height_cm) },
     fields: template.design || {},
     preview: template.preview || null,
+    // Número de la última versión del historial y si quien mira puede
+    // guardar cambios en ella (lo decide el backend, ver LabelTemplateSerializer).
+    currentVersion: template.current_version || null,
+    canEdit: Boolean(template.can_edit),
+    canDelete: Boolean(template.can_delete),
     createdAt: template.created_at,
     updatedAt: template.updated_at,
   };
@@ -192,95 +152,50 @@ export async function fetchTemplatePreviewPdf(id) {
   return response.blob();
 }
 
-// --- API pública -------------------------------------------------------
-
-// La API pagina (PageNumberPagination): {count, next, previous, results}.
-export async function listRotulos(params = {}) {
-  const query = new URLSearchParams(params).toString();
-  const response = await apiFetch(`${LABELS_URL}${query ? `?${query}` : ""}`);
-  if (!response.ok) return [];
-  const data = await response.json().catch(() => ({}));
-  const results = Array.isArray(data) ? data : data.results || [];
-  return results.map(fromApiLabel);
+// --- Versiones de una plantilla (versiones_plantilla.html) ------------------
+//
+// El historial viene de la más nueva a la más vieja, cada una con su diseño
+// completo (lo usa la comparación).
+function fromApiTemplateVersion(version) {
+  return {
+    number: version.number,
+    nombre: version.name,
+    size: { widthCm: Number(version.width_cm), heightCm: Number(version.height_cm) },
+    fields: version.design || {},
+    note: version.note || "",
+    restoredFrom: version.restored_from || null,
+    createdByEmail: version.created_by_email || null,
+    createdAt: version.created_at,
+  };
 }
 
-export async function getRotulo(id) {
-  try {
-    const response = await apiFetch(`${LABELS_URL}${id}/`);
-    if (!response.ok) return null;
-    const data = await response.json();
-    return fromApiLabel(data);
-  } catch (err) {
-    if (err.isSessionExpired) throw err;
-    console.error("Error al obtener el rótulo:", err);
-    return null;
-  }
-}
-
-export async function createRotulo(rotulo) {
-  const response = await apiFetch(LABELS_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toApiPayload(rotulo)),
-  });
-  const data = await response.json().catch(() => ({}));
+export async function listTemplateVersions(id) {
+  const response = await apiFetch(`${TEMPLATES_URL}${id}/versions/`);
+  const data = await response.json().catch(() => []);
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "No se pudo guardar el rótulo."));
+    throw new Error(getErrorMessage(data, "No se pudo leer el historial de versiones."));
   }
-  return fromApiLabel(data);
+  return data.map(fromApiTemplateVersion);
 }
 
-export async function updateRotulo(id, rotulo) {
-  const response = await apiFetch(`${LABELS_URL}${id}/`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toApiPayload(rotulo)),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(getErrorMessage(data, "No se pudo actualizar el rótulo."));
-  }
-  return fromApiLabel(data);
-}
-
-// Soft-delete en el backend: el rótulo deja de listarse pero no se destruye.
-export async function deleteRotulo(id) {
-  const response = await apiFetch(`${LABELS_URL}${id}/`, { method: "DELETE" });
-  if (!response.ok && response.status !== 204) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(getErrorMessage(data, "No se pudo eliminar el rótulo."));
-  }
-  return true;
-}
-
-// Pedido propio (apps.orders), para autocompletar domicilio/CP/localidad en
-// el editor cuando el rótulo se crea a partir de un envío concreto
-// (?order=<id> en editor_rotulos.html). Remitente/destinatario los sigue
-// completando el usuario: la dirección del pedido no guarda un nombre de
-// destinatario.
-export async function getOrderInfo(orderId) {
-  try {
-    const response = await apiFetch(`${ORDERS_URL}${orderId}/`);
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (err) {
-    if (err.isSessionExpired) throw err;
-    console.error("Error al obtener el pedido:", err);
-    return null;
-  }
-}
-
-// Rótulo definitivo, armado en el servidor (apps.labels.rendering) en vez
-// del PNG/PDF que arma html2canvas/jsPDF sobre lo que se ve en el editor.
-// Requiere un rótulo YA guardado (usa su id), a diferencia de "Exportar
-// PDF" que exporta lo que esté en pantalla en ese momento.
-export async function downloadRotuloPdfServer(id) {
-  const response = await apiFetch(`${LABELS_URL}${id}/pdf/`);
+export async function fetchTemplateVersionPreviewPdf(id, number) {
+  const response = await apiFetch(`${TEMPLATES_URL}${id}/versions/${number}/preview/`);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(getErrorMessage(data, "No se pudo generar el PDF del servidor."));
+    throw new Error(getErrorMessage(data, "No se pudo generar la vista previa de esa versión."));
   }
   return response.blob();
+}
+
+export async function restoreTemplateVersion(id, number) {
+  const response = await apiFetch(`${TEMPLATES_URL}${id}/versions/${number}/restore/`, {
+    method: "POST",
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "No se pudo restaurar esa versión."));
+  }
+  return fromApiTemplate(data);
 }
 
 // SVG de un QR/código de barras suelto (GET /api/v1/labels/barcode/), para
@@ -302,11 +217,3 @@ export async function fetchCodePreview(params) {
   }
 }
 
-export async function duplicateRotulo(id) {
-  const response = await apiFetch(`${LABELS_URL}${id}/duplicate/`, { method: "POST" });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(getErrorMessage(data, "No se pudo duplicar el rótulo."));
-  }
-  return fromApiLabel(data);
-}

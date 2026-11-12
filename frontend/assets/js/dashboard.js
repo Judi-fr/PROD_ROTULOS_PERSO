@@ -6,47 +6,16 @@
 
 const API_BASE = `${window.APP_CONFIG.API_BASE}/auth`;
 const DASHBOARD_URL = `${API_BASE}/users/me/dashboard/`;
-const ORDERS_URL = `${window.APP_CONFIG.API_BASE}/orders/`;
+const MY_INVITATIONS_URL = `${window.APP_CONFIG.API_BASE}/team/my-invitations/`;
 
-// Íconos MDI por key de menú. Un key sin ícono cae en el genérico.
-const MENU_ICONS = {
-  users: "mdi mdi-account-group",
-  orders: "mdi mdi-truck-delivery-outline",
-  addresses: "mdi mdi-map-marker-outline",
-  labels: "mdi mdi-tag-outline",
-  templates: "mdi mdi-view-grid-plus-outline",
-  documents: "mdi mdi-file-document-outline",
-  processing: "mdi mdi-cog-outline",
-  profile: "mdi mdi-account-circle-outline",
-  support: "mdi mdi-lifebuoy",
-  audit: "mdi mdi-shield-search-outline",
-  support_inbox: "mdi mdi-email-alert-outline",
-  integrations: "mdi mdi-key-outline",
-  orders_ingestion: "mdi mdi-file-upload-outline",
-};
+// Las secciones del panel (cada una con sus links internos) y sus íconos
+// vienen armadas del backend (apps/accounts/dashboard_sections.py): acá solo
+// se dibujan.
+const NOTICES_URL = `${window.APP_CONFIG.API_BASE}/notices/`;
+const SUMMARY_URL = `${window.APP_CONFIG.API_BASE}/orders/summary/`;
+const ONBOARDING_HIDDEN_KEY = "onboardingHidden";
 
-// Agrupación puramente visual (el backend decide qué ítems existen y si
-// están habilitados; acá solo se los organiza en categorías, igual que
-// MENU_ICONS es un mapeo cliente-side por key). Un key sin grupo cae en
-// "Otros".
-const MENU_GROUPS = {
-  orders: "Mis cosas",
-  addresses: "Mis cosas",
-  labels: "Mis cosas",
-  templates: "Mis cosas",
-  documents: "Mis cosas",
-  processing: "Mis cosas",
-  users: "Cuenta",
-  profile: "Cuenta",
-  support: "Ayuda",
-  audit: "Administración",
-  support_inbox: "Administración",
-  integrations: "Administración",
-  orders_ingestion: "Administración",
-};
-const GROUP_ORDER = ["Mis cosas", "Cuenta", "Ayuda", "Administración", "Otros"];
-
-const getAccessToken = () => window.Auth.getAccessToken();
+const hasSession = () => window.Auth.hasSession();
 const getCurrentUser = () => window.Auth.getCurrentUser();
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
 
@@ -63,93 +32,516 @@ function showMessage(text, type = "error") {
   el.style.display = "block";
 }
 
-// El dato ya viene resuelto por el backend (DashboardView): no se decide acá
-// por rol/permissions locales, solo se muestra u oculta según is_admin.
-function renderBackToAdminLink(user) {
-  const link = document.getElementById("backToAdminLink");
-  if (!link) return;
-  link.style.display = user && user.is_admin ? "" : "none";
+// Todas las tarjetas tienen la misma forma (cabecera, lista de herramientas
+// con lugar para tres, "Abrir" abajo a todo el ancho) para que la grilla
+// quede pareja aunque cada sección tenga distinta cantidad de herramientas.
+// El backend (dashboard_sections.py) nombra los íconos de cada sección con su
+// nombre de Material Design; acá se traducen a Phosphor, el juego de la app.
+const SECTION_ICONS = {
+  "mdi-package-variant": "package",
+  "mdi-printer": "printer",
+  "mdi-view-grid-plus-outline": "squares-four",
+  "mdi-store-outline": "storefront",
+  "mdi-account-group-outline": "users-three",
+  "mdi-lifebuoy": "lifebuoy",
+  "mdi-shield-account-outline": "shield-check",
+};
+
+function sectionIcon(value) {
+  const name = String(value || "").split(/\s+/).find((part) => part.startsWith("mdi-"));
+  return SECTION_ICONS[name] || "squares-four";
 }
 
-function renderUser(user) {
-  const nameEl = document.getElementById("userName");
-  const emailEl = document.getElementById("userEmail");
-  const avatarEl = document.getElementById("userAvatar");
+function buildSectionCard(section, { wide = false } = {}) {
+  const card = document.createElement("article");
+  card.className = wide ? "section-card section-card-wide" : "section-card";
 
-  const name = (user && user.full_name) || (user && user.email) || "Usuario";
-  const email = (user && user.email) || "—";
+  const head = document.createElement("div");
+  head.className = "section-card-head";
+  const icon = document.createElement("span");
+  icon.className = "section-card-icon";
+  icon.innerHTML = `<i class="ph ph-${escapeHtml(sectionIcon(section.icon))}" aria-hidden="true"></i>`;
+  const text = document.createElement("div");
+  text.className = "section-card-text";
+  const title = document.createElement("h2");
+  title.className = "section-card-title";
+  title.textContent = section.label;
+  const description = document.createElement("p");
+  description.className = "section-card-description";
+  description.textContent = section.description || "";
+  text.append(title, description);
+  head.append(icon, text);
 
-  if (nameEl) nameEl.textContent = name;
-  if (emailEl) emailEl.textContent = email;
-  if (avatarEl) {
-    const picture = getCurrentUser().picture;
-    avatarEl.src = picture
-      ? picture
-      : `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`;
-  }
+  const tools = document.createElement("ul");
+  tools.className = "section-card-tools";
+  tools.setAttribute("aria-label", `Herramientas de ${section.label}`);
+  (section.links || []).forEach((link) => {
+    const item = document.createElement("li");
+    const anchor = document.createElement("a");
+    anchor.href = link.url;
+    anchor.innerHTML = '<span></span><i class="ph ph-caret-right" aria-hidden="true"></i>';
+    anchor.querySelector("span").textContent = link.label;
+    item.appendChild(anchor);
+    tools.appendChild(item);
+  });
+
+  const open = document.createElement("a");
+  open.className = "section-btn section-btn-soft section-card-open";
+  open.href = section.url;
+  open.innerHTML = `<span></span> <i class="ph ph-arrow-right" aria-hidden="true"></i>`;
+  open.querySelector("span").textContent = `Abrir ${section.label}`;
+
+  card.append(head, tools, open);
+  return card;
 }
 
-function buildMenuCard(item) {
-  const enabled = Boolean(item.enabled) && item.url;
-  const iconClass = MENU_ICONS[item.key] || "mdi mdi-view-grid-outline";
-
-  // Deshabilitado: <span>, no clickeable. Habilitado: <a> con el href real.
-  const el = document.createElement(enabled ? "a" : "span");
-  el.className = `menu-card${enabled ? "" : " disabled"}`;
-  if (enabled) {
-    el.href = item.url;
-  } else {
-    el.setAttribute("aria-disabled", "true");
-  }
-
-  el.innerHTML = `
-    <span class="menu-card-icon"><i class="${iconClass}"></i></span>
-    <span class="menu-card-label">${item.label || item.key}</span>
-    <span class="menu-card-status">${enabled ? "Disponible" : "Próximamente"}</span>
-  `;
-  return el;
+// Columnas según cuántas secciones hay, para que no quede una suelta: 4 en
+// 2×2, 6 en 3×2; una fila incompleta va centrada. Administración (solo el
+// admin) va aparte, a todo el ancho, para no romper la grilla.
+function columnsFor(count) {
+  if (count === 4) return 2;
+  return Math.min(Math.max(count, 1), 3);
 }
 
-// Agrupa los ítems del menú por categoría (ver MENU_GROUPS) y arma una
-// sección por grupo, cada una con su propio .menu-grid. Con pocos ítems
-// esto es visualmente equivalente a una grilla plana; con muchos, evita que
-// quede todo mezclado sin distinción.
-function renderMenu(menu) {
+function renderSections(sections) {
   const container = document.getElementById("menuGroups");
   if (!container) return;
-
-  if (!Array.isArray(menu) || menu.length === 0) {
+  container.innerHTML = "";
+  if (!Array.isArray(sections) || sections.length === 0) {
     container.innerHTML = '<p class="menu-loading">No hay secciones disponibles.</p>';
     return;
   }
+  const regular = sections.filter((section) => section.key !== "admin");
+  const admin = sections.find((section) => section.key === "admin");
+  const grid = document.createElement("div");
+  grid.className = "section-grid";
+  grid.dataset.columns = String(columnsFor(regular.length));
+  regular.forEach((section) => grid.appendChild(buildSectionCard(section)));
+  container.appendChild(grid);
+  if (admin) container.appendChild(buildSectionCard(admin, { wide: true }));
+}
 
-  const byGroup = new Map();
-  menu.forEach((item) => {
-    const groupName = MENU_GROUPS[item.key] || "Otros";
-    if (!byGroup.has(groupName)) byGroup.set(groupName, []);
-    byGroup.get(groupName).push(item);
+// ---------------------------------------------------------------------------
+// BUSCADOR DE FUNCIONES: todas las herramientas del usuario en un solo lugar.
+// Junta las de las tarjetas (``sections``: cada sección y sus links) con el
+// ``menu`` completo, que trae también las que no entran en una tarjeta; las
+// dos listas ya vienen filtradas por permiso desde el backend. Sin acentos ni
+// mayúsculas, por nombre de la función o de su sección. Flechas para moverse,
+// Enter abre, Esc cierra, "/" en cualquier lado lleva al buscador.
+// ---------------------------------------------------------------------------
+// normalizeSearch, IN_PAGE_TOOLS y collectTools están en utils.js: también
+// los usa el buscador de la barra superior (command_palette.js, Ctrl+K).
+function setupToolSearch(sections, menu) {
+  const input = document.getElementById("toolSearchInput");
+  const list = document.getElementById("toolSearchResults");
+  if (!input || !list || input.dataset.ready) return;
+  input.dataset.ready = "1";
+  const tools = collectTools(sections, menu);
+  let matches = [];
+  let active = 0;
+
+  function close() {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+  }
+
+  function paint() {
+    list.innerHTML = "";
+    if (!matches.length) {
+      const empty = document.createElement("li");
+      empty.className = "tool-search-empty";
+      empty.textContent = "No encontramos esa función. Probá con otra palabra.";
+      list.appendChild(empty);
+    }
+    matches.forEach((tool, index) => {
+      const item = document.createElement("li");
+      item.role = "option";
+      item.className = index === active ? "active" : "";
+      item.setAttribute("aria-selected", index === active ? "true" : "false");
+      const link = document.createElement("a");
+      link.href = tool.url;
+      link.innerHTML = "<span></span><small></small>";
+      link.querySelector("span").textContent = tool.label;
+      link.querySelector("small").textContent = tool.section;
+      item.appendChild(link);
+      item.addEventListener("mousemove", () => {
+        if (active !== index) {
+          active = index;
+          paint();
+        }
+      });
+      list.appendChild(item);
+    });
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  input.addEventListener("input", () => {
+    const words = normalizeSearch(input.value).split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      close();
+      return;
+    }
+    matches = tools.filter((tool) => words.every((word) => tool.haystack.includes(word))).slice(0, 8);
+    active = 0;
+    paint();
   });
-
-  container.innerHTML = "";
-  GROUP_ORDER.forEach((groupName) => {
-    const items = byGroup.get(groupName);
-    if (!items || items.length === 0) return;
-
-    const section = document.createElement("section");
-    section.className = "menu-group";
-
-    const title = document.createElement("h2");
-    title.className = "menu-group-title";
-    title.textContent = groupName;
-    section.appendChild(title);
-
-    const grid = document.createElement("div");
-    grid.className = "menu-grid";
-    items.forEach((item) => grid.appendChild(buildMenuCard(item)));
-    section.appendChild(grid);
-
-    container.appendChild(section);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      input.value = "";
+      close();
+    } else if (!list.hidden && matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      active = (active + (event.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length;
+      paint();
+    } else if (event.key === "Enter" && matches[active] && !list.hidden) {
+      event.preventDefault();
+      window.location.href = matches[active].url;
+    }
   });
+  input.addEventListener("focus", () => {
+    if (input.value.trim()) input.dispatchEvent(new Event("input"));
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#toolSearch")) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    const typing = event.target.closest("input, textarea, select, [contenteditable='true']");
+    if (event.key === "/" && !typing) {
+      event.preventDefault();
+      input.focus();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// AVISOS: lo que se rompió en el comercio (apps/monitoring/notices.py). Los
+// tres más nuevos acá; todos en notificaciones.html.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// BANDEJA DE TRABAJO: los números del día y "Qué hacer ahora". Junta el
+// resumen de pedidos (GET /orders/summary/) con los avisos del comercio
+// (GET /notices/): todo lo que espera al comerciante, en un solo lugar.
+// ---------------------------------------------------------------------------
+async function fetchJson(url) {
+  try {
+    const response = await apiFetch(url);
+    return response.ok ? await response.json() : null;
+  } catch (err) {
+    if (!err || !err.isSessionExpired) console.error(`Error al leer ${url}:`, err);
+    return null;
+  }
+}
+
+const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+// Cada número lleva a la pantalla donde se resuelve.
+// Cada número abre su lista ya filtrada: "Para imprimir" con esos pedidos
+// tildados (print_labels.js) y los demás como una vista de Mis pedidos
+// (pedidos.js, ORDER_VIEWS), con los mismos filtros que cuenta el resumen.
+const TO_PRINT_URL = "imprimir_rotulos.html?rotulo=sin_imprimir";
+const TO_DISPATCH_URL = "pedidos.html?vista=para_despachar";
+const ON_THE_WAY_URL = "pedidos.html?vista=en_camino";
+const DELAYED_URL = "pedidos.html?vista=demorados";
+
+// El panel se actualiza solo cada minuto mientras la pestaña está a la vista
+// (y al volver a ella si pasó más de eso); un número que cambió se resalta.
+const TODAY_REFRESH_MS = 60 * 1000;
+let todayLoadedAt = 0;
+let lastStats = null;
+
+function renderTodayStats(summary, noticeCount) {
+  const box = document.getElementById("todayStats");
+  const problems = summary.shipment_problems + noticeCount;
+  const stats = [
+    { key: "to_print", label: "Para imprimir", hint: "Sin rótulo todavía", icon: "printer", value: summary.to_print, href: TO_PRINT_URL },
+    { key: "to_dispatch", label: "Para despachar", hint: "Con el rótulo impreso", icon: "package", value: summary.to_dispatch, href: TO_DISPATCH_URL },
+    { key: "on_the_way", label: "En camino", hint: "Despachados, sin entregar", icon: "truck", value: summary.on_the_way, href: ON_THE_WAY_URL },
+    { key: "problems", label: "Con problemas", hint: "Envíos con novedad y avisos", icon: "warning-circle", value: problems, href: noticeCount ? "notificaciones.html" : "pedidos.html", alert: problems > 0 },
+  ];
+  const previous = lastStats;
+  lastStats = Object.fromEntries(stats.map((stat) => [stat.key, Number(stat.value) || 0]));
+  box.replaceChildren(
+    ...stats.map((stat) => {
+      const link = document.createElement("a");
+      const changed = previous && previous[stat.key] !== lastStats[stat.key];
+      const value = Number(stat.value) || 0;
+      link.className = `today-stat${stat.alert ? " is-alert" : ""}${changed ? " is-changed" : ""}${value ? "" : " is-zero"}`;
+      link.href = stat.href;
+      link.innerHTML = `<span class="today-stat-top">
+          <span class="today-stat-icon"><i class="ph ph-${stat.icon}" aria-hidden="true"></i></span>
+          <span class="today-stat-label">${escapeHtml(stat.label)}</span>
+          <i class="ph ph-arrow-up-right today-stat-go" aria-hidden="true"></i>
+        </span>
+        <span class="today-stat-value">${value}</span>
+        <span class="today-stat-hint">${escapeHtml(stat.hint)}</span>`;
+      return link;
+    })
+  );
+  box.hidden = false;
+}
+
+function todoItem({ icon, text, tone = "", action = "", href = "", primary = false, onHide = null, stores = [] }) {
+  const item = document.createElement("li");
+  item.className = `todo-item${tone ? ` is-${tone}` : ""}`;
+  item.innerHTML = `<i class="ph ph-${icon}" aria-hidden="true"></i>`;
+  const body = document.createElement("span");
+  body.className = "todo-body";
+  const label = document.createElement("span");
+  label.className = "todo-text";
+  label.textContent = text;
+  body.appendChild(label);
+  // Con varias tiendas, cuántos son de cada una; cada tienda abre su lista.
+  if (stores.length) {
+    const byStore = document.createElement("span");
+    byStore.className = "todo-stores";
+    stores.forEach((store) => {
+      const link = document.createElement("a");
+      link.href = store.href;
+      link.textContent = `${store.name} ${store.count}`;
+      byStore.appendChild(link);
+    });
+    body.appendChild(byStore);
+  }
+  item.appendChild(body);
+  if (action && href) {
+    const link = document.createElement("a");
+    link.className = `btn btn-small ${primary ? "btn-primary" : "btn-outline"}`;
+    link.href = href;
+    link.textContent = action;
+    item.appendChild(link);
+  }
+  if (onHide) {
+    const hide = document.createElement("button");
+    hide.type = "button";
+    hide.className = "btn btn-small btn-ghost";
+    hide.textContent = "Ocultar";
+    hide.addEventListener("click", () => onHide(hide));
+    item.appendChild(hide);
+  }
+  return item;
+}
+
+// "Ocultar" un aviso lo esconde para todo el comercio mientras dure el problema.
+async function dismissNotice(notice, button) {
+  button.disabled = true;
+  try {
+    const response = await apiFetch(`${NOTICES_URL}${notice.id}/dismiss/`, { method: "POST" });
+    if (response.ok || response.status === 404) {
+      await loadToday();
+      return;
+    }
+    showMessage("No se pudo ocultar el aviso.");
+  } catch (err) {
+    if (!err || !err.isSessionExpired) showMessage("No se pudo ocultar el aviso.");
+  }
+  button.disabled = false;
+}
+
+async function loadToday() {
+  const [summary, notices] = await Promise.all([
+    hasPermission("orders.view") ? fetchJson(SUMMARY_URL) : null,
+    fetchJson(NOTICES_URL),
+  ]);
+  const openNotices = Array.isArray(notices) ? notices : [];
+  if (summary) {
+    renderTodayStats(summary, openNotices.length);
+    window.DashboardWeek.render(summary.week);
+  }
+
+  const items = [];
+  // Primero lo demorado: es lo que el comprador ya está esperando.
+  if (summary && summary.delayed) {
+    items.push({
+      icon: "clock-countdown",
+      tone: "warning",
+      text: `${plural(summary.delayed, "pedido espera", "pedidos esperan")} hace más de ${summary.delayed_days} días`,
+      action: "Ver",
+      href: DELAYED_URL,
+    });
+  }
+  if (summary && summary.to_print) {
+    items.push({
+      icon: "printer",
+      text: `${plural(summary.to_print, "pedido sin rótulo", "pedidos sin rótulo")}`,
+      action: hasPermission("labels.batch") ? "Imprimir" : "",
+      href: TO_PRINT_URL,
+      stores: storeBreakdown(summary, "to_print", TO_PRINT_URL),
+    });
+  }
+  if (summary && summary.to_dispatch) {
+    items.push({
+      icon: "truck",
+      text: `${plural(summary.to_dispatch, "pedido con rótulo, listo", "pedidos con rótulo, listos")} para despachar`,
+      action: hasPermission("orders.dispatch") ? "Despachar" : "",
+      href: TO_DISPATCH_URL,
+      stores: storeBreakdown(summary, "to_dispatch", TO_DISPATCH_URL),
+    });
+  }
+  if (summary && summary.shipment_problems) {
+    items.push({
+      icon: "warning-circle",
+      tone: "danger",
+      text: `${plural(summary.shipment_problems, "envío con un problema", "envíos con un problema")} en el transportista`,
+      action: "Ver",
+      href: "pedidos.html",
+    });
+  }
+  openNotices.forEach((notice) => {
+    items.push({
+      icon: "warning",
+      tone: "warning",
+      text: notice.title,
+      action: notice.url ? "Revisar" : "",
+      href: notice.url || "",
+      onHide: (button) => dismissNotice(notice, button),
+    });
+  });
+  // La primera acción es la principal; las demás, secundarias.
+  const firstAction = items.find((item) => item.action);
+  if (firstAction) firstAction.primary = true;
+
+  const list = document.getElementById("todoList");
+  list.replaceChildren(...items.map(todoItem));
+  if (!items.length) {
+    list.appendChild(todoItem({ icon: "check-circle", tone: "done", text: "Todo al día: no hay pedidos esperando ni avisos." }));
+  }
+  document.getElementById("todoBox").hidden = false;
+  todayLoadedAt = Date.now();
+  renderTodayUpdated();
+}
+
+// Desglose por tienda de un número del día (summary.by_store): solo cuando
+// los pedidos vienen de más de una tienda, cada una con su lista (&tienda=).
+function storeBreakdown(summary, key, url) {
+  const rows = (summary.by_store || []).filter((row) => row[key] > 0);
+  if (rows.length < 2) return [];
+  return rows.map((row) => ({
+    name: row.name,
+    count: row[key],
+    href: `${url}&tienda=${encodeURIComponent(row.store)}`,
+  }));
+}
+
+function renderTodayUpdated() {
+  const label = document.getElementById("todayUpdated");
+  if (!label || !todayLoadedAt) return;
+  const minutes = Math.floor((Date.now() - todayLoadedAt) / 60000);
+  label.textContent = minutes < 1 ? "Actualizado recién" : `Actualizado hace ${minutes} min`;
+}
+
+async function refreshToday() {
+  if (document.visibilityState !== "visible" || !todayLoadedAt) return;
+  if (Date.now() - todayLoadedAt < TODAY_REFRESH_MS - 1000) return;
+  try {
+    await loadToday();
+  } catch (err) {
+    /* sin conexión un momento: se reintenta en la próxima vuelta */
+  }
+}
+
+setInterval(refreshToday, TODAY_REFRESH_MS);
+setInterval(renderTodayUpdated, 15 * 1000);
+document.addEventListener("visibilitychange", refreshToday);
+
+// ---------------------------------------------------------------------------
+// PRIMEROS PASOS: solo para el dueño de un comercio que no terminó de
+// armarlo. "Ocultar" queda en este navegador (es una comodidad, no un dato).
+// ---------------------------------------------------------------------------
+function onboardingHidden() {
+  try {
+    return localStorage.getItem(ONBOARDING_HIDDEN_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+function renderOnboarding(onboarding) {
+  const box = document.getElementById("onboardingBox");
+  if (!box) return;
+  if (!onboarding || onboarding.done >= onboarding.total || onboardingHidden()) {
+    box.hidden = true;
+    return;
+  }
+  box.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "onboarding-head";
+  const title = document.createElement("h2");
+  title.textContent = `Primeros pasos · ${onboarding.done} de ${onboarding.total}`;
+  const hide = document.createElement("button");
+  hide.type = "button";
+  hide.className = "onboarding-hide";
+  hide.textContent = "Ocultar";
+  hide.addEventListener("click", () => {
+    try {
+      localStorage.setItem(ONBOARDING_HIDDEN_KEY, "1");
+    } catch (err) {
+      /* sin almacenamiento: solo se oculta por ahora */
+    }
+    box.hidden = true;
+  });
+  head.append(title, hide);
+
+  const progress = document.createElement("div");
+  progress.className = "onboarding-progress";
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", String(onboarding.total));
+  progress.setAttribute("aria-valuenow", String(onboarding.done));
+  progress.innerHTML = `<span style="width:${Math.round((onboarding.done / onboarding.total) * 100)}%"></span>`;
+
+  const list = document.createElement("ol");
+  list.className = "onboarding-steps";
+  onboarding.steps.forEach((step) => {
+    const item = document.createElement("li");
+    item.className = step.done ? "done" : "";
+    const icon = step.done ? "check-circle" : "circle";
+    item.innerHTML = `<i class="ph ph-${icon}" aria-hidden="true"></i>`;
+    if (step.done) {
+      const label = document.createElement("span");
+      label.textContent = step.label;
+      item.appendChild(label);
+    } else {
+      // Mismo renglón que los hechos (no un botón con borde, que dejaba la
+      // fila despareja): solo el color y la flecha dicen que falta.
+      const link = document.createElement("a");
+      link.className = "onboarding-link";
+      link.href = step.url;
+      link.textContent = step.label;
+      link.insertAdjacentHTML("beforeend", ' <i class="ph ph-arrow-right" aria-hidden="true"></i>');
+      item.appendChild(link);
+    }
+    list.appendChild(item);
+  });
+  box.append(head, progress, list);
+  // Sin tienda todavía: probar con pedidos inventados y llegar a imprimir el
+  // primer rótulo en un minuto (POST /orders/sample/, utils.js).
+  const storeStep = onboarding.steps.find((step) => step.key === "store");
+  if (storeStep && !storeStep.done && sessionHasPermission("orders.create_manual")) {
+    const offer = document.createElement("p");
+    offer.className = "onboarding-sample";
+    offer.innerHTML = '<i class="ph ph-flask" aria-hidden="true"></i><span>¿Querés probar antes de conectar tu tienda?</span>';
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-outline btn-small";
+    button.textContent = "Probar con pedidos de ejemplo";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      button.textContent = "Cargando…";
+      try {
+        await createSampleOrders();
+        window.location.href = "imprimir_rotulos.html?rotulo=sin_imprimir";
+      } catch (err) {
+        if (err.isSessionExpired) return;
+        showMessage(err.message);
+        button.disabled = false;
+        button.textContent = "Probar con pedidos de ejemplo";
+      }
+    });
+    offer.appendChild(button);
+    box.appendChild(offer);
+  }
+  box.hidden = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,74 +552,36 @@ function renderMenu(menu) {
 // de rótulos (apps.labels sigue sin modelos/urls, ver dashboard_views.py),
 // así que no hay de dónde traer ese dato sin inventarlo.
 // ---------------------------------------------------------------------------
-function formatOrderDate(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("es-AR", {
-    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
-  });
-}
-
-function renderLastOrderSummary(order) {
-  const grid = document.getElementById("summaryGrid");
-  if (!grid) return;
-
-  if (!order) {
-    grid.style.display = "none";
-    return;
-  }
-
-  const card = document.createElement("div");
-  card.className = "summary-card";
-  card.innerHTML = `
-    <div class="summary-card-title">Último pedido</div>
-    <div class="summary-card-main">${escapeHtml(order.description || `Pedido #${order.id}`)} — ${escapeHtml(order.status_label)}</div>
-    <div class="summary-card-sub">Creado el ${formatOrderDate(order.created_at)}</div>
-    <a class="summary-card-link" href="pedidos.html">Ver mis pedidos →</a>
-  `;
-  grid.innerHTML = "";
-  grid.appendChild(card);
-  grid.style.display = "grid";
-}
-
-// Si el último evento de estado del pedido es reciente (últimas 48hs) y no
-// es el evento inicial de creación, avisa en #dashboardMessage.
-function maybeShowOrderStatusNotice(order) {
-  const events = Array.isArray(order && order.status_events) ? order.status_events : [];
-  if (events.length < 2) return; // solo el evento de creación: nada que avisar
-
-  const lastEvent = events[events.length - 1];
-  const changedAt = new Date(lastEvent.created_at);
-  if (Number.isNaN(changedAt.getTime())) return;
-
-  const hoursSince = (Date.now() - changedAt.getTime()) / (1000 * 60 * 60);
-  if (hoursSince < 0 || hoursSince > 48) return;
-
-  showMessage(
-    `Tu pedido "${order.description || `#${order.id}`}" cambió a "${lastEvent.status_label}" el ${formatOrderDate(lastEvent.created_at)}.`,
-    "info"
-  );
-}
-
-async function loadOrderSummary() {
-  if (!hasPermission("orders.view")) {
-    const grid = document.getElementById("summaryGrid");
-    if (grid) grid.style.display = "none";
-    return;
-  }
-
+// Si alguien invitó a este usuario a su comercio, se lo dice acá: es lo
+// primero que ve al entrar (ver invitaciones.html).
+async function loadInvitationNotice() {
   try {
-    const response = await apiFetch(ORDERS_URL);
-    if (!response.ok) return; // resumen es "nice to have": no rompe el dashboard si falla
-    const data = await response.json();
-    const orders = Array.isArray(data) ? data : data.results || [];
-    const lastOrder = orders[0] || null;
-    renderLastOrderSummary(lastOrder);
-    if (lastOrder) maybeShowOrderStatusNotice(lastOrder);
+    const response = await apiFetch(MY_INVITATIONS_URL);
+    if (!response.ok) return;
+    const invitations = await response.json();
+    if (!Array.isArray(invitations) || !invitations.length) return;
+    const notice = document.getElementById("invitationNotice");
+    const names = invitations.map((item) => `«${item.team_name}»`).join(", ");
+    notice.textContent = `Te invitaron a trabajar en ${names}. `;
+    const link = document.createElement("a");
+    link.href = "invitaciones.html";
+    link.textContent = invitations.length === 1 ? "Ver la invitación" : "Ver las invitaciones";
+    notice.appendChild(link);
+    notice.hidden = false;
   } catch (err) {
-    if (err.isSessionExpired) return;
-    console.error("Error al cargar el resumen de pedidos:", err);
+    if (!err || !err.isSessionExpired) console.error("Error al leer las invitaciones:", err);
+  }
+}
+
+// El panel trae el comercio actual y la lista de comercios recién leídos: la
+// sesión guardada de la pestaña se pone al día (otra pestaña o el dueño pudo
+// haberlos cambiado).
+function keepStoredTeams(data) {
+  const stored = getCurrentUser();
+  if (!stored || !stored.id) return;
+  const next = { ...stored, team: data.team || null, teams: data.teams || [] };
+  if (JSON.stringify(next.team) !== JSON.stringify(stored.team) || JSON.stringify(next.teams) !== JSON.stringify(stored.teams)) {
+    window.Auth.saveSession(next);
   }
 }
 
@@ -239,10 +593,30 @@ async function loadDashboard() {
       return;
     }
     const data = await response.json();
-    renderUser(data.user || {});
-    renderBackToAdminLink(data.user || {});
-    renderMenu(data.menu || []);
-    loadOrderSummary();
+    // Sin comercio no hay nada del trabajo del comercio: a crear uno o
+    // sumarse. El admin entra igual (la administración no necesita comercio).
+    if (!data.team && !(data.user && data.user.is_admin)) {
+      window.location.replace("comercio_inicio.html");
+      return;
+    }
+    keepStoredTeams(data);
+    if (data.team) {
+      document.getElementById("dashboardTitle").textContent = `Hoy en ${data.team.display_name || data.team.name}`;
+    }
+    // La barra compartida con el usuario fresco y su comercio (topbar.js). El
+    // usuario del panel no trae la lista de permisos: sale de la sesión
+    // guardada, que la barra necesita para no ofrecer "Administración" de más.
+    window.AppTopbar.render({ ...getCurrentUser(), ...(data.user || {}), team: data.team, teams: data.teams });
+    renderOnboarding(data.onboarding);
+    renderSections(data.sections || []);
+    setupToolSearch(data.sections || [], data.menu || []);
+    loadInvitationNotice();
+    if (!data.team) {
+      document.getElementById("noTeamNotice").hidden = false;
+      return;
+    }
+    loadToday();
+    renderSampleOrdersNotice(document.getElementById("sampleNotice"), { onChange: () => window.location.reload() });
   } catch (err) {
     if (!err || !err.isSessionExpired) {
       console.error("Error al cargar el dashboard:", err);
@@ -254,13 +628,16 @@ async function loadDashboard() {
 // ---------------------------------------------------------------------------
 // Logout: misma lógica que admin_common.js (window.Auth.logout).
 // ---------------------------------------------------------------------------
-const logoutBtn = document.getElementById("logoutBtn");
-if (logoutBtn) {
-  logoutBtn.addEventListener("click", () => window.Auth.logout());
-}
 
-if (!getAccessToken()) {
+if (!hasSession()) {
   window.location.replace("index.html");
 } else {
   loadDashboard();
 }
+
+// La fecha de hoy sobre el título ("martes 11 de noviembre").
+(function showToday() {
+  const el = document.getElementById("dashboardDate");
+  if (!el) return;
+  el.textContent = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+})();

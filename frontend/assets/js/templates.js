@@ -4,7 +4,7 @@
 // cargado) y acciones Usar/Duplicar/Editar/Archivar. El CRUD de plantillas
 // vive en frontend/assets/js/labels_api.js (única fuente de verdad,
 // compartida con el editor): import dinámico porque este script es
-// clásico, igual patrón que assets/js/saved_labels.js. Sesión y logout salen de
+// clásico. Sesión y logout salen de
 // assets/js/auth.js (window.Auth).
 
 const EDITOR_URL = "editor_rotulos.html";
@@ -15,7 +15,7 @@ let searchTerm = "";
 let searchDebounceTimer = null;
 let currentPreviewUrl = null; // object URL del PDF de vista previa en pantalla
 
-const getAccessToken = () => window.Auth.getAccessToken();
+const hasSession = () => window.Auth.hasSession();
 const getCurrentUser = () => window.Auth.getCurrentUser();
 
 
@@ -109,16 +109,16 @@ const gridEl = document.getElementById("templatesGrid");
 
 function renderEmptyState() {
   if (searchTerm) {
-    gridEl.innerHTML =
-      '<div class="empty-state-block"><p>No hay plantillas que coincidan con tu búsqueda.</p></div>';
+    gridEl.innerHTML = appEmptyState({ icon: "doc", title: "No hay plantillas que coincidan con tu búsqueda" });
     return;
   }
-  gridEl.innerHTML = `
-    <div class="empty-state-block">
-      <p>Todavía no creaste ninguna plantilla propia.</p>
-      <a class="btn btn-primary" href="${EDITOR_URL}">Diseñar mi primera plantilla</a>
-    </div>
-  `;
+  gridEl.innerHTML = appEmptyState({
+    icon: "doc",
+    title: "Todavía no creaste ninguna plantilla propia",
+    text: "Una plantilla define dónde va cada dato del rótulo; tus pedidos se imprimen con ella.",
+    actionLabel: "Diseñar mi primera plantilla",
+    actionHref: EDITOR_URL,
+  });
 }
 
 function buildCard(template) {
@@ -155,27 +155,44 @@ function buildCard(template) {
   const actions = document.createElement("div");
   actions.className = "template-card-actions";
 
+  // La propia se abre para cambiarla; la que no se puede cambiar (las de la
+  // galería) es un punto de partida: se guarda como copia del comercio.
   const useBtn = document.createElement("a");
   useBtn.className = "btn btn-primary";
-  useBtn.textContent = "Usar";
-  useBtn.href = `${EDITOR_URL}?template=${template.id}`;
+  useBtn.textContent = template.canEdit ? "Abrir" : "Usar como base";
+  useBtn.href = template.canEdit
+    ? `${EDITOR_URL}?template=${template.id}`
+    : `${EDITOR_URL}?nueva=plantilla&template=${template.id}`;
   actions.appendChild(useBtn);
 
-  const duplicateBtn = document.createElement("button");
-  duplicateBtn.type = "button";
-  duplicateBtn.className = "btn btn-outline";
-  duplicateBtn.textContent = "Duplicar";
-  duplicateBtn.addEventListener("click", () => handleDuplicate(template));
-  actions.appendChild(duplicateBtn);
+  // Historial de versiones (versiones_plantilla.html): verlas, compararlas y
+  // restaurar una anterior.
+  const versionsLink = document.createElement("a");
+  versionsLink.className = "btn btn-outline";
+  versionsLink.textContent = template.currentVersion ? `Versiones (${template.currentVersion})` : "Versiones";
+  versionsLink.href = `versiones_plantilla.html?template=${template.id}`;
+  actions.appendChild(versionsLink);
 
-  if (canManageTemplate(template)) {
+  // Renombrar, Duplicar y Archivar siguen lo que dice el backend (can_edit /
+  // can_delete: plantilla propia privada + su permiso, migración 0029). En una
+  // que no se puede cambiar, duplicar sería lo mismo que "Usar como base".
+  if (template.canEdit) {
+    const duplicateBtn = document.createElement("button");
+    duplicateBtn.type = "button";
+    duplicateBtn.className = "btn btn-outline";
+    duplicateBtn.textContent = "Duplicar";
+    duplicateBtn.addEventListener("click", () => handleDuplicate(template));
+    actions.appendChild(duplicateBtn);
+
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.className = "btn btn-outline";
-    editBtn.textContent = "Editar";
+    editBtn.textContent = "Renombrar";
     editBtn.addEventListener("click", () => openRenamePrompt(template));
     actions.appendChild(editBtn);
+  }
 
+  if (template.canDelete) {
     const archiveBtn = document.createElement("button");
     archiveBtn.type = "button";
     archiveBtn.className = "btn btn-danger";
@@ -194,11 +211,15 @@ function renderGrid(templates) {
     return;
   }
   gridEl.innerHTML = "";
-  templates.forEach((template) => gridEl.appendChild(buildCard(template)));
+  // Primero las propias: las de la galería son puntos de partida. Sin esto, las
+  // del comercio quedaban abajo de todas las de ejemplo.
+  [...templates]
+    .sort((a, b) => Number(Boolean(b.canEdit)) - Number(Boolean(a.canEdit)))
+    .forEach((template) => gridEl.appendChild(buildCard(template)));
 }
 
 async function loadTemplates() {
-  gridEl.innerHTML = '<p class="empty-state">Cargando plantillas...</p>';
+  gridEl.innerHTML = '<p class="empty-state"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>';
   try {
     const templates = await templatesApi.listTemplates(searchTerm ? { search: searchTerm } : {});
     renderGrid(templates);
@@ -209,12 +230,9 @@ async function loadTemplates() {
   }
 }
 
-// "Editar" acá es solo renombrar/redescribir desde la grilla: el diseño en
-// sí (posiciones, tamaño) se edita abriendo la plantilla en el editor
-// ("Usar" ya cubre eso, y guardar de nuevo como plantilla actualiza el
-// diseño). Evita duplicar el editor completo para un caso de uso chico.
+// Renombrar desde la grilla: el diseño en sí se cambia con "Abrir".
 async function openRenamePrompt(template) {
-  const name = window.prompt("Nuevo nombre de la plantilla:", template.nombre || "");
+  const name = await appPrompt("Nuevo nombre de la plantilla:", template.nombre || "");
   if (!name || name.trim() === template.nombre) return;
   try {
     await templatesApi.updateTemplate(template.id, { nombre: name.trim() });
@@ -240,7 +258,7 @@ async function handleDuplicate(template) {
 }
 
 async function handleArchive(template) {
-  const confirmed = window.confirm(`¿Archivar "${template.nombre || "esta plantilla"}"?`);
+  const confirmed = await appConfirm(`¿Archivar "${template.nombre || "esta plantilla"}"?`);
   if (!confirmed) return;
   try {
     await templatesApi.archiveTemplate(template.id);
@@ -266,7 +284,7 @@ document.getElementById("searchInput")?.addEventListener("input", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Logout: misma lógica que saved_labels.js/documentos.js (window.Auth.logout).
+// Logout: misma lógica que documentos.js (window.Auth.logout).
 // ---------------------------------------------------------------------------
 const logoutBtn = document.getElementById("logoutBtn");
 if (logoutBtn) {
@@ -277,13 +295,13 @@ async function init() {
   // frontend/assets/js/labels_api.js es la única fuente de verdad del CRUD
   // de plantillas (import dinámico: este script no es un módulo). Ruta
   // relativa a ESTE archivo (assets/js/templates.js), no a la página que
-  // lo carga — mismo criterio que assets/js/saved_labels.js.
+  // lo carga.
   templatesApi = await import("./labels_api.js");
   window.AppTopbar.render();
   await loadTemplates();
 }
 
-if (!getAccessToken()) {
+if (!hasSession()) {
   window.location.replace("index.html");
 } else {
   init();

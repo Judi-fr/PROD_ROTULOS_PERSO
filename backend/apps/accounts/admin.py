@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.models import Group
 
-from .models import EmailVerification, SupportMessage
+from .models import EmailVerification, SupportMessage, Team, TeamInvitation, TeamJoinRequest, TeamMember, TeamProfile
 
 
 def _ensure_groups():
@@ -12,7 +12,7 @@ def _ensure_groups():
     serializers.py y los filtros de viewsets.py); en mayúscula quedarían
     como grupos "personalizados" distintos de los roles reales.
     """
-    group_names = ["admin", "designer", "operator", "subscriber"]
+    group_names = ["admin", "subscriber"]
     for name in group_names:
         Group.objects.get_or_create(name=name)
 
@@ -34,3 +34,36 @@ class SupportMessageAdmin(admin.ModelAdmin):
     list_filter = ("status", "created_at")
     search_fields = ("user__email", "subject", "message")
     readonly_fields = ("user", "subject", "message", "created_at", "updated_at")
+
+@admin.register(Team)
+class TeamAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "owner", "data_user", "closed_at", "created_at")
+    search_fields = ("name", "owner__email")
+    readonly_fields = ("data_user",)
+
+
+@admin.register(TeamMember)
+class TeamMemberAdmin(admin.ModelAdmin):
+    list_display = ("user", "team", "role", "profile", "all_stores")
+    list_filter = ("role",)
+    search_fields = ("user__email", "team__name", "team__owner__email")
+
+
+@admin.register(TeamProfile)
+class TeamProfileAdmin(admin.ModelAdmin):
+    list_display = ("name", "team")
+    search_fields = ("name", "team__owner__email")
+
+
+@admin.register(TeamInvitation)
+class TeamInvitationAdmin(admin.ModelAdmin):
+    list_display = ("email", "team", "status", "expires_at", "created_at")
+    list_filter = ("status",)
+    search_fields = ("email", "team__owner__email")
+
+
+@admin.register(TeamJoinRequest)
+class TeamJoinRequestAdmin(admin.ModelAdmin):
+    list_display = ("user", "team", "status", "created_at", "decided_at")
+    list_filter = ("status",)
+    search_fields = ("user__email", "team__name", "team__owner__email")

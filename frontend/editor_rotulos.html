@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Diseño de Rótulos</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <!-- Sin librería de QR/códigos de barras por CDN: el QR y el código de
          barras de acá abajo se piden como imagen al backend
@@ -15,24 +20,40 @@
     <script src="assets/js/config.js"></script>
     <script src="assets/js/auth.js"></script>
     <script src="assets/js/utils.js"></script>
-    <script src="assets/js/topbar.js"></script>
-    <script src="assets/js/print.js"></script>
+    <!-- Partes del editor que viven en su propio archivo: datos insertables y
+         numeración, reglas condicionales, imán al arrastrar y medidas. -->
+    <script src="assets/js/label_editor_markers.js"></script>
+    <script src="assets/js/label_editor_rules.js"></script>
+    <script src="assets/js/label_editor_snap.js"></script>
+    <script src="assets/js/label_editor_type.js"></script>
+    <script src="assets/js/label_editor_images.js"></script>
+    <script src="assets/js/label_editor_shapes.js"></script>
+    <script src="assets/js/label_editor_sizes.js"></script>
+    <script src="assets/js/label_editor_history.js"></script>
+    <script src="assets/js/label_editor_align.js"></script>
 
     <!-- Estilos comunes del frontend (header/topbar, botones, avatar). Va
          ANTES del <style> propio del editor para que este último (más
          específico en orden de aparición) siga ganando en cualquier
          selector compartido y el canvas no cambie ni un píxel. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+    />
     <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
     <link rel="stylesheet" href="assets/css/labels_shared.css" />
 
     <style>
+      /* La paleta y la tipografía son las del sistema (ui.css); acá solo los
+         nombres propios del editor, apuntando a esos tokens. */
       :root {
-        --accent: #7c5cff;
-        --dark: #1e1b2e;
-        --bg: #f4f3f9;
-        --border: #ddd8ee;
-        --text: #2c2840;
-        --muted: #8f89a8;
+        --accent-strong: var(--accent-600);
+        --accent-soft: var(--accent-50);
+        --accent-ring: rgba(48, 128, 40, 0.24);
+        --surface-sunken: var(--n-150);
+        --border-strong: var(--line-strong);
+        --text: var(--ink);
       }
       * {
         box-sizing: border-box;
@@ -41,129 +62,454 @@
         margin: 0;
         display: flex;
         flex-direction: column;
-        min-height: 100vh;
-        font-family:
-          system-ui,
-          -apple-system,
-          "Segoe UI",
-          sans-serif;
+        min-height: 100dvh;
+        font-family: var(--font-sans);
         background: var(--bg);
         color: var(--text);
       }
 
-      main {
+      .editor-main {
         flex: 1;
-        padding: 32px 40px;
-        max-width: 1100px;
+        padding: 28px 32px 56px;
+        max-width: 1400px;
         margin: 0 auto;
         width: 100%;
       }
 
       /* Título de la página (no confundir con el header.topbar común, que
-         viene de labels_shared.css: acá era ".topbar" en la versión vieja con
-         sidebar, renombrado para no chocar con esa clase). */
+         viene de labels_shared.css). */
+      .editor-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin-bottom: 22px;
+      }
       .editor-heading h1 {
-        margin: 0 0 4px;
-        font-size: 24px;
+        margin: 0 0 6px;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
       }
       .editor-heading .subtitle {
-        margin: 0 0 24px;
+        margin: 0;
+        max-width: 62ch;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 14.5px;
+        line-height: 1.5;
+        text-wrap: pretty;
       }
-
-      /* Enlace "Volver a mis rótulos" dentro de la barra de herramientas
-         del editor: mismo look que los <button> de acá al lado. */
-      .toolbar-link {
-        border: 1px solid var(--border);
-        background: #fff;
-        color: var(--text);
-        padding: 8px 14px;
-        border-radius: 7px;
-        font-size: 13px;
-        text-decoration: none;
+      .samples-toggle {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        transition:
-          background 0.15s,
-          border-color 0.15s;
+        font-size: 13px;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
       }
-      .toolbar-link:hover {
-        border-color: var(--accent);
+      .samples-toggle input:disabled {
+        cursor: not-allowed;
       }
-
-      .toolbar {
+      /* Barra del lienzo (fase 4). */
+      .canvas-toolbar {
         display: flex;
+        align-items: center;
         flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        background: #fff;
+        gap: 6px 12px;
+        padding: 6px 8px;
+        margin-bottom: 10px;
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 14px 18px;
-        margin-bottom: 28px;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
       }
-      .tool-group {
+      .tb-group {
         display: flex;
         align-items: center;
+        gap: 2px;
+      }
+      .tb-group[hidden] {
+        display: none;
+      }
+      .tb-group + .tb-group:not(.tb-right) {
+        padding-left: 12px;
+        border-left: 1px solid var(--border);
+      }
+      .tb-right {
+        margin-left: auto;
+      }
+      .tb-btn,
+      .tb-zoom,
+      .tb-text {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 32px;
+        min-width: 32px;
+        padding: 0 6px;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .tb-btn svg, .tb-btn .ph{
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round; font-size:18px; }
+      .tb-btn:hover:not(:disabled),
+      .tb-zoom:hover,
+      .tb-text:hover {
+        background: var(--surface-sunken);
+      }
+      .tb-btn:focus-visible,
+      .tb-zoom:focus-visible,
+      .tb-text:focus-visible {
+        outline: 2px solid var(--accent-ring);
+        outline-offset: 1px;
+      }
+      .tb-btn:disabled {
+        color: var(--border-strong);
+        cursor: default;
+      }
+      .tb-zoom {
+        min-width: 56px;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+      }
+      .tb-text {
+        padding: 0 10px;
+        border: 1px solid var(--border);
+        margin-left: 6px;
+      }
+      .tb-count {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 6px 0 2px;
+        font-variant-numeric: tabular-nums;
+      }
+      .tb-hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .label .multi-selected {
+        outline: 2px dashed var(--accent) !important;
+        outline-offset: 2px;
+      }
+      .heading-actions {
+        display: flex;
         gap: 10px;
         flex-wrap: wrap;
       }
-      .tool-group label {
-        font-size: 12px;
-        color: var(--muted);
+      .heading-actions button {
+        padding: 10px 18px;
+        font-size: 14px;
+      }
+      .save-status {
+        margin: 0 0 16px;
+        padding: 10px 14px;
+        border-radius: var(--radius-md);
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        text-align: left;
+        font-size: 13.5px;
+      }
+
+      /* Lienzo a la izquierda, propiedades a la derecha: lo que se elige en
+         el rótulo se configura al lado, sin que la barra empuje el rótulo
+         hacia abajo. */
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 24px;
+        align-items: start;
+      }
+      .canvas-column {
+        min-width: 0;
+      }
+      .inspector {
+        position: sticky;
+        top: 16px;
+        max-height: calc(100dvh - 32px);
+        overflow-y: auto;
         display: flex;
-        align-items: center;
-        gap: 6px;
+        flex-direction: column;
+        gap: 14px;
+        padding-bottom: 4px;
       }
-      .tool-group input[type="number"] {
-        width: 60px;
-        padding: 6px 8px;
+      @media (max-width: 1000px) {
+        .workspace {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .inspector {
+          position: static;
+          max-height: none;
+        }
+      }
+      @media (max-width: 640px) {
+        .editor-main {
+          padding: 20px 16px 40px;
+        }
+        .canvas-wrap {
+          padding: 20px 12px;
+        }
+      }
+
+      .panel {
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 6px;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 16px 18px 18px;
+      }
+      .panel-title {
+        margin: 0 0 12px;
         font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        color: var(--text);
       }
+      .selection-empty {
+        margin: 0;
+        padding: 14px;
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      /* Con algún panel de selección visible, el texto de ayuda sobra. */
+      .panel-selection:has(> .tool-group:not([hidden])) .selection-empty {
+        display: none;
+      }
+      .panel-selection > .tool-group + .tool-group {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+
+      /* Tipografías del rótulo (las mismas .ttf que usa el PDF). */
+      @font-face { font-family: "RotulosSerif"; src: url("assets/fonts/CrimsonText-Regular.ttf"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "RotulosSerif"; src: url("assets/fonts/CrimsonText-Italic.ttf"); font-weight: 400; font-style: italic; }
+      @font-face { font-family: "RotulosSerif"; src: url("assets/fonts/CrimsonText-Bold.ttf"); font-weight: 700; font-style: normal; }
+      @font-face { font-family: "RotulosSerif"; src: url("assets/fonts/CrimsonText-BoldItalic.ttf"); font-weight: 700; font-style: italic; }
+      @font-face { font-family: "RotulosScript"; src: url("assets/fonts/Kalam-Regular.ttf"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "RotulosScript"; src: url("assets/fonts/Kalam-Bold.ttf"); font-weight: 700; font-style: normal; }
+      @font-face { font-family: "RotulosCondensed"; src: url("assets/fonts/PT_Sans-Narrow-Web-Regular.ttf"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "RotulosCondensed"; src: url("assets/fonts/PT_Sans-Narrow-Web-Bold.ttf"); font-weight: 700; font-style: normal; }
+      @font-face { font-family: "RotulosMono"; src: url("assets/fonts/CourierPrime-Regular.ttf"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "RotulosMono"; src: url("assets/fonts/CourierPrime-Italic.ttf"); font-weight: 400; font-style: italic; }
+      @font-face { font-family: "RotulosMono"; src: url("assets/fonts/CourierPrime-Bold.ttf"); font-weight: 700; font-style: normal; }
+      @font-face { font-family: "RotulosMono"; src: url("assets/fonts/CourierPrime-BoldItalic.ttf"); font-weight: 700; font-style: italic; }
+      /* Bloque "Tipografía" (label_editor_type.js), en los tres paneles. */
+      .type-slot { grid-column: 1 / -1; }
+      .type-slot[hidden] { display: none; }
+      .type-block {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 12px;
+        padding: 12px;
+        border-radius: var(--radius-md);
+        background: var(--bg);
+      }
+      .type-block .type-block-title,
+      .type-block .type-wide { grid-column: 1 / -1; }
+      .type-block .type-block-title {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .type-block label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+        min-width: 0;
+      }
+      .type-block label:has(input[type="checkbox"]) {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        font-weight: 500;
+        font-size: 13px;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .type-block input:disabled { cursor: not-allowed; }
+
+      /* Controles del panel: etiqueta arriba, campo abajo, en dos columnas;
+         las casillas y los botones ocupan la fila entera. */
+      .tool-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 12px;
+        align-items: end;
+      }
+      /* Botones de dos palabras ("Restablecer posiciones") en una sola línea. */
+      .tool-group > button {
+        white-space: nowrap;
+      }
+      .tool-group label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+        min-width: 0;
+      }
+      .tool-group label:has(input[type="checkbox"]) {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        font-weight: 500;
+        font-size: 13px;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .tool-group label:has(input[type="text"]),
+      .tool-group label:has(select#codeMarkerSelect),
+      .tool-group label:has(select#propMarkerSelect),
+      .tool-group label:has(select#decoMarkerSelect),
+      .tool-group label:has(select#sizePreset),
+      .tool-group > .code-config-label {
+        grid-column: 1 / -1;
+      }
+      /* El display de arriba le gana al atributo hidden: los paneles que
+         aparecen al elegir algo (QR, campo, decoración, bloqueo) y sus
+         controles por tipo se veían siempre. */
+      .tool-group[hidden],
+      .tool-group label[hidden] {
+        display: none;
+      }
+      .tool-group input[type="number"],
+      .tool-group input[type="text"],
+      .tool-group select {
+        width: 100%;
+        min-width: 0;
+        padding: 8px 10px;
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-sm);
+        font: inherit;
+        font-size: 13.5px;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
+        background: var(--surface);
+        transition:
+          border-color 0.2s,
+          box-shadow 0.2s;
+      }
+      .tool-group input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        accent-color: var(--accent);
+      }
+      input:focus-visible,
+      select:focus-visible {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-ring);
+      }
+      .tool-group > button {
+        width: 100%;
+      }
+      .design-exports { margin-top: 10px; font-size: var(--text-sm); color: var(--muted); }
+      .design-exports summary { cursor: pointer; }
+      .design-exports .button-stack { margin-top: 8px; }
+      .button-stack {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
       button {
-        border: 1px solid var(--border);
-        background: #fff;
+        border: 1px solid var(--border-strong);
+        background: var(--surface);
         color: var(--text);
         padding: 8px 14px;
-        border-radius: 7px;
-        font-size: 13px;
+        border-radius: var(--radius-sm);
+        font: inherit;
+        font-size: 13.5px;
+        font-weight: 600;
         cursor: pointer;
         transition:
-          background 0.15s,
-          border-color 0.15s;
+          background 0.2s,
+          border-color 0.2s,
+          color 0.2s,
+          transform 0.1s;
       }
       button:hover {
         border-color: var(--accent);
+        color: var(--accent-strong);
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--accent-ring);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
       }
       button.primary {
         background: var(--accent);
         border-color: var(--accent);
         color: #fff;
-        font-weight: 600;
       }
       button.primary:hover {
-        background: #6a4de8;
+        background: var(--accent-strong);
+        border-color: var(--accent-strong);
+        color: #fff;
       }
 
+      /* "justify-content: safe center": un rótulo más ancho que la columna
+         queda alineado a la izquierda con scroll, en vez de cortarse. */
       .canvas-wrap {
         display: flex;
-        justify-content: center;
-        padding: 30px;
-        background: repeating-conic-gradient(#eceafb 0% 25%, #f4f3f9 0% 50%) 0
-          0 / 20px 20px;
-        border-radius: 12px;
+        justify-content: safe center;
+        overflow: auto;
+        padding: 40px 32px;
+        background-color: var(--surface-sunken);
+        background-image: radial-gradient(
+          circle,
+          rgba(100, 116, 139, 0.22) 1px,
+          transparent 1px
+        );
+        background-size: 16px 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
       }
 
+      /* Helvetica (o Arial, con las mismas medidas) es la letra con la que
+         dibuja el render: así el ancho de cada texto en el lienzo se parece
+         al del papel. */
       .label {
         position: relative;
+        flex: none;
         background: #fff;
-        box-shadow: 0 4px 20px rgba(30, 27, 46, 0.15);
+        box-shadow:
+          0 1px 2px rgba(15, 23, 42, 0.08),
+          0 18px 40px -16px rgba(15, 23, 42, 0.35);
         overflow: hidden;
+        font-family: Helvetica, Arial, sans-serif;
+        color: #111;
         /* width/height set dynamically in cm via JS */
       }
 
@@ -181,8 +527,8 @@
       .field {
         position: absolute;
         padding: 0;
-        outline: 1px dashed rgba(124, 92, 255, 0.5);
-        background: rgba(124, 92, 255, 0.06);
+        outline: 1px dashed rgba(234, 88, 12, 0.45);
+        background: rgba(234, 88, 12, 0.05);
         line-height: 1;
         white-space: nowrap;
         overflow: hidden;
@@ -213,7 +559,7 @@
         display: none;
       }
       .preview-dialog {
-        background: #fff;
+        background: var(--surface);
         border-radius: 12px;
         width: min(760px, 100%);
         height: min(85vh, 900px);
@@ -226,11 +572,41 @@
         align-items: center;
         gap: 12px;
         padding: 14px 18px;
-        border-bottom: 1px solid #e7eaf1;
+        border-bottom: 1px solid var(--line);
         flex-wrap: wrap;
       }
       .preview-dialog-head button {
         margin-left: auto;
+      }
+      .preview-warning {
+        margin: 0;
+        padding: 10px 18px;
+        background: var(--warning-50);
+        color: var(--warning-700);
+        border-bottom: 1px solid var(--warning-200);
+        font-size: 14px;
+      }
+      .preview-warning[hidden] {
+        display: none;
+      }
+      .thermal-preview {
+        flex: 1;
+        overflow: auto;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 16px;
+        background: var(--surface-sunken);
+      }
+      .thermal-preview[hidden] {
+        display: none;
+      }
+      .thermal-preview img {
+        max-width: 100%;
+        height: auto;
+        background: #fff;
+        box-shadow: var(--shadow-md);
+        image-rendering: pixelated;
       }
       #serverPreviewFrame {
         flex: 1;
@@ -243,6 +619,232 @@
         inset: 0;
         pointer-events: none;
         z-index: 1;
+      }
+      /* Capas como en el PDF: recuadro y líneas (decoration-layer, z 1) <
+         formas (shape-layer, z 1, va después) < campos (z 2) < textos fijos
+         (z 3). label_editor_shapes.js dibuja la capa de formas. */
+      .decoration-text-layer {
+        z-index: 3;
+      }
+      .label > .field {
+        z-index: 2;
+      }
+      .shape-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+      .shape-el {
+        position: absolute;
+        pointer-events: auto;
+        cursor: grab;
+      }
+      .shape-svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        overflow: visible;
+      }
+      /* Una caja sin relleno ni borde no se imprime, pero en el editor hay
+         que poder verla para agarrarla. */
+      .shape-el.shape-invisible {
+        outline: 1px dashed rgba(100, 116, 139, 0.55);
+      }
+      .shape-line-h::after,
+      .shape-line-v::after {
+        content: "";
+        position: absolute;
+        inset: -5px;
+      }
+      .shape-text {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        font-family: Helvetica, Arial, sans-serif;
+        pointer-events: none;
+      }
+      .shape-text span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .shape-el.selected {
+        outline: 1.5px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .shape-el.locked {
+        cursor: default;
+      }
+      .shape-resize {
+        position: absolute;
+        right: -6px;
+        bottom: -6px;
+        width: 11px;
+        height: 11px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.35);
+        cursor: nwse-resize;
+        z-index: 5;
+      }
+      .shape-line-h .shape-resize {
+        top: -5px;
+        bottom: auto;
+        cursor: ew-resize;
+      }
+      .shape-line-v .shape-resize {
+        left: -5px;
+        right: auto;
+        cursor: ns-resize;
+      }
+
+      /* Panel de la forma y de "Formas y colores". */
+      .shape-props .shape-wide,
+      .shape-props .shape-section,
+      .shape-props .shape-text-fields,
+      .shape-props .code-config-label {
+        grid-column: 1 / -1;
+      }
+      .shape-geometry {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+      .shape-geometry label[hidden] {
+        display: none;
+      }
+      .shape-text-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 12px;
+        padding: 12px;
+        border-radius: var(--radius-md);
+        background: var(--bg);
+      }
+      .shape-text-fields[hidden],
+      .shape-section[hidden] {
+        display: none;
+      }
+      .shape-color-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .shape-icon-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 6px;
+      }
+      .shape-icon-btn {
+        display: grid;
+        place-items: center;
+        aspect-ratio: 1;
+        padding: 0;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: transform 0.15s, border-color 0.15s;
+      }
+      .shape-icon-btn:hover { border-color: var(--n-400); }
+      .shape-icon-btn:active { transform: scale(0.96); }
+      .shape-icon-btn.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); }
+      .shape-swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .shape-swatch {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid var(--border-strong);
+        border-radius: 50%;
+        font-size: 10px;
+        font-weight: 700;
+        color: #fff;
+        cursor: pointer;
+        transition: transform 0.15s, box-shadow 0.15s;
+      }
+      .shape-swatch:active {
+        transform: scale(0.94);
+      }
+      .shape-swatch.active {
+        box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent);
+      }
+      .shape-swatch-none {
+        background: linear-gradient(135deg, #fff 45%, #dc2626 45% 55%, #fff 55%);
+      }
+      /* El fondo lo pone label_editor_shapes.js con el color de la paleta. */
+      .shape-swatch-palette {
+        text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+      }
+      .shape-swatch-custom {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px dashed var(--border-strong);
+        border-radius: 50%;
+        background: none;
+        cursor: pointer;
+      }
+      .shape-image { overflow: visible; }
+      .shape-img-frame {
+        position: absolute;
+        overflow: hidden;
+        box-sizing: border-box;
+        pointer-events: none;
+      }
+      .shape-img-frame img { width: 100%; height: 100%; display: block; }
+      .shape-img-border { position: absolute; box-sizing: border-box; pointer-events: none; }
+      .shape-img-frame:has(.shape-img-border) { overflow: visible; }
+      .shape-img-frame:has(.shape-img-border) img { border-radius: inherit; }
+      .shape-img-missing {
+        display: grid;
+        place-items: center;
+        border: 1px dashed var(--n-400);
+        background: rgba(241, 245, 249, 0.7);
+        font: 600 10px/1.2 var(--font-sans);
+        color: #64748b;
+        text-align: center;
+      }
+      .shape-image-current { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .shape-image-thumb {
+        width: 52px; height: 52px; flex: none; display: grid; place-items: center;
+        border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; color: #94a3b8;
+        background: repeating-conic-gradient(#f1f5f9 0 25%, #fff 0 50%) 0 0 / 12px 12px;
+      }
+      .shape-image-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+      .shape-image-check { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+      .shape-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .shape-actions .btn {
+        flex: 1;
+      }
+      .shape-add {
+        margin-bottom: 12px;
+      }
+      .palette-group input[type="color"] {
+        width: 100%;
+        height: 34px;
+        padding: 2px;
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-sm);
+        background: var(--surface, #fff);
+      }
+      .thermal-note {
+        margin: 10px 0 0;
+        font-size: 12px;
+        color: #b45309;
       }
       .deco-border {
         position: absolute;
@@ -287,7 +889,7 @@
 
       .field:focus {
         outline-color: var(--accent);
-        background: rgba(124, 92, 255, 0.1);
+        background: rgba(234, 88, 12, 0.1);
       }
       .field.dragging {
         cursor: grabbing;
@@ -296,6 +898,9 @@
         user-select: none;
       }
 
+      #logoField[hidden] {
+        display: none;
+      }
       #logoField {
         display: flex;
         align-items: center;
@@ -338,11 +943,25 @@
         object-fit: contain;
       }
 
-      /* Barra de configuración del código seleccionado (QR/código de
-         barras): mismo look que el resto de la toolbar. */
+      /* Encabezado de cada panel de selección ("Código: QR", "Campo: cp"):
+         el primero de cada grupo; el resto de estos spans son ayudas. */
       .code-config-label {
         font-size: 12px;
         color: var(--muted);
+        line-height: 1.45;
+      }
+      .tool-group > .code-config-label:first-child {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .tool-group > .code-config-label:first-child strong {
+        display: inline-block;
+        margin-left: 2px;
+        padding: 1px 8px;
+        border-radius: 5px;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        font-weight: 700;
       }
 
       /* Estado limpio para exportar: sin bordes punteados ni fondos guía */
@@ -352,24 +971,193 @@
       }
 
       .hint {
-        margin-top: 14px;
+        margin-top: 12px;
         font-size: 12px;
         color: var(--muted);
         text-align: center;
       }
+
+      /* Campo bloqueado: no se arrastra ni se mueve con el teclado. Se ve
+         con un borde continuo gris para que no parezca un error. */
+      .field.locked {
+        cursor: default;
+        outline-style: solid;
+        outline-color: rgba(100, 116, 139, 0.7);
+      }
+      .deco-line.locked,
+      .deco-text.locked {
+        cursor: default;
+      }
+      .field.selected-el {
+        outline: 2px solid var(--accent);
+      }
+
+      /* Opciones de texto (2026-10-21), las mismas que dibuja
+         _draw_text_entry: franja negra con margen (TEXT_BAND_PAD_RATIO =
+         0,15 de la letra), recuadro al mismo margen, etiqueta fija delante
+         y texto vertical (writing-mode; el de abajo hacia arriba, girado). */
+      .field.text-inverted {
+        background: #000;
+        color: #fff;
+        box-shadow: 0 0 0 0.15em #000;
+      }
+      .field.text-framed {
+        box-shadow: 0 0 0 0.15em #fff, 0 0 0 calc(0.15em + 1px) #000;
+      }
+      .field.text-inverted.text-framed {
+        box-shadow: 0 0 0 calc(0.15em + 1px) #000;
+      }
+      .field[data-prefix]::before {
+        content: attr(data-prefix) "\00a0";
+        font-weight: var(--prefix-weight, inherit);
+      }
+      .field.text-rot-90,
+      .field.text-rot-270 {
+        writing-mode: vertical-rl;
+      }
+      .field.text-rot-270 {
+        transform: rotate(180deg);
+      }
+
+      /* Guías del imán (label_editor_snap.js). */
+      .snap-guide {
+        position: absolute;
+        pointer-events: none;
+        z-index: 60;
+        background: #ff3d7f;
+      }
+      .snap-guide-x {
+        top: 0;
+        bottom: 0;
+        width: 1px;
+      }
+      .snap-guide-y {
+        left: 0;
+        right: 0;
+        height: 1px;
+      }
+      .label.exporting .snap-guide {
+        display: none;
+      }
+
+      /* Secciones debajo del lienzo: reglas y numeración. */
+      .editor-extra {
+        margin-top: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .editor-extra details {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 16px 20px;
+      }
+      .editor-extra summary {
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 14.5px;
+        transition: color 0.2s;
+      }
+      .editor-extra summary:hover {
+        color: var(--accent-strong);
+      }
+      .editor-extra .section-help {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin: 10px 0 12px;
+      }
+      .rule-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 0;
+        border-top: 1px solid var(--border);
+      }
+      .rule-row select,
+      .rule-row input,
+      .seq-form input,
+      .tool-group select {
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 13px;
+        background: #fff;
+      }
+      .rule-row .rule-value,
+      .rule-row .rule-text {
+        width: 180px;
+      }
+      .rule-row .rule-num {
+        width: 76px;
+      }
+      .rule-word {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .rule-tools {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+      }
+      .rule-tools button {
+        padding: 5px 9px;
+      }
+      .rules-empty {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 4px 0 10px;
+      }
+      .seq-form {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 12px;
+      }
+      .seq-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .seq-example {
+        font-family: ui-monospace, monospace;
+        font-size: 15px;
+        padding: 6px 10px;
+        background: var(--surface-sunken);
+        border-radius: 6px;
+      }
+      .rules-message {
+        margin: 10px 0 0;
+        font-size: 13px;
+      }
+      .rules-message.success {
+        color: #16a34a;
+      }
+      .rules-message.error {
+        color: #dc2626;
+      }
     </style>
   </head>
-  <body>
+  <body data-requires="labels.template_create,labels.template_edit">
     <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
-    <header class="topbar" id="appTopbar" data-links='[{"href": "mis_rotulos.html", "label": "Volver a mis rótulos"}]'></header>
+    <header class="topbar" id="appTopbar" data-links='[{"href": "mis_plantillas.html", "label": "Volver a mis plantillas"}]'></header>
+    <!-- Después del <header>: topbar.js lo dibuja apenas carga, y en el
+         <head> todavía no existía (la barra quedaba vacía, sin "Cerrar
+         sesión"). -->
+    <script src="assets/js/topbar.js"></script>
 
     <script>
       // Header común (avatar/nombre/email desde localStorage.user + logout),
-      // igual patrón que el resto del frontend (ver saved_labels.js/ayuda.js).
+      // igual patrón que el resto del frontend (ver ayuda.js).
       // Sesión y logout salen de assets/js/auth.js (window.Auth). Guard de
       // sesión antes de pintar nada más.
       (function () {
-        if (!window.Auth.getAccessToken()) {
+        if (!window.Auth.hasSession()) {
           window.location.replace("index.html");
           return;
         }
@@ -383,342 +1171,547 @@
         if (nameEl) nameEl.textContent = name;
         if (emailEl) emailEl.textContent = email || "—";
         if (avatarEl) {
-          avatarEl.src = user.picture
-            ? user.picture
-            : `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email || "user")}`;
+          avatarEl.src = personAvatarUrl({ ...user, display_name: name });
         }
 
         document.getElementById("logoutBtn")?.addEventListener("click", () => window.Auth.logout());
       })();
     </script>
 
-    <main>
+    <main class="editor-main">
       <div class="editor-heading">
-        <h1>Diseño de Rótulos</h1>
-        <p class="subtitle">
-          Arrastrá cada dato a donde lo necesites en el rótulo. Hacé clic sobre
-          un texto para editarlo, o sobre el QR/código de barras para
-          configurarlos.
-        </p>
-      </div>
-
-      <div class="toolbar">
-        <div class="tool-group">
-          <a class="toolbar-link" href="mis_rotulos.html">← Mis rótulos</a>
+        <div>
+          <h1>Diseño de rótulos</h1>
+          <p class="subtitle">
+            Arrastrá cada dato a donde lo necesites en el rótulo. Hacé clic sobre
+            un texto para editarlo, o sobre el QR/código de barras para
+            configurarlos.
+          </p>
         </div>
-        <div class="tool-group" id="codeConfigGroup" hidden>
-          <span class="code-config-label"
-            >Código: <strong id="codeConfigTitle">QR</strong></span
-          >
-          <label id="codeSizeLabel">
-            Tamaño (cm)
-            <input
-              type="number"
-              id="codeSizeInput"
-              min="1"
-              max="10"
-              step="0.5"
-              style="width: 60px"
-            />
+        <div class="heading-actions">
+          <label class="samples-toggle" title="Muestra datos de ejemplo en lugar de los {{marcadores}}. No cambia lo que se guarda.">
+            <input type="checkbox" id="samplesToggle" />
+            Ver con datos de ejemplo
           </label>
-          <label id="codeWidthLabel" hidden>
-            Ancho (cm)
-            <input
-              type="number"
-              id="codeWidthInput"
-              min="2"
-              max="20"
-              step="0.5"
-              style="width: 60px"
-            />
-          </label>
-          <label id="codeHeightLabel" hidden>
-            Alto (cm)
-            <input
-              type="number"
-              id="codeHeightInput"
-              min="0.5"
-              max="5"
-              step="0.1"
-              style="width: 60px"
-            />
-          </label>
-          <label id="codeSymbologyLabel" hidden>
-            Simbología
-            <select id="codeSymbologySelect">
-              <option value="code128">Code128</option>
-              <option value="ean13">EAN-13</option>
-            </select>
-          </label>
-          <label id="codeShowTextLabel" hidden>
-            <input type="checkbox" id="codeShowTextInput" />
-            Mostrar texto
-          </label>
-          <label
-            >Contenido
-            <input type="text" id="codeDataInput" style="width: 190px" />
-          </label>
-          <label
-            >Insertar marcador
-            <select id="codeMarkerSelect">
-              <option value="">— elegir —</option>
-              <option value="remitente">Remitente</option>
-              <option value="destinatario">Destinatario</option>
-              <option value="domicilio">Domicilio</option>
-              <option value="cp">CP</option>
-              <option value="localidad">Localidad</option>
-              <option value="pedido">N° de pedido</option>
-              <option value="tracking">Código de seguimiento</option>
-              <option value="tracking_url">URL de seguimiento</option>
-            </select>
-          </label>
-        </div>
-
-        <!-- Propiedades del campo de texto seleccionado. Mismo patrón que el
-             panel del QR/código de barras de acá arriba: se elige el elemento
-             en el lienzo y su configuración aparece acá. Estos estilos ya los
-             dibujaba el lienzo y los aplicaba el render; lo que faltaba era
-             poder editarlos sin tocar la base. -->
-        <div class="tool-group" id="fieldPropsGroup" hidden>
-          <span class="code-config-label"
-            >Campo: <strong id="fieldPropsTitle"></strong></span
-          >
-          <label>
-            Tamaño (pt)
-            <input
-              type="number"
-              id="propFontSize"
-              min="6"
-              max="72"
-              step="0.5"
-              placeholder="auto"
-              style="width: 70px"
-            />
-          </label>
-          <label>
-            <input type="checkbox" id="propBold" />
-            Negrita
-          </label>
-          <label>
-            Alineación
-            <select id="propAlign">
-              <option value="left">Izquierda</option>
-              <option value="center">Centro</option>
-              <option value="right">Derecha</option>
-            </select>
-          </label>
-          <label>
-            Ancho (%)
-            <input
-              type="number"
-              id="propWidth"
-              min="5"
-              max="100"
-              step="1"
-              placeholder="hasta el borde"
-              style="width: 80px"
-            />
-          </label>
-          <label title="Si todos sus datos vienen vacíos, no se imprime nada (ni la etiqueta)">
-            <input type="checkbox" id="propHideIfEmpty" />
-            Ocultar si queda vacío
-          </label>
-          <label title="Antes de recortar con puntos suspensivos, achica la letra hasta 6 pt">
-            <input type="checkbox" id="propShrink" />
-            Achicar para que entre
-          </label>
-        </div>
-        <!-- Decoraciones: recuadro de corte, líneas separadoras y textos
-             fijos. El render las dibujaba desde siempre y el editor pasó a
-             mostrarlas; esto es lo que faltaba para poder crearlas. -->
-        <div class="tool-group" id="decoGroup">
-          <span class="code-config-label">Decoraciones</span>
-          <label title="Marco de corte a 0,2 cm del borde, como lo dibuja el render">
-            <input type="checkbox" id="decoBorder" />
-            Recuadro
-          </label>
-          <label>
-            <input type="checkbox" id="decoBorderDashed" />
-            Punteado
-          </label>
-          <button type="button" class="btn btn-outline" id="addLineBtn">
-            + Línea
-          </button>
-          <button type="button" class="btn btn-outline" id="addDecoTextBtn">
-            + Texto fijo
-          </button>
-        </div>
-
-        <!-- Propiedades de la línea o el texto fijo seleccionado. Mismo patrón
-             que los dos paneles de arriba: se elige en el lienzo y aparece. -->
-        <div class="tool-group" id="decoPropsGroup" hidden>
-          <span class="code-config-label"
-            >Seleccionado: <strong id="decoPropsTitle"></strong></span
-          >
-          <label id="decoTextLabel" hidden>
-            Contenido
-            <input type="text" id="decoText" style="width: 190px" />
-          </label>
-          <label id="decoFontSizeLabel" hidden>
-            Tamaño (pt)
-            <input
-              type="number"
-              id="decoFontSize"
-              min="6"
-              max="72"
-              step="0.5"
-              placeholder="auto"
-              style="width: 70px"
-            />
-          </label>
-          <label id="decoBoldLabel" hidden>
-            <input type="checkbox" id="decoBold" />
-            Negrita
-          </label>
-          <label id="decoAlignLabel" hidden>
-            Alineación
-            <select id="decoAlign">
-              <option value="left">Izquierda</option>
-              <option value="center">Centro</option>
-              <option value="right">Derecha</option>
-            </select>
-          </label>
-          <label id="decoLeftLabel" hidden>
-            Desde (%)
-            <input type="number" id="decoLeft" min="0" max="100" step="1" style="width: 70px" />
-          </label>
-          <label id="decoRightLabel" hidden>
-            Hasta (%)
-            <input type="number" id="decoRight" min="0" max="100" step="1" style="width: 70px" />
-          </label>
-          <label id="decoDashedLabel" hidden>
-            <input type="checkbox" id="decoDashed" />
-            Punteada
-          </label>
-          <button type="button" class="btn btn-outline" id="decoDeleteBtn">
-            Eliminar
-          </button>
-        </div>
-
-        <div class="tool-group">
-          <label
-            >Nombre
-            <input
-              type="text"
-              id="nombreInput"
-              placeholder="Rótulo sin nombre"
-              style="width: 160px"
-          /></label>
-        </div>
-        <div class="tool-group">
-          <label
-            >Ancho
-            <input
-              type="number"
-              id="widthCm"
-              value="10"
-              min="5"
-              max="30"
-              step="0.5"
-            />
-            cm</label
-          >
-          <label
-            >Alto
-            <input
-              type="number"
-              id="heightCm"
-              value="15"
-              min="5"
-              max="40"
-              step="0.5"
-            />
-            cm</label
-          >
-        </div>
-        <div class="tool-group">
-          <button id="uploadLogoBtn">Subir logo</button>
-          <input type="file" id="logoInput" accept="image/*" hidden />
-          <button id="resetBtn">Restablecer posiciones</button>
-        </div>
-        <div class="tool-group">
-          <button id="saveBtn" class="primary">Guardar rótulo</button>
-          <button id="saveAsTemplateBtn">Guardar como plantilla</button>
           <button id="previewServerBtn" title="Muestra el PDF que genera el servidor, que es lo que sale impreso">
             Ver cómo sale impreso
           </button>
-          <button id="exportPngBtn">Exportar PNG</button>
-          <button id="exportPdfBtn">Exportar PDF</button>
-          <!-- Vista previa rápida (arriba) vs. rótulo definitivo (acá): el
-               PNG/PDF de arriba los arma html2canvas sobre lo que se ve en
-               pantalla; este lo arma el backend con ReportLab a partir de
-               los datos guardados, es el que va a imprenta. Por eso exige
-               que el rótulo ya esté guardado (necesita un id). -->
-          <button id="exportServerPdfBtn" title="Guardá el rótulo primero para poder descargar el PDF del servidor">
-            Descargar PDF (servidor)
-          </button>
-          <button id="printBtn" title="Guardá el rótulo primero para poder imprimirlo">
-            Imprimir
-          </button>
+          <!-- Solo al abrir una plantilla propia (o cualquiera, siendo admin)
+               con ?template=<id>: guarda el diseño en ESA plantilla como una
+               versión nueva de su historial (versiones_plantilla.html). -->
+          <button id="saveTemplateVersionBtn" style="display: none">Guardar cambios en la plantilla</button>
+          <button id="saveNewTemplateBtn" class="primary">Guardar plantilla</button>
         </div>
       </div>
-      <p id="saveStatus" class="hint" style="display: none"></p>
+      <p id="saveStatus" class="hint save-status" style="display: none"></p>
 
-      <div class="canvas-wrap">
-        <div id="label" class="label">
-          <div class="field" data-field="logo" id="logoField">
-            <div class="logo-placeholder" id="logoPlaceholder">+ Logo</div>
-            <img id="logoImg" style="display: none" alt="Logo" />
+      <div class="workspace">
+        <section class="canvas-column" aria-label="Rótulo">
+          <!-- Barra del lienzo (fase 4): historial, duplicar, alinear, zoom y
+               vista térmica. Cada botón dice su atajo en el title. -->
+          <div class="canvas-toolbar" role="toolbar" aria-label="Herramientas del lienzo">
+            <div class="tb-group">
+              <button type="button" class="tb-btn" id="undoBtn" title="Deshacer (Ctrl+Z)" aria-label="Deshacer" disabled>
+                <i class="ph ph-arrow-counter-clockwise" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" id="redoBtn" title="Rehacer (Ctrl+Y o Ctrl+Shift+Z)" aria-label="Rehacer" disabled>
+                <i class="ph ph-arrow-clockwise" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" id="duplicateBtn" title="Duplicar la forma, línea o texto fijo elegido (Ctrl+D)" aria-label="Duplicar" disabled>
+                <i class="ph ph-copy-simple" aria-hidden="true"></i>
+              </button>
+            </div>
+            <div class="tb-group" id="alignGroup" hidden>
+              <span class="tb-count" id="alignCount"></span>
+              <button type="button" class="tb-btn" data-align="left" title="Alinear a la izquierda" aria-label="Alinear a la izquierda">
+                <i class="ph ph-align-left" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="hcenter" title="Centrar en horizontal" aria-label="Centrar en horizontal">
+                <i class="ph ph-align-center-horizontal" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="right" title="Alinear a la derecha" aria-label="Alinear a la derecha">
+                <i class="ph ph-align-right" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="top" title="Alinear arriba" aria-label="Alinear arriba">
+                <i class="ph ph-align-top" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="vcenter" title="Centrar en vertical" aria-label="Centrar en vertical">
+                <i class="ph ph-align-center-vertical" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="bottom" title="Alinear abajo" aria-label="Alinear abajo">
+                <i class="ph ph-align-bottom" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="hdistribute" title="Repartir en horizontal (3 o más)" aria-label="Repartir en horizontal">
+                <i class="ph ph-arrows-out-line-horizontal" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-btn" data-align="vdistribute" title="Repartir en vertical (3 o más)" aria-label="Repartir en vertical">
+                <i class="ph ph-arrows-out-line-vertical" aria-hidden="true"></i>
+              </button>
+            </div>
+            <span class="tb-hint" id="alignHint">Shift+clic para elegir varios</span>
+            <div class="tb-group tb-right">
+              <button type="button" class="tb-btn" id="zoomOutBtn" title="Alejar (Ctrl + rueda)" aria-label="Alejar">
+                <i class="ph ph-minus" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-zoom" id="zoomResetBtn" title="Volver al 100 %">100 %</button>
+              <button type="button" class="tb-btn" id="zoomInBtn" title="Acercar (Ctrl + rueda)" aria-label="Acercar">
+                <i class="ph ph-plus" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="tb-text" id="thermalViewBtn" title="Cómo lo imprime una térmica Zebra: en blanco y negro, con trama en los grises">
+                Vista térmica
+              </button>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <div id="label" class="label">
+              <div class="field" data-field="logo" id="logoField">
+                <div class="logo-placeholder" id="logoPlaceholder">+ Logo</div>
+                <img id="logoImg" style="display: none" alt="Logo" />
+              </div>
+
+              <div class="field" data-field="qr" id="qrField">
+                <img id="qrImg" alt="QR" />
+              </div>
+
+              <div class="field" data-field="barcode" id="barcodeField">
+                <img id="barcodeImg" alt="Código de barras" />
+              </div>
+
+              <div class="field" data-field="remitente" contenteditable="true">
+                Remitente: {{remitente}}
+              </div>
+              <div class="field" data-field="destinatario" contenteditable="true">
+                Destinatario: {{destinatario}}
+              </div>
+              <div class="field" data-field="domicilio" contenteditable="true">
+                Domicilio: {{domicilio}}
+              </div>
+              <div class="field" data-field="cp" contenteditable="true">
+                CP: {{cp}}
+              </div>
+              <div class="field" data-field="localidad" contenteditable="true">
+                Localidad/Provincia: {{localidad}}
+              </div>
+              <div
+                class="field"
+                data-field="pedido"
+                id="pedidoField"
+                contenteditable="true"
+              >
+                {{pedido}}
+              </div>
+            </div>
           </div>
 
-          <div class="field" data-field="qr" id="qrField">
-            <img id="qrImg" alt="QR" />
-          </div>
+          <p class="hint">
+            Los campos se guardan en % del rótulo, así que si cambiás el tamaño, la
+            posición relativa se mantiene.
+          </p>
 
-          <div class="field" data-field="barcode" id="barcodeField">
-            <img id="barcodeImg" alt="Código de barras" />
-          </div>
+          <div class="editor-extra">
+            <!-- Reglas condicionales (design.rules): las arma
+                 label_editor_rules.js; el backend las aplica al imprimir. -->
+            <details id="rulesPanel">
+              <summary>Reglas según los datos del envío <span id="rulesCount"></span></summary>
+              <p class="section-help">
+                Cambian el rótulo según cada pedido: por ejemplo, ocultar el QR si
+                no hay código de seguimiento, o cambiar un texto según la localidad.
+                Se aplican al imprimir, en orden; si dos tocan el mismo elemento,
+                gana la de más abajo. Para verlas con datos de muestra usá
+                "Ver cómo sale impreso".
+              </p>
+              <div id="rulesList"></div>
+              <button type="button" id="addRuleBtn">+ Agregar regla</button>
+            </details>
 
-          <div class="field" data-field="remitente" contenteditable="true">
-            Remitente: Juan Pérez
+            <!-- Numeración de {{secuencia}}: es una sola por cuenta, la comparten
+                 todas las plantillas (label_editor_markers.js). -->
+            <details id="sequencePanel">
+              <summary>Número correlativo ({{secuencia}})</summary>
+              <p class="section-help">
+                Cada rótulo impreso que tenga el dato "Número correlativo" lleva el
+                número siguiente. Es uno solo para toda tu cuenta: lo comparten
+                todas tus plantillas. La vista previa muestra un número de muestra
+                y no gasta ninguno.
+              </p>
+              <div class="seq-form">
+                <label>Prefijo <input type="text" id="seqPrefix" maxlength="20" placeholder="ENV-" style="width: 110px" /></label>
+                <label>Cifras <input type="number" id="seqPadding" min="0" max="12" step="1" style="width: 70px" /></label>
+                <label>Próximo número <input type="number" id="seqNext" min="1" step="1" style="width: 110px" /></label>
+                <label>Así se va a ver <span class="seq-example" id="seqExample">000001</span></label>
+                <button type="button" id="seqSaveBtn">Guardar numeración</button>
+              </div>
+              <p id="seqMessage" class="rules-message" hidden></p>
+            </details>
           </div>
-          <div class="field" data-field="destinatario" contenteditable="true">
-            Destinatario: María Gómez
-          </div>
-          <div class="field" data-field="domicilio" contenteditable="true">
-            Domicilio: Av. Siempre Viva 742
-          </div>
-          <div class="field" data-field="cp" contenteditable="true">
-            CP: 1000
-          </div>
-          <div class="field" data-field="localidad" contenteditable="true">
-            Localidad/Provincia: CABA, Bs. As.
-          </div>
-          <div
-            class="field"
-            data-field="pedido"
-            id="pedidoField"
-            contenteditable="true"
-          >
-            N° de Pedido: 000123
-          </div>
-        </div>
+        </section>
+
+        <aside class="inspector" aria-label="Propiedades">
+          <section class="panel panel-selection">
+            <h2 class="panel-title">Elemento seleccionado</h2>
+            <p class="selection-empty">
+              Hacé clic en un texto, el logo, el QR o el código de barras del
+              rótulo para editarlo acá.
+            </p>
+            <div class="tool-group" id="codeConfigGroup" hidden>
+              <span class="code-config-label"
+                >Código: <strong id="codeConfigTitle">QR</strong></span
+              >
+              <label id="codeSizeLabel">
+                Tamaño (cm)
+                <input
+                  type="number"
+                  id="codeSizeInput"
+                  min="1"
+                  max="10"
+                  step="0.5"
+             
+                />
+              </label>
+              <label id="codeWidthLabel" hidden>
+                Ancho (cm)
+                <input
+                  type="number"
+                  id="codeWidthInput"
+                  min="2"
+                  max="20"
+                  step="0.5"
+             
+                />
+              </label>
+              <label id="codeHeightLabel" hidden>
+                Alto (cm)
+                <input
+                  type="number"
+                  id="codeHeightInput"
+                  min="0.5"
+                  max="5"
+                  step="0.1"
+             
+                />
+              </label>
+              <label id="codeSymbologyLabel" hidden>
+                Simbología
+                <select id="codeSymbologySelect">
+                  <option value="code128">Code128</option>
+                  <option value="ean13">EAN-13</option>
+                </select>
+              </label>
+              <label id="codeShowTextLabel" hidden>
+                <input type="checkbox" id="codeShowTextInput" />
+                Mostrar texto
+              </label>
+              <label
+                >Contenido
+                <input type="text" id="codeDataInput" />
+              </label>
+              <label
+                >Insertar marcador
+                <!-- Las opciones las pone label_editor_markers.js: los mismos
+                     datos (y calculados) que entiende el render. -->
+                <select id="codeMarkerSelect"></select>
+              </label>
+            </div>
+            <!-- Propiedades del campo de texto seleccionado. Mismo patrón que el
+                 panel del QR/código de barras de acá arriba: se elige el elemento
+                 en el lienzo y su configuración aparece acá. Estos estilos ya los
+                 dibujaba el lienzo y los aplicaba el render; lo que faltaba era
+                 poder editarlos sin tocar la base. -->
+            <div class="tool-group" id="fieldPropsGroup" hidden>
+              <span class="code-config-label"
+                >Campo: <strong id="fieldPropsTitle"></strong></span
+              >
+              <label>
+                Tamaño (pt)
+                <input
+                  type="number"
+                  id="propFontSize"
+                  min="6"
+                  max="72"
+                  step="0.5"
+                  placeholder="auto"
+             
+                />
+              </label>
+              <label>
+                <input type="checkbox" id="propBold" />
+                Negrita
+              </label>
+              <label>
+                Alineación
+                <select id="propAlign">
+                  <option value="left">Izquierda</option>
+                  <option value="center">Centro</option>
+                  <option value="right">Derecha</option>
+                </select>
+              </label>
+              <label>
+                Ancho (%)
+                <input
+                  type="number"
+                  id="propWidth"
+                  min="5"
+                  max="100"
+                  step="1"
+                  placeholder="hasta el borde"
+             
+                />
+              </label>
+              <label title="Si todos sus datos vienen vacíos, no se imprime nada (ni la etiqueta)">
+                <input type="checkbox" id="propHideIfEmpty" />
+                Ocultar si queda vacío
+              </label>
+              <label title="Antes de recortar con puntos suspensivos, achica la letra hasta 6 pt">
+                <input type="checkbox" id="propShrink" />
+                Achicar para que entre
+              </label>
+              <!-- Opciones de 2026-10-21 (prefix, prefix_bold, invert, frame,
+                   rotate): las dibujan _draw_text_entry (PDF) y zpl.py; acá
+                   applyRenderMetrics las muestra en el lienzo. -->
+              <label title="Un texto fijo delante del dato, por ejemplo «CP:» o «Destinatario:». Si el dato viene vacío y está «Ocultar si queda vacío», tampoco sale.">
+                Etiqueta delante
+                <input type="text" id="propPrefix" maxlength="40" placeholder="Ej: CP:" />
+              </label>
+              <label>
+                <input type="checkbox" id="propPrefixBold" />
+                Etiqueta en negrita
+              </label>
+              <label title="Blanco sobre una franja negra, para resaltar el dato. Sale bien en impresoras térmicas.">
+                <input type="checkbox" id="propInvert" />
+                Invertido (blanco sobre negro)
+              </label>
+              <label title="Un marco alrededor de este dato">
+                <input type="checkbox" id="propFrame" />
+                Recuadro
+              </label>
+              <label title="Vertical, el texto arranca arriba y llega como mucho hasta el borde de abajo. La alineación no se usa.">
+                Orientación
+                <select id="propRotate">
+                  <option value="0">Horizontal</option>
+                  <option value="90">Vertical, se lee hacia abajo</option>
+                  <option value="270">Vertical, se lee hacia arriba</option>
+                </select>
+              </label>
+              <div id="propColorSlot" class="type-slot"></div>
+              <div id="propTypeSlot" class="type-slot"></div>
+              <label title="Se inserta donde estaba el cursor en el texto del campo">
+                Insertar dato
+                <select id="propMarkerSelect"></select>
+              </label>
+            </div>
+            <!-- Propiedades de la línea o el texto fijo seleccionado. Mismo patrón
+                 que los dos paneles de arriba: se elige en el lienzo y aparece. -->
+            <div class="tool-group" id="decoPropsGroup" hidden>
+              <span class="code-config-label"
+                >Seleccionado: <strong id="decoPropsTitle"></strong></span
+              >
+              <label id="decoTextLabel" hidden>
+                Contenido
+                <input type="text" id="decoText" />
+              </label>
+              <label id="decoMarkerLabel" hidden>
+                Insertar dato
+                <select id="decoMarkerSelect"></select>
+              </label>
+              <label id="decoFontSizeLabel" hidden>
+                Tamaño (pt)
+                <input
+                  type="number"
+                  id="decoFontSize"
+                  min="6"
+                  max="72"
+                  step="0.5"
+                  placeholder="auto"
+             
+                />
+              </label>
+              <label id="decoBoldLabel" hidden>
+                <input type="checkbox" id="decoBold" />
+                Negrita
+              </label>
+              <label id="decoAlignLabel" hidden>
+                Alineación
+                <select id="decoAlign">
+                  <option value="left">Izquierda</option>
+                  <option value="center">Centro</option>
+                  <option value="right">Derecha</option>
+                </select>
+              </label>
+              <label id="decoLeftLabel" hidden>
+                Desde (%)
+                <input type="number" id="decoLeft" min="0" max="100" step="1" />
+              </label>
+              <label id="decoRightLabel" hidden>
+                Hasta (%)
+                <input type="number" id="decoRight" min="0" max="100" step="1" />
+              </label>
+              <label id="decoDashedLabel" hidden>
+                <input type="checkbox" id="decoDashed" />
+                Punteada
+              </label>
+              <label id="decoLockedLabel" hidden>
+                <input type="checkbox" id="decoLocked" />
+                Bloquear posición
+              </label>
+              <div id="decoColorSlot" class="type-slot" hidden></div>
+              <div id="decoTypeSlot" class="type-slot" hidden></div>
+              <button type="button" class="btn btn-outline" id="decoDeleteBtn">
+                Eliminar
+              </button>
+            </div>
+            <!-- Bloqueo del elemento elegido en el lienzo (cualquiera: texto,
+                 logo, QR o código). Bloqueado no se arrastra ni se mueve con las
+                 flechas; el texto se sigue pudiendo editar. -->
+            <!-- Forma elegida: lo arma label_editor_shapes.js al elegir una. -->
+            <div class="tool-group shape-props" id="shapePropsGroup" hidden></div>
+            <div class="tool-group" id="lockGroup" hidden>
+              <span class="code-config-label"
+                >Elemento: <strong id="lockGroupTitle"></strong></span
+              >
+              <label>
+                <input type="checkbox" id="lockFieldInput" />
+                Bloquear posición
+              </label>
+              <span class="code-config-label" title="Con Alt: sin imán al arrastrar. Flechas: mover 0,5 % (con Mayúscula, 5 %).">
+                Flechas para mover · Alt para soltar el imán
+              </span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2 class="panel-title">Rótulo</h2>
+            <div class="tool-group">
+              <label
+                >Nombre
+                <input
+                  type="text"
+                  id="nombreInput"
+                  placeholder="Plantilla sin nombre"
+             
+              /></label>
+            </div>
+            <div class="tool-group">
+              <!-- Medidas del catálogo (catalogos.html): elegir una completa
+                   ancho y alto; tocar los números a mano la deja en "Otra". -->
+              <label
+                >Medida
+                <select id="sizePreset">
+                  <option value="">Otra medida</option>
+                </select></label
+              >
+              <label
+                >Ancho (cm)
+                <input
+                  type="number"
+                  id="widthCm"
+                  value="10"
+                  min="5"
+                  max="30"
+                  step="0.5"
+                /></label
+              >
+              <label
+                >Alto (cm)
+                <input
+                  type="number"
+                  id="heightCm"
+                  value="15"
+                  min="5"
+                  max="40"
+                  step="0.5"
+                /></label
+              >
+            </div>
+            <div class="tool-group">
+              <button id="uploadLogoBtn">Subir logo</button>
+              <input type="file" id="logoInput" accept="image/*" hidden />
+              <button id="resetBtn">Restablecer posiciones</button>
+              <button id="showHiddenFieldsBtn" hidden>Mostrar los datos ocultos</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2 class="panel-title">Decoraciones</h2>
+            <!-- Decoraciones: recuadro de corte, líneas separadoras y textos
+                 fijos. El render las dibujaba desde siempre y el editor pasó a
+                 mostrarlas; esto es lo que faltaba para poder crearlas. -->
+            <div class="tool-group" id="decoGroup">
+              <label title="Marco de corte a 0,2 cm del borde, como lo dibuja el render">
+                <input type="checkbox" id="decoBorder" />
+                Recuadro
+              </label>
+              <label>
+                <input type="checkbox" id="decoBorderDashed" />
+                Punteado
+              </label>
+              <button type="button" class="btn btn-outline" id="addLineBtn">
+                + Línea
+              </button>
+              <button type="button" class="btn btn-outline" id="addDecoTextBtn">
+                + Texto fijo
+              </button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2 class="panel-title">Formas y colores</h2>
+            <!-- Fondos, celdas, recuadros y líneas (label_editor_shapes.js):
+                 se dibujan igual en el PDF y en la térmica. -->
+            <div class="tool-group shape-add">
+              <button type="button" class="btn btn-outline" data-add-shape="rect">+ Rectángulo</button>
+              <button type="button" class="btn btn-outline" data-add-shape="ellipse">+ Círculo</button>
+              <button type="button" class="btn btn-outline" data-add-shape="box">+ Caja con texto</button>
+              <button type="button" class="btn btn-outline" data-add-shape="lineH">+ Línea horizontal</button>
+              <button type="button" class="btn btn-outline" data-add-shape="lineV">+ Línea vertical</button>
+              <button type="button" class="btn btn-outline" data-add-shape="icon">+ Ícono</button>
+              <button type="button" class="btn btn-outline" data-add-shape="image">+ Imagen</button>
+            </div>
+            <p class="hint" id="iconMessage" role="alert" hidden></p>
+            <div class="tool-group palette-group">
+              <label title="Las formas que usan «P» toman este color">
+                Color principal
+                <input type="color" id="palettePrimary" value="#1e3a8a" />
+              </label>
+              <label title="Las formas que usan «A» toman este color">
+                Color de acento
+                <input type="color" id="paletteAccent" value="#a3e635" />
+              </label>
+            </div>
+            <p class="hint thermal-note" id="thermalColorNote" hidden>
+              En impresora térmica los colores salen en negro o en gris (trama).
+            </p>
+          </section>
+
+          <section class="panel">
+            <h2 class="panel-title">Exportar</h2>
+            <p class="hint" id="outputHint"></p>
+            <!-- Una imagen del diseño tal como se ve, con los marcadores: no es el
+                 rótulo de un pedido. -->
+            <details class="design-exports">
+              <summary>Bajar una imagen del diseño</summary>
+              <div class="tool-group button-stack">
+                <button id="exportPngBtn">Imagen (PNG)</button>
+                <button id="exportPdfBtn">PDF del diseño</button>
+              </div>
+            </details>
+          </section>
+        </aside>
       </div>
-
-      <p class="hint">
-        Los campos se guardan en % del rótulo, así que si cambiás el tamaño, la
-        posición relativa se mantiene.
-      </p>
     </main>
 
     <div class="preview-overlay" id="serverPreviewOverlay" hidden>
       <div class="preview-dialog">
         <div class="preview-dialog-head">
-          <strong>Así sale impreso</strong>
-          <span class="hint">Generado por el servidor, con datos de muestra</span>
+          <strong id="serverPreviewTitle">Así sale impreso</strong>
+          <span class="hint" id="serverPreviewHint">Generado por el servidor, con datos de muestra</span>
           <button id="closeServerPreviewBtn">Cerrar</button>
         </div>
+        <p class="preview-warning" id="serverPreviewWarning" hidden></p>
         <iframe id="serverPreviewFrame" title="Vista previa del rótulo"></iframe>
+        <!-- Vista térmica: un PNG de 1 bit a 203 dpi (thermal_preview.py). -->
+        <div class="thermal-preview" id="thermalPreview" hidden>
+          <img id="thermalPreviewImg" alt="El rótulo como lo imprime una térmica" />
+        </div>
       </div>
     </div>
 
@@ -852,10 +1845,42 @@
           // El render mide el ancho desde la X del campo hasta el borde
           // derecho, salvo que el diseño acote con "width" (en %).
           const left = parseFloat(el.style.left) || 0;
-          el.style.width =
-            style.width != null
-              ? Math.min(parseFloat(style.width), 100 - left) + "%"
-              : 100 - left + "%";
+          const top = parseFloat(el.style.top) || 0;
+          const rotate = Number(style.rotate) || 0;
+          el.classList.toggle("text-rot-90", rotate === 90);
+          el.classList.toggle("text-rot-270", rotate === 270);
+          if (rotate) {
+            // Vertical: tan largo como el texto, como mucho hasta el borde de
+            // abajo ("width" es % del ALTO), igual que _draw_text_entry.
+            el.style.width = "auto";
+            el.style.height = "auto";
+            el.style.maxHeight =
+              (style.width != null ? Math.min(parseFloat(style.width), 100 - top) : 100 - top) + "%";
+          } else {
+            el.style.height = "";
+            el.style.maxHeight = "";
+            el.style.width =
+              style.width != null
+                ? Math.min(parseFloat(style.width), 100 - left) + "%"
+                : 100 - left + "%";
+          }
+          el.classList.toggle("text-inverted", Boolean(style.invert));
+          el.classList.toggle("text-framed", Boolean(style.frame));
+          window.LabelEditorType.applyToElement(el, style, perCm, {
+            inverted: Boolean(style.invert),
+            rotated: Boolean(rotate),
+            hasPrefix: Boolean((style.prefix || "").trim()),
+          });
+          // La etiqueta fija va en un ::before (no es parte del texto que se
+          // guarda: collectFields lee textContent, que no la incluye).
+          const prefix = (style.prefix || "").trim();
+          if (prefix) {
+            el.dataset.prefix = prefix;
+            el.style.setProperty("--prefix-weight", style.prefix_bold ? "700" : "inherit");
+          } else {
+            delete el.dataset.prefix;
+            el.style.removeProperty("--prefix-weight");
+          }
         });
 
         // Logo: caja cuadrada proporcional al lado más corto.
@@ -893,6 +1918,20 @@
         barcodeField.style.height = bcH * perCm + "px";
 
         renderDecorations(perCm, widthCm, heightCm, fontPt);
+        // Formas y cajas (label_editor_shapes.js): encima del recuadro y las
+        // líneas, debajo de los campos, como en el PDF.
+        window.LabelEditorShapes.noteTextColors([
+          ...Object.values(fieldStyles || {}).map((style) => style && style.color),
+          ...(decorations.texts || []).map((item) => item.color),
+        ]);
+        window.LabelEditorShapes.render(perCm, widthCm, heightCm, fontPt);
+        // Las capas se rearman en cada render: se vuelve a marcar la
+        // selección múltiple (label_editor_align.js).
+        window.LabelEditorAlign?.paint();
+        // Ver con datos de ejemplo: solo cambia lo que se muestra.
+        window.LabelEditorMarkers.syncFields(
+          [...document.querySelectorAll(".field")].filter((el) => TEXT_FIELDS.includes(el.dataset.field)),
+        );
       }
 
       // Decoraciones del diseño: recuadro, líneas y textos fijos. El backend
@@ -950,10 +1989,18 @@
           if (selectedDeco?.type === "line" && selectedDeco.index === index) {
             el.classList.add("selected");
           }
+          el.classList.toggle("locked", Boolean(line.locked));
+          el.dataset.decoIndex = index;
           attachDecoPointer(el, "line", index);
           layer.appendChild(el);
         });
 
+        // Los textos fijos van en su propia capa, encima de las formas: el
+        // PDF los dibuja con los demás textos, después de las formas.
+        document.getElementById("decorationTextLayer")?.remove();
+        const textLayer = document.createElement("div");
+        textLayer.id = "decorationTextLayer";
+        textLayer.className = "decoration-layer decoration-text-layer";
         (decorations.texts || []).forEach((item, index) => {
           const el = document.createElement("div");
           el.className = "deco-text";
@@ -963,15 +2010,21 @@
           el.style.fontSize = ptToPx(pt, perCm) + "px";
           el.style.fontWeight = item.bold ? "700" : "400";
           el.style.textAlign = item.align || "left";
-          el.textContent = item.text || "";
+          el.textContent = window.LabelEditorMarkers.sample(item.text || "");
+          const textLines = window.LabelEditorType.applyToElement(el, item, perCm);
+          // Sin ancho propio, el texto fijo llega hasta el borde derecho.
+          if (textLines > 1) el.style.width = 100 - (parseFloat(item.left) || 0) + "%";
           if (selectedDeco?.type === "text" && selectedDeco.index === index) {
             el.classList.add("selected");
           }
+          el.classList.toggle("locked", Boolean(item.locked));
+          el.dataset.decoIndex = index;
           attachDecoPointer(el, "text", index);
-          layer.appendChild(el);
+          textLayer.appendChild(el);
         });
 
         label.appendChild(layer);
+        label.appendChild(textLayer);
       }
 
       // --- Seleccionar y arrastrar decoraciones --------------------------
@@ -989,7 +2042,11 @@
         el.addEventListener("pointerdown", (event) => {
           event.stopPropagation();
           selectDeco(type, index);
+          selectField(null);
           const entry = decorations[type === "line" ? "lines" : "texts"][index];
+          // Bloqueada: se elige (para configurarla o desbloquearla) pero no
+          // se arrastra.
+          if (entry.locked) return;
           activeDeco = { type, index };
           decoStartX = event.clientX;
           decoStartY = event.clientY;
@@ -1032,14 +2089,134 @@
         refreshDecoPanel();
       });
 
-      // Un click en el lienzo, fuera de una decoración, deselecciona.
-      label.addEventListener("pointerdown", () => selectDeco(null));
+      // Un click en el lienzo, fuera de una decoración o un campo,
+      // deselecciona (los campos frenan el evento, ver más abajo).
+      label.addEventListener("pointerdown", () => {
+        selectDeco(null);
+        selectField(null);
+        if (window.LabelEditorShapes.selectedId()) window.LabelEditorShapes.select(null);
+      });
+
+      window.LabelEditorShapes.init({
+        label,
+        rerender: () => applyRenderMetrics(),
+        clearOthers: () => {
+          selectField(null);
+          window.selectDeco?.(null);
+        },
+      });
+
+      // Zoom (fase 4): solo el tamaño en pantalla. Todo lo demás mide el
+      // rótulo con getBoundingClientRect y guarda en %, así que no cambia nada
+      // de lo que se guarda.
+      const ZOOM_MIN = 0.5;
+      const ZOOM_MAX = 3;
+      const ZOOM_STEP = 0.25;
+      let zoom = 1;
+      try {
+        const stored = parseFloat(localStorage.getItem("labelEditorZoom"));
+        if (stored >= ZOOM_MIN && stored <= ZOOM_MAX) zoom = stored;
+      } catch (error) {
+        /* sin almacenamiento: 100 % */
+      }
+      // En un celular, sin una preferencia guardada, el rótulo entero a la vista.
+      if (zoom === 1 && window.innerWidth <= 480) zoom = 0.75;
+
+      function setZoom(value) {
+        zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value / ZOOM_STEP) * ZOOM_STEP));
+        try {
+          localStorage.setItem("labelEditorZoom", String(zoom));
+        } catch (error) {
+          /* no importa */
+        }
+        updateLabelSize();
+      }
+
+      document.getElementById("zoomInBtn").addEventListener("click", () => setZoom(zoom + ZOOM_STEP));
+      document.getElementById("zoomOutBtn").addEventListener("click", () => setZoom(zoom - ZOOM_STEP));
+      document.getElementById("zoomResetBtn").addEventListener("click", () => setZoom(1));
+      document.querySelector(".canvas-wrap").addEventListener(
+        "wheel",
+        (event) => {
+          if (!event.ctrlKey && !event.metaKey) return;
+          event.preventDefault();
+          setZoom(zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+        },
+        { passive: false },
+      );
 
       function updateLabelSize() {
-        label.style.width = (parseFloat(widthCmInput.value) || 10) + "cm";
-        label.style.height = (parseFloat(heightCmInput.value) || 15) + "cm";
+        label.style.width = (parseFloat(widthCmInput.value) || 10) * zoom + "cm";
+        label.style.height = (parseFloat(heightCmInput.value) || 15) * zoom + "cm";
+        document.getElementById("zoomResetBtn").textContent = Math.round(zoom * 100) + " %";
+        document.getElementById("zoomInBtn").disabled = zoom >= ZOOM_MAX;
+        document.getElementById("zoomOutBtn").disabled = zoom <= ZOOM_MIN;
         applyRenderMetrics();
+        window.LabelEditorSizes?.sync();
       }
+
+      // Selección múltiple y alinear (label_editor_align.js). Cada tipo de
+      // elemento se mueve donde vive su posición.
+      const clampPct = (value) => Math.max(0, Math.min(100, value));
+      window.LabelEditorAlign.init({
+        label,
+        adapters: {
+          field: {
+            element: (key) => fieldEl(key),
+            locked: (key) => lockedFields.has(key),
+            move: (key, dx, dy) => {
+              const el = fieldEl(key);
+              if (!el) return;
+              el.style.left = clampPct((parseFloat(el.style.left) || 0) + dx) + "%";
+              el.style.top = clampPct((parseFloat(el.style.top) || 0) + dy) + "%";
+            },
+          },
+          text: {
+            element: (index) => label.querySelector(`.deco-text[data-deco-index="${index}"]`),
+            locked: (index) => Boolean(decorations.texts?.[index]?.locked),
+            move: (index, dx, dy) => {
+              const entry = decorations.texts?.[index];
+              if (!entry) return;
+              entry.left = clampPct((parseFloat(entry.left) || 0) + dx);
+              entry.top = clampPct((parseFloat(entry.top) || 0) + dy);
+            },
+          },
+          line: {
+            element: (index) => label.querySelector(`.deco-line[data-deco-index="${index}"]`),
+            locked: (index) => Boolean(decorations.lines?.[index]?.locked),
+            move: (index, dx, dy) => {
+              const entry = decorations.lines?.[index];
+              if (!entry) return;
+              const left = entry.left != null ? parseFloat(entry.left) : LINE_DEFAULT_LEFT;
+              const right = entry.right != null ? parseFloat(entry.right) : LINE_DEFAULT_RIGHT;
+              const shift = Math.max(-left, Math.min(100 - right, dx));
+              entry.left = left + shift;
+              entry.right = right + shift;
+              entry.top = clampPct((parseFloat(entry.top) || 0) + dy);
+            },
+          },
+          shape: {
+            element: (id) => label.querySelector(`.shape-el[data-shape-id="${CSS.escape(id)}"]`),
+            locked: (id) => Boolean(window.LabelEditorShapes.boxOf(id)?.locked),
+            move: (id, dx, dy) => window.LabelEditorShapes.moveBy(id, dx, dy),
+          },
+        },
+        currentSingle: () => {
+          if (selectedFieldKey) return { type: "field", key: selectedFieldKey };
+          if (selectedDeco) return { type: selectedDeco.type, key: selectedDeco.index };
+          const shapeId = window.LabelEditorShapes.selectedId();
+          return shapeId ? { type: "shape", key: shapeId } : null;
+        },
+        clearSingle: () => {
+          selectField(null);
+          window.selectDeco?.(null);
+          if (window.LabelEditorShapes.selectedId()) window.LabelEditorShapes.select(null);
+        },
+        onMoved: () => {
+          applyRenderMetrics();
+          window.LabelEditorHistory.record();
+        },
+      });
       updateLabelSize();
       widthCmInput.addEventListener("input", updateLabelSize);
       heightCmInput.addEventListener("input", updateLabelSize);
@@ -1047,6 +2224,116 @@
       document
         .getElementById("resetBtn")
         .addEventListener("click", applyDefaultPositions);
+
+      // --- Bloqueo y elemento elegido -------------------------------------
+      // Campos bloqueados (design.locked): no se arrastran ni se mueven con
+      // las flechas. Solo lo usa el editor, el render lo ignora.
+      const lockedFields = new Set();
+      let selectedFieldKey = null;
+      const ELEMENT_LABELS = {
+        logo: "Logo",
+        qr: "QR",
+        barcode: "Código de barras",
+        remitente: "Remitente",
+        destinatario: "Destinatario",
+        domicilio: "Domicilio",
+        cp: "CP",
+        localidad: "Localidad/Provincia",
+        pedido: "N° de pedido",
+      };
+      const lockGroup = document.getElementById("lockGroup");
+      const lockFieldInput = document.getElementById("lockFieldInput");
+
+      function fieldEl(key) {
+        return document.querySelector(`.field[data-field="${key}"]`);
+      }
+
+      // Hasta dónde puede ir el borde izquierdo de un campo (en %). Un texto
+      // se mide hasta el borde derecho del rótulo (applyRenderMetrics le pone
+      // ese ancho), así que su caja no sirve de tope: con ella un texto nunca
+      // se podía arrastrar hacia la derecha. Se le deja un margen mínimo.
+      const TEXT_MAX_LEFT = 95;
+      function maxLeftFor(el, elWpct) {
+        return TEXT_FIELDS.includes(el.dataset.field) ? TEXT_MAX_LEFT : 100 - elWpct;
+      }
+
+      function syncLockedClasses() {
+        document.querySelectorAll(".field").forEach((el) => {
+          el.classList.toggle("locked", lockedFields.has(el.dataset.field));
+        });
+      }
+
+      function selectField(key) {
+        selectedFieldKey = key;
+        if (key && window.LabelEditorShapes.selectedId()) window.LabelEditorShapes.select(null);
+        document.querySelectorAll(".field").forEach((el) => {
+          el.classList.toggle("selected-el", el.dataset.field === key);
+        });
+        lockGroup.hidden = !key;
+        // En "Elemento seleccionado" queda solo el panel de lo elegido: el
+        // del QR/código o el del texto (los muestran selectCodeField y
+        // selectTextField con el click que sigue a este pointerdown).
+        const isCode = key === "qr" || key === "barcode";
+        if (!isCode) document.getElementById("codeConfigGroup").hidden = true;
+        if (!key || isCode || key === "logo") document.getElementById("fieldPropsGroup").hidden = true;
+        if (!key) return;
+        document.getElementById("lockGroupTitle").textContent = ELEMENT_LABELS[key] || key;
+        lockFieldInput.checked = lockedFields.has(key);
+      }
+
+      lockFieldInput.addEventListener("change", () => {
+        if (!selectedFieldKey) return;
+        if (lockFieldInput.checked) lockedFields.add(selectedFieldKey);
+        else lockedFields.delete(selectedFieldKey);
+        syncLockedClasses();
+      });
+
+      // Flechas: mueven el elemento elegido 0,5 % (con Mayúscula, 5 %).
+      // Mientras se escribe en un texto las flechas mueven el cursor, así
+      // que ahí hace falta Alt.
+      document.addEventListener("keydown", (event) => {
+        const deltas = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+        const delta = deltas[event.key];
+        if (!delta) return;
+        const active = document.activeElement;
+        const typing =
+          active && (active.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName));
+        if (typing && !(event.altKey && active.isContentEditable)) return;
+        const step = event.shiftKey ? 5 : 0.5;
+
+        if (selectedDeco) {
+          const entry = decorations[selectedDeco.type === "line" ? "lines" : "texts"]?.[selectedDeco.index];
+          if (!entry || entry.locked) return;
+          event.preventDefault();
+          entry.top = Math.max(0, Math.min(100, (parseFloat(entry.top) || 0) + delta[1] * step));
+          if (selectedDeco.type === "line") {
+            const left = entry.left != null ? parseFloat(entry.left) : LINE_DEFAULT_LEFT;
+            const right = entry.right != null ? parseFloat(entry.right) : LINE_DEFAULT_RIGHT;
+            const shift = Math.max(-left, Math.min(100 - right, delta[0] * step));
+            entry.left = left + shift;
+            entry.right = right + shift;
+          } else {
+            entry.left = Math.max(0, Math.min(100, (parseFloat(entry.left) || 0) + delta[0] * step));
+          }
+          applyRenderMetrics();
+          refreshDecoPanel();
+          return;
+        }
+
+        if (!selectedFieldKey || lockedFields.has(selectedFieldKey)) return;
+        const el = fieldEl(selectedFieldKey);
+        if (!el) return;
+        event.preventDefault();
+        const rect = label.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const maxLeft = maxLeftFor(el, (elRect.width / rect.width) * 100);
+        const maxTop = 100 - (elRect.height / rect.height) * 100;
+        const left = Math.max(0, Math.min(maxLeft, (parseFloat(el.style.left) || 0) + delta[0] * step));
+        const top = Math.max(0, Math.min(maxTop, (parseFloat(el.style.top) || 0) + delta[1] * step));
+        el.style.left = left + "%";
+        el.style.top = top + "%";
+        applyRenderMetrics();
+      });
 
       // --- Arrastrar campos ---
       let activeEl = null,
@@ -1058,6 +2345,13 @@
 
       document.querySelectorAll(".field").forEach((el) => {
         el.addEventListener("pointerdown", (e) => {
+          // El lienzo deselecciona en pointerdown; esto corre antes (el
+          // campo está adentro), así que se frena acá para no perder la
+          // selección recién hecha.
+          e.stopPropagation();
+          selectDeco(null);
+          selectField(el.dataset.field);
+          if (lockedFields.has(el.dataset.field)) return;
           activeEl = el;
           startX = e.clientX;
           startY = e.clientY;
@@ -1082,14 +2376,26 @@
         const elWpct = (elRect.width / rect.width) * 100;
         const elHpct = (elRect.height / rect.height) * 100;
 
-        const newLeft = Math.max(0, Math.min(100 - elWpct, startLeft + dxPct));
-        const newTop = Math.max(0, Math.min(100 - elHpct, startTop + dyPct));
+        let newLeft = startLeft + dxPct;
+        let newTop = startTop + dyPct;
+        // Imán contra los otros campos y el centro (Alt lo apaga).
+        const snapped = window.LabelEditorSnap.snap(label, activeEl, newLeft, newTop, e.altKey);
+        newLeft = Math.max(0, Math.min(maxLeftFor(activeEl, elWpct), snapped.left));
+        newTop = Math.max(0, Math.min(100 - elHpct, snapped.top));
         activeEl.style.left = newLeft + "%";
         activeEl.style.top = newTop + "%";
       });
 
       document.addEventListener("pointerup", () => {
-        if (activeEl) activeEl.classList.remove("dragging");
+        if (activeEl) {
+          activeEl.classList.remove("dragging");
+          window.LabelEditorSnap.clearGuides(label);
+          // El ancho de un texto depende de su X: se recalcula al soltar.
+          applyRenderMetrics();
+          // Un texto arrastrado no queda en modo escritura: si no, Ctrl+Z
+          // deshacía su texto en vez del arrastre.
+          if (moved && activeEl.isContentEditable) activeEl.blur();
+        }
         activeEl = null;
       });
 
@@ -1106,6 +2412,8 @@
           document.getElementById("logoImg").src = reader.result;
           document.getElementById("logoImg").style.display = "block";
           document.getElementById("logoPlaceholder").style.display = "none";
+          // Un diseño sin campo de logo (ver applyFields) lo recupera al subir uno.
+          document.getElementById("logoField").hidden = false;
         };
         reader.readAsDataURL(file);
       });
@@ -1115,10 +2423,15 @@
       // abajo, sección "Configuración del QR/código de barras").
 
       // --- Exportar ---
-      async function captureLabel() {
+      // Siempre con marcadores, aunque el lienzo muestre datos de ejemplo.
+      function captureLabel() {
+        return window.LabelEditorMarkers.withoutSamples(captureLabelRaw, () => applyRenderMetrics());
+      }
+      async function captureLabelRaw() {
         label.classList.add("exporting");
         const canvas = await html2canvas(label, {
-          scale: 4,
+          // Misma resolución con cualquier zoom: el lienzo se captura agrandado.
+          scale: 4 / zoom,
           backgroundColor: "#ffffff",
         });
         label.classList.remove("exporting");
@@ -1155,71 +2468,37 @@
 
     <script type="module">
       import {
-        getRotulo,
-        createRotulo,
-        updateRotulo,
-        getOrderInfo,
-        downloadRotuloPdfServer,
         fetchCodePreview,
         getTemplate,
+        listTemplates,
         createTemplate,
+        updateTemplate,
       } from "./assets/js/labels_api.js";
 
       const params = new URLSearchParams(window.location.search);
-      const editingId = params.get("id");
+      // Es el editor de plantillas: sin plantilla ni foto que abrir, arranca una
+      // nueva (también las direcciones viejas de un rótulo suelto, ?id= u ?order=).
+      if (!params.get("template") && !params.get("nueva") && !params.get("importacion")) {
+        window.location.replace("editor_rotulos.html?nueva=plantilla");
+      }
       const nombreInput = document.getElementById("nombreInput");
       const saveStatus = document.getElementById("saveStatus");
-      const exportServerPdfBtn = document.getElementById("exportServerPdfBtn");
-      const printBtn = document.getElementById("printBtn");
-      const saveAsTemplateBtn = document.getElementById("saveAsTemplateBtn");
-      // El PDF del servidor (y la impresión, que lo reusa) lee el rótulo
-      // YA guardado (necesita un id): solo se habilitan editando uno
-      // existente, nunca antes del primer guardado.
-      exportServerPdfBtn.disabled = !editingId;
-      printBtn.disabled = !editingId;
+      const saveNewTemplateBtn = document.getElementById("saveNewTemplateBtn");
+      document.getElementById("outputHint").textContent =
+        "Para imprimir con esta plantilla, guardala y elegila en Imprimir rótulos.";
 
-      exportServerPdfBtn.addEventListener("click", async () => {
-        if (!editingId) return;
-        exportServerPdfBtn.disabled = true;
-        try {
-          const blob = await downloadRotuloPdfServer(editingId);
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = `rotulo-${editingId}.pdf`;
-          link.click();
-          URL.revokeObjectURL(url);
-        } catch (err) {
-          if (err.isSessionExpired) return;
-          showStatus(err.message || "No se pudo generar el PDF del servidor.");
-        } finally {
-          exportServerPdfBtn.disabled = false;
-        }
-      });
-
-      printBtn.addEventListener("click", () => {
-        if (!editingId) return;
-        window.PrintHelper.printFromBlobFn(() => downloadRotuloPdfServer(editingId), printBtn);
-      });
-
-      // Vínculo opcional con un pedido: si venimos con ?order=<id> (rótulo
-      // nuevo a partir de un envío concreto) o el rótulo cargado ya tenía
-      // uno asociado, se manda en el payload. El usuario puede seguir
-      // editando los campos autocompletados en el diseño.
-      let currentOrderId = params.get("order") ? Number(params.get("order")) : null;
-      // Vínculo opcional con la plantilla de origen (?template=<id>, o la
-      // que ya traía el rótulo cargado): se manda en el payload para que
-      // Label.template quede completo (ver api.js/toApiPayload).
+      // La plantilla que se abrió (?template=<id>).
       let currentTemplateId = params.get("template") ? Number(params.get("template")) : null;
 
-      // --- Guardar como plantilla propia (privada) ------------------------
-      saveAsTemplateBtn.addEventListener("click", async () => {
+      // --- Guardar como plantilla nueva del comercio ------------------------
+      saveNewTemplateBtn.addEventListener("click", async () => {
+        if (!(await confirmIncompleteRules())) return;
         const suggestedName = nombreInput.value.trim() || "Plantilla sin nombre";
-        const name = window.prompt("Nombre de la plantilla:", suggestedName);
+        const name = await appPrompt("Nombre de la plantilla:", suggestedName);
         if (!name) return;
-        saveAsTemplateBtn.disabled = true;
+        saveNewTemplateBtn.disabled = true;
         try {
-          await createTemplate({
+          const created = await createTemplate({
             nombre: name.trim(),
             size: {
               widthCm: parseFloat(document.getElementById("widthCm").value) || 10,
@@ -1227,12 +2506,75 @@
             },
             fields: collectFields(),
           });
-          showStatus(`Plantilla "${name.trim()}" guardada.`);
+          // Seguir acá y volver a guardar creaba una copia: se pasa a editar la
+          // que se acaba de crear.
+          window.location.replace(`editor_rotulos.html?template=${created.id}&guardada=1`);
         } catch (err) {
           if (err.isSessionExpired) return;
           showStatus(err.message || "No se pudo guardar la plantilla.");
         } finally {
-          saveAsTemplateBtn.disabled = false;
+          saveNewTemplateBtn.disabled = false;
+        }
+      });
+
+      if (params.get("nueva") === "plantilla") {
+        document.querySelector(".editor-heading h1").textContent = "Nueva plantilla";
+        document.title = "Nueva plantilla · Human Log Rótulos";
+      }
+
+      if (params.get("guardada")) {
+        showStatus("Plantilla guardada. Lo que cambies ahora se guarda en esta misma.");
+        history.replaceState(null, "", `editor_rotulos.html?template=${params.get("template")}`);
+      }
+
+      // --- Guardar el diseño como versión nueva de la plantilla abierta ----
+      const saveTemplateVersionBtn = document.getElementById("saveTemplateVersionBtn");
+      let editableTemplate = null; // la plantilla de ?template=<id>, si se puede editar
+
+      function offerTemplateVersion(template) {
+        editableTemplate = template.canEdit ? template : null;
+        if (!editableTemplate) return;
+        saveTemplateVersionBtn.textContent = `Guardar cambios en «${template.nombre}»`;
+        saveTemplateVersionBtn.title = `Queda como versión ${(template.currentVersion || 0) + 1}; las anteriores se pueden ver y restaurar desde Mis plantillas.`;
+        saveTemplateVersionBtn.style.display = "";
+        // Cambiando una plantilla propia hay una sola forma de guardar.
+        saveNewTemplateBtn.style.display = "none";
+        saveTemplateVersionBtn.className = "primary";
+        document.querySelector(".editor-heading h1").textContent = `Plantilla «${template.nombre}»`;
+        nombreInput.value = template.nombre;
+        nombreInput.readOnly = true;
+        nombreInput.title = "El nombre se cambia con «Renombrar», en Mis plantillas.";
+      }
+
+      saveTemplateVersionBtn.addEventListener("click", async () => {
+        if (!editableTemplate || !(await confirmIncompleteRules())) return;
+        const note = await appPrompt(
+          `¿Qué cambiaste? (opcional, queda en el historial de «${editableTemplate.nombre}»)`,
+          ""
+        );
+        if (note === null) return;
+        saveTemplateVersionBtn.disabled = true;
+        try {
+          const saved = await updateTemplate(editableTemplate.id, {
+            size: {
+              widthCm: parseFloat(document.getElementById("widthCm").value) || 10,
+              heightCm: parseFloat(document.getElementById("heightCm").value) || 15,
+            },
+            fields: collectFields(),
+            versionNote: note.trim(),
+          });
+          const changed = saved.currentVersion !== editableTemplate.currentVersion;
+          showStatus(
+            changed
+              ? `Plantilla «${saved.nombre}» guardada como versión ${saved.currentVersion}.`
+              : "No había cambios en el diseño: la plantilla queda como estaba."
+          );
+          offerTemplateVersion(saved);
+        } catch (err) {
+          if (err.isSessionExpired) return;
+          showStatus(err.message || "No se pudo guardar la plantilla.");
+        } finally {
+          saveTemplateVersionBtn.disabled = false;
         }
       });
 
@@ -1300,6 +2642,11 @@
         width: document.getElementById("propWidth"),
         hide_if_empty: document.getElementById("propHideIfEmpty"),
         shrink_to_fit: document.getElementById("propShrink"),
+        prefix: document.getElementById("propPrefix"),
+        prefix_bold: document.getElementById("propPrefixBold"),
+        invert: document.getElementById("propInvert"),
+        frame: document.getElementById("propFrame"),
+        rotate: document.getElementById("propRotate"),
       };
       const FIELD_LABELS = {
         remitente: "Remitente",
@@ -1326,6 +2673,13 @@
         propInputs.align.value = style.align || "left";
         propInputs.hide_if_empty.checked = Boolean(style.hide_if_empty);
         propInputs.shrink_to_fit.checked = Boolean(style.shrink_to_fit);
+        propInputs.prefix.value = style.prefix || "";
+        propInputs.prefix_bold.checked = Boolean(style.prefix_bold);
+        propInputs.invert.checked = Boolean(style.invert);
+        propInputs.frame.checked = Boolean(style.frame);
+        propInputs.rotate.value = String(style.rotate || 0);
+        propType.refresh();
+        propColor.mark(style.color);
       }
 
       function updateSelectedFieldStyle(key, value) {
@@ -1363,6 +2717,39 @@
       propInputs.shrink_to_fit.addEventListener("change", (event) =>
         updateSelectedFieldStyle("shrink_to_fit", event.target.checked),
       );
+      propInputs.prefix.addEventListener("input", (event) =>
+        updateSelectedFieldStyle("prefix", event.target.value.trim() ? event.target.value : ""),
+      );
+      ["prefix_bold", "invert", "frame"].forEach((key) =>
+        propInputs[key].addEventListener("change", (event) =>
+          updateSelectedFieldStyle(key, event.target.checked),
+        ),
+      );
+      propInputs.rotate.addEventListener("change", (event) =>
+        // 0 (horizontal) es el default del render: no se guarda.
+        updateSelectedFieldStyle("rotate", event.target.value === "0" ? "" : Number(event.target.value)),
+      );
+
+      const propColor = window.LabelEditorShapes.colorControl(
+        document.getElementById("propColorSlot"), "propColor", "Color del texto",
+        (value) => updateSelectedFieldStyle("color", value || ""),
+      );
+      const propType = window.LabelEditorType.renderControls(
+        document.getElementById("propTypeSlot"),
+        () => (selectedTextField && fieldStyles[selectedTextField]) || {},
+        (key, value) => updateSelectedFieldStyle(key, value),
+      );
+
+      // "Insertar dato": pone {{dato}} donde estaba el cursor en el texto del
+      // campo elegido (o al final), incluidos los calculados al imprimir.
+      const propMarkerSelect = document.getElementById("propMarkerSelect");
+      window.LabelEditorMarkers.fillMarkerSelect(propMarkerSelect);
+      propMarkerSelect.addEventListener("change", () => {
+        const key = propMarkerSelect.value;
+        propMarkerSelect.value = "";
+        const el = selectedTextField && document.querySelector(`.field[data-field="${selectedTextField}"]`);
+        if (key && el) window.LabelEditorMarkers.insertIntoEditable(el, key);
+      });
 
       // --- Decoraciones: crear, configurar y borrar -----------------------
       // Escriben en `decorations`, que es lo que renderDecorations dibuja y lo
@@ -1377,12 +2764,14 @@
         left: document.getElementById("decoLeft"),
         right: document.getElementById("decoRight"),
         dashed: document.getElementById("decoDashed"),
+        locked: document.getElementById("decoLocked"),
+        marker: document.getElementById("decoMarkerSelect"),
       };
       // Cada control vive dentro de su <label>: lo que se muestra u oculta es
       // la etiqueta, no el input suelto.
       const DECO_FIELDS_BY_TYPE = {
-        line: ["left", "right", "dashed"],
-        text: ["text", "font_size", "bold", "align"],
+        line: ["left", "right", "dashed", "locked"],
+        text: ["text", "marker", "font_size", "bold", "align", "locked"],
       };
 
       function decoEntry() {
@@ -1391,8 +2780,24 @@
         return list ? list[selectedDeco.index] || null : null;
       }
 
+      const decoColor = window.LabelEditorShapes.colorControl(
+        document.getElementById("decoColorSlot"), "decoColor", "Color del texto",
+        (value) => updateDeco("color", value || ""),
+      );
+      const decoColorSlot = document.getElementById("decoColorSlot");
+      const decoTypeSlot = document.getElementById("decoTypeSlot");
+      const decoType = window.LabelEditorType.renderControls(
+        decoTypeSlot,
+        () => decoEntry() || {},
+        (key, value) => updateDeco(key, value),
+      );
+
       function selectDeco(type, index) {
         selectedDeco = type ? { type, index } : null;
+        // Una decoración y un campo no se eligen a la vez (las flechas
+        // moverían los dos).
+        if (type) selectField(null);
+        if (type && window.LabelEditorShapes.selectedId()) window.LabelEditorShapes.select(null);
         refreshDecoPanel();
         applyRenderMetrics();
       }
@@ -1410,6 +2815,12 @@
           if (label) label.hidden = !visible.includes(name);
         });
 
+        decoTypeSlot.hidden = selectedDeco.type !== "text";
+        decoColorSlot.hidden = selectedDeco.type !== "text";
+        if (selectedDeco.type === "text") {
+          decoType.refresh();
+          decoColor.mark(entry.color);
+        }
         if (selectedDeco.type === "line") {
           decoPropsTitle.textContent = "Línea";
           decoInputs.left.value = Math.round(
@@ -1419,6 +2830,7 @@
             entry.right != null ? entry.right : LINE_DEFAULT_RIGHT,
           );
           decoInputs.dashed.checked = Boolean(entry.dashed);
+          decoInputs.locked.checked = Boolean(entry.locked);
         } else {
           decoPropsTitle.textContent = "Texto fijo";
           decoInputs.text.value = entry.text || "";
@@ -1427,8 +2839,15 @@
           decoInputs.font_size.value = entry.font_size != null ? entry.font_size : "";
           decoInputs.bold.checked = Boolean(entry.bold);
           decoInputs.align.value = entry.align || "left";
+          decoInputs.locked.checked = Boolean(entry.locked);
         }
       }
+
+      // El script clásico de arriba (arrastre, clic en el lienzo, flechas)
+      // llama a estas dos. Las funciones de un módulo no son globales: sin
+      // esto, tocar una línea o un texto fijo tiraba un ReferenceError y no
+      // se podían arrastrar.
+      Object.assign(window, { selectDeco, refreshDecoPanel });
 
       function updateDeco(key, value) {
         const entry = decoEntry();
@@ -1521,6 +2940,15 @@
       decoInputs.dashed.addEventListener("change", (event) =>
         updateDeco("dashed", event.target.checked),
       );
+      decoInputs.locked.addEventListener("change", (event) =>
+        updateDeco("locked", event.target.checked),
+      );
+      window.LabelEditorMarkers.fillMarkerSelect(decoInputs.marker);
+      decoInputs.marker.addEventListener("change", () => {
+        const key = decoInputs.marker.value;
+        decoInputs.marker.value = "";
+        if (key) window.LabelEditorMarkers.insertIntoInput(decoInputs.text, key);
+      });
 
       document.querySelectorAll(".field").forEach((el) => {
         const key = el.dataset.field;
@@ -1528,7 +2956,12 @@
         // El campo es contenteditable: el click lo enfoca para escribir y
         // además abre sus propiedades. Las dos cosas conviven.
         el.addEventListener("click", () => selectTextField(key));
-        el.addEventListener("focus", () => selectTextField(key));
+        el.addEventListener("focus", () => {
+          // Se edita el texto con marcadores, no la muestra.
+          window.LabelEditorMarkers.restoreField(el);
+          selectTextField(key);
+        });
+        el.addEventListener("blur", () => applyRenderMetrics());
       });
 
       document
@@ -1604,7 +3037,9 @@
 
       // Marcadores disponibles listados en un select, para no tener que
       // escribirlos de memoria: al elegir uno se inserta en el punto del
-      // cursor del campo "Contenido".
+      // cursor del campo "Contenido". La lista es la compartida
+      // (label_editor_markers.js), con los calculados al imprimir.
+      window.LabelEditorMarkers.fillMarkerSelect(codeMarkerSelect);
       codeMarkerSelect.addEventListener("change", () => {
         const marker = codeMarkerSelect.value;
         if (!marker) return;
@@ -1619,38 +3054,37 @@
         applyCodeConfigChange();
       });
 
-      // --- Autocompletar domicilio/CP/localidad desde la dirección del
-      // pedido (?order=<id>). El destinatario/remitente los sigue
-      // completando el usuario: la dirección del pedido no guarda un
-      // nombre de destinatario.
-      async function prefillFromOrder(orderId) {
-        const order = await getOrderInfo(orderId);
-        const addr = order?.address;
-        if (!addr) return;
-        const setText = (field, text) => {
-          const el = document.querySelector(`.field[data-field="${field}"]`);
-          if (el) el.textContent = text;
-        };
-        setText("domicilio", `Domicilio: ${[addr.street, addr.number].filter(Boolean).join(" ")}`);
-        setText("cp", `CP: ${addr.postal_code || ""}`);
-        setText(
-          "localidad",
-          `Localidad/Provincia: ${[addr.city, addr.state].filter(Boolean).join(", ")}`,
-        );
-      }
+      // --- Autocompletar destinatario y dirección desde el pedido
+      // (?order=<id>). El remitente y el número quedan como marcadores: se
+      // resuelven al imprimir, porque el rótulo guarda su vínculo al pedido.
+      // Aplica un bloque design/fields al canvas: posiciones + textos de los
+      // campos de texto, y la config de qr/barcode.
+      // Datos que una lectura de foto puede no traer: se ocultan en vez de
+      // quedar encimados en su lugar por defecto, y no se guardan mientras
+      // estén ocultos (collectFields). "Mostrar los datos ocultos" los trae.
+      const HIDEABLE_FIELDS = [...TEXT_FIELDS, "qr", "barcode"];
 
-      // Aplica un bloque design/fields (de un rótulo o de una plantilla) al
-      // canvas: posiciones + textos de los campos de texto, y la config de
-      // qr/barcode. Compartido entre "cargar rótulo existente" y "cargar
-      // plantilla" para no duplicar el mismo mapeo dos veces.
-      function applyFields(fields) {
+      function applyFields(fields, { hideMissing = false } = {}) {
         if (!fields) return;
+        // Un diseño sin "logo" (los de la galería llevan el logo como imagen,
+        // fase 5) no muestra el campo viejo: guardarlo lo agregaba y el logo
+        // salía dos veces. "Subir logo" lo vuelve a mostrar.
+        document.getElementById("logoField").hidden = !fields.logo;
+        if (hideMissing) {
+          HIDEABLE_FIELDS.forEach((key) => {
+            const el = document.querySelector(`.field[data-field="${key}"]`);
+            if (el) el.hidden = !fields[key];
+          });
+        }
+        syncHiddenFieldsButton();
         Object.entries(fields).forEach(([key, val]) => {
           const el = document.querySelector(`.field[data-field="${key}"]`);
           if (!el) return;
           if (val.left != null) el.style.left = val.left + "%";
           if (val.top != null) el.style.top = val.top + "%";
-          if (TEXT_FIELDS.includes(key) && val.text != null) el.textContent = val.text;
+          if (TEXT_FIELDS.includes(key) && val.text != null) {
+            window.LabelEditorMarkers.setFieldText(el, val.text);
+          }
         });
         // Un diseño viejo puede no traer qr/barcode todavía, o traer el qr
         // en el formato viejo (solo left/top): se completa con los
@@ -1671,6 +3105,13 @@
           lines: Array.isArray(fields.lines) ? fields.lines : null,
           texts: Array.isArray(fields.texts) ? fields.texts : null,
         };
+        // Reglas y bloqueos: el editor no los mostraba y al guardar se
+        // perdían (collectFields no los devolvía).
+        window.LabelEditorShapes.load(fields);
+        window.LabelEditorRules.load(fields.rules);
+        lockedFields.clear();
+        (Array.isArray(fields.locked) ? fields.locked : []).forEach((key) => lockedFields.add(key));
+        syncLockedClasses();
         // La barra tiene que reflejar el diseño que se acaba de abrir: si no,
         // el recuadro se ve en el lienzo con la casilla en "no".
         syncDecoToolbar();
@@ -1693,59 +3134,79 @@
           updateLabelSize();
         }
         applyFields(template.fields);
+        // Desde la galería (?nueva=plantilla) la plantilla es solo el punto de
+        // partida: se guarda como copia, nunca como versión del original (un
+        // admin puede editar las del sistema y las cambiaría para todos).
+        if (params.get("nueva") !== "plantilla") offerTemplateVersion(template);
       }
 
-      // --- Cargar rótulo existente si venimos con ?id= ---
-      async function loadExisting() {
-        if (!editingId) {
-          if (currentTemplateId) await loadFromTemplate(currentTemplateId);
-          if (currentOrderId) await prefillFromOrder(currentOrderId);
-        } else {
-          const r = await getRotulo(editingId);
-          if (!r) {
-            showStatus("No se encontró ese rótulo. Empezando uno nuevo.");
-          } else {
-            currentOrderId = r.order || currentOrderId;
-            currentTemplateId = r.template || currentTemplateId;
-            nombreInput.value = r.nombre || "";
-            if (r.size) {
-              document.getElementById("widthCm").value = r.size.widthCm;
-              document.getElementById("heightCm").value = r.size.heightCm;
-              updateLabelSize();
-            }
-            if (r.logo) {
-              document.getElementById("logoImg").src = r.logo;
-              document.getElementById("logoImg").style.display = "block";
-              document.getElementById("logoPlaceholder").style.display = "none";
-            }
-            applyFields(r.fields);
-          }
+      function syncHiddenFieldsButton() {
+        const anyHidden = HIDEABLE_FIELDS.some((key) => document.querySelector(`.field[data-field="${key}"]`)?.hidden);
+        document.getElementById("showHiddenFieldsBtn").hidden = !anyHidden;
+      }
+
+      document.getElementById("showHiddenFieldsBtn").addEventListener("click", () => {
+        HIDEABLE_FIELDS.forEach((key) => {
+          const el = document.querySelector(`.field[data-field="${key}"]`);
+          if (el) el.hidden = false;
+        });
+        syncHiddenFieldsButton();
+        applyRenderMetrics();
+      });
+
+      // --- Abrir la lectura de una foto (importar_rotulo.html,
+      // ?nueva=plantilla&importacion=<id>): el backend la traduce a plantilla
+      // (GET label-imports/<id>/template/, apps/processing/to_template.py) y
+      // acá se abre como plantilla nueva, sin guardar nada todavía.
+      async function loadFromImport(importId) {
+        try {
+          const response = await window.Auth.apiFetch(
+            `${window.APP_CONFIG.API_BASE}/processing/label-imports/${encodeURIComponent(importId)}/template/`
+          );
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "");
+          // Las medidas que se corrigieron en la revisión ganan a las leídas.
+          const width = Number(params.get("ancho")) || data.width_cm;
+          const height = Number(params.get("alto")) || data.height_cm;
+          document.getElementById("widthCm").value = width;
+          document.getElementById("heightCm").value = height;
+          updateLabelSize();
+          applyFields(data.design, { hideMissing: true });
+          nombreInput.value = data.name || "";
+          const omitted = (data.omitted || []).map((item) => `${item.label} (${item.reason})`);
+          document.querySelector(".editor-heading .subtitle").textContent =
+            "Esta plantilla salió de la foto de un rótulo: revisá posiciones y tamaños antes de guardarla." +
+            (omitted.length ? ` Quedó afuera: ${omitted.join(", ")}.` : "");
+        } catch (err) {
+          if (err && err.isSessionExpired) return;
+          showStatus(err.message || "No se pudo abrir la lectura de la foto. Empezando en blanco.");
         }
+      }
+
+      // Crear una plantilla de cero arranca con la estándar del sistema: se guarda
+      // como copia del comercio. Si no se la encuentra quedan los campos de siempre.
+      const STANDARD_TEMPLATE_NAME = "Etiqueta de envío estándar";
+
+      async function loadStandardTemplate() {
+        try {
+          const gallery = await listTemplates({ gallery: 1 });
+          const standard = gallery.find((template) => template.nombre === STANDARD_TEMPLATE_NAME);
+          if (standard) await loadFromTemplate(standard.id);
+        } catch (err) {
+          if (err && err.isSessionExpired) throw err;
+          console.error("No se pudo abrir la plantilla estándar:", err);
+        }
+      }
+
+      async function loadExisting() {
+        if (params.get("importacion")) await loadFromImport(params.get("importacion"));
+        else if (currentTemplateId) await loadFromTemplate(currentTemplateId);
+        else if (params.get("nueva") === "plantilla") await loadStandardTemplate();
         // Vista previa inicial de ambos códigos, con la config que haya
-        // quedado (la del rótulo/plantilla cargados, o los defaults de uno
-        // nuevo en blanco).
+        // quedado (la de la plantilla cargada, o los defaults de una
+        // nueva en blanco).
         refreshCodePreview("qr");
         refreshCodePreview("barcode");
-      }
-
-      // --- Generar una miniatura liviana (JPEG) para la lista del dashboard ---
-      async function generateThumbnail() {
-        label.classList.add("exporting");
-        const canvas = await html2canvas(label, {
-          scale: 1.5,
-          backgroundColor: "#ffffff",
-        });
-        label.classList.remove("exporting");
-
-        const maxWidth = 320;
-        const ratio = maxWidth / canvas.width;
-        const small = document.createElement("canvas");
-        small.width = maxWidth;
-        small.height = canvas.height * ratio;
-        small
-          .getContext("2d")
-          .drawImage(canvas, 0, 0, small.width, small.height);
-        return small.toDataURL("image/jpeg", 0.75);
       }
 
       // Posición actual (left/top en %) de un campo del canvas.
@@ -1763,7 +3224,37 @@
       const PREVIEW_URL = `${window.APP_CONFIG.API_BASE}/labels/preview/`;
       const serverPreviewOverlay = document.getElementById("serverPreviewOverlay");
       const serverPreviewFrame = document.getElementById("serverPreviewFrame");
+      const serverPreviewWarning = document.getElementById("serverPreviewWarning");
       let serverPreviewUrl = null;
+
+      // X-Label-Warnings (PreviewLabelView): "código:ancho mínimo en cm",
+      // separados por coma. La vista previa usa un tracking de 19 dígitos,
+      // el más largo de los transportistas.
+      function previewWarningText(header) {
+        if (!header) return "";
+        let missingShown = false;
+        return header
+          .split(",")
+          .map((item) => {
+            const [code, minWidth] = item.split(":");
+            const cm = String(minWidth || "").replace(".", ",");
+            if (code === "barcode_widened") {
+              return `El código de barras no entra legible en su recuadro: necesita ${cm} cm de ancho para leerse impreso en una térmica, así que se dibuja más ancho y puede tapar lo que tenga al lado. Agrandá el recuadro o hacé lugar.`;
+            }
+            if (code === "image_missing") {
+              // Una sola vez aunque falten varias.
+              if (missingShown) return "";
+              missingShown = true;
+              return "Una imagen no se va a imprimir porque no está disponible. Si es tu logo, cargalo en Mi comercio → Datos del comercio.";
+            }
+            if (code === "barcode_unreadable") {
+              return `El código de barras no va a poder leerse: necesita ${cm} cm de ancho y en el rótulo no hay tanto lugar desde donde empieza. Movelo más a la izquierda o usá un rótulo más ancho.`;
+            }
+            return "";
+          })
+          .filter(Boolean)
+          .join(" ");
+      }
 
       function closeServerPreview() {
         serverPreviewOverlay.hidden = true;
@@ -1781,41 +3272,59 @@
         if (event.target === serverPreviewOverlay) closeServerPreview();
       });
 
-      document
-        .getElementById("previewServerBtn")
-        .addEventListener("click", async () => {
-          const button = document.getElementById("previewServerBtn");
-          button.disabled = true;
-          try {
-            const response = await window.Auth.apiFetch(PREVIEW_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                design: collectFields(),
-                width_cm: parseFloat(widthCmInput.value) || 10,
-                height_cm: parseFloat(heightCmInput.value) || 15,
-                template_id: currentTemplateId || null,
-              }),
-            });
-            if (!response.ok) {
-              const data = await response.json().catch(() => ({}));
-              throw new Error(
-                (data && (data.detail || data.design)) ||
-                  "No se pudo generar la vista previa.",
-              );
-            }
-            if (serverPreviewUrl) URL.revokeObjectURL(serverPreviewUrl);
-            serverPreviewUrl = URL.createObjectURL(await response.blob());
-            serverPreviewFrame.src = serverPreviewUrl;
-            serverPreviewOverlay.hidden = false;
-          } catch (err) {
-            if (err && err.isSessionExpired) return;
-            console.error("Error en la vista previa:", err);
-            showStatus(err.message || "No se pudo generar la vista previa.");
-          } finally {
-            button.disabled = false;
+      // "Ver cómo sale impreso" (PDF) y "Vista térmica" (PNG de 1 bit) piden
+      // el mismo render al servidor; cambia solo el formato que vuelve.
+      async function openServerPreview(thermal) {
+        const button = document.getElementById(thermal ? "thermalViewBtn" : "previewServerBtn");
+        button.disabled = true;
+        try {
+          const response = await window.Auth.apiFetch(PREVIEW_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              design: collectFields(),
+              width_cm: parseFloat(widthCmInput.value) || 10,
+              height_cm: parseFloat(heightCmInput.value) || 15,
+              template_id: currentTemplateId || null,
+              thermal,
+            }),
+          });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(
+              (data && (data.detail || data.design)) ||
+                "No se pudo generar la vista previa.",
+            );
           }
-        });
+          if (serverPreviewUrl) URL.revokeObjectURL(serverPreviewUrl);
+          serverPreviewUrl = URL.createObjectURL(await response.blob());
+          const thermalBox = document.getElementById("thermalPreview");
+          document.getElementById("serverPreviewTitle").textContent = thermal
+            ? "Así sale en una térmica"
+            : "Así sale impreso";
+          document.getElementById("serverPreviewHint").textContent = thermal
+            ? "En blanco y negro a 203 dpi, con trama en los grises. Aproximado: la Zebra usa su propia letra para la sans y los bordes, líneas e íconos grises los imprime negros."
+            : "Generado por el servidor, con datos de muestra";
+          serverPreviewFrame.hidden = thermal;
+          thermalBox.hidden = !thermal;
+          if (thermal) document.getElementById("thermalPreviewImg").src = serverPreviewUrl;
+          else serverPreviewFrame.src = serverPreviewUrl;
+          const warningText = previewWarningText(
+            response.headers.get("X-Label-Warnings"),
+          );
+          serverPreviewWarning.textContent = warningText;
+          serverPreviewWarning.hidden = !warningText;
+          serverPreviewOverlay.hidden = false;
+        } catch (err) {
+          if (err && err.isSessionExpired) return;
+          console.error("Error en la vista previa:", err);
+          showStatus(err.message || "No se pudo generar la vista previa.");
+        } finally {
+          button.disabled = false;
+        }
+      }
+      document.getElementById("previewServerBtn").addEventListener("click", () => openServerPreview(false));
+      document.getElementById("thermalViewBtn").addEventListener("click", () => openServerPreview(true));
 
       function collectFields() {
         const fields = {};
@@ -1824,6 +3333,7 @@
           // qr/barcode no son texto: se arman aparte, con su config
           // (tamaño/simbología/data) en vez de leer el DOM.
           if (key === "qr" || key === "barcode") return;
+          if (el.hidden) return;
           fields[key] = fieldPosition(el);
           if (TEXT_FIELDS.includes(key)) {
             // Los estilos que el editor todavía no edita (font_size, bold,
@@ -1832,15 +3342,19 @@
             // borraba el formato.
             const previous = fieldStyles[key] || {};
             const { left, top, text, ...keep } = previous;
-            fields[key] = { ...keep, ...fields[key], text: el.textContent };
+            // Una sola línea, sin los saltos y la sangría del HTML: los
+            // campos nuevos los traen de su <div> y el PDF los dibujaba como
+            // "■" (el render no hace saltos de línea, recorta).
+            const flatText = window.LabelEditorMarkers.rawText(el).replace(/\s+/g, " ").trim();
+            fields[key] = { ...keep, ...fields[key], text: flatText };
           }
         });
-        fields.qr = {
+        if (!document.getElementById("qrField").hidden) fields.qr = {
           ...fieldPosition(document.getElementById("qrField")),
           size: codeConfig.qr.size,
           data: codeConfig.qr.data,
         };
-        fields.barcode = {
+        if (!document.getElementById("barcodeField").hidden) fields.barcode = {
           ...fieldPosition(document.getElementById("barcodeField")),
           width: codeConfig.barcode.width,
           height: codeConfig.barcode.height,
@@ -1854,40 +3368,134 @@
         if (decorations.border) fields.border = decorations.border;
         if (decorations.lines) fields.lines = decorations.lines;
         if (decorations.texts) fields.texts = decorations.texts;
+        // Reglas y bloqueos: sin la clave cuando no hay ninguno, igual que
+        // las decoraciones.
+        Object.assign(fields, window.LabelEditorShapes.collect({ fields, texts: fields.texts }));
+        const rules = window.LabelEditorRules.collect();
+        if (rules.length) fields.rules = rules;
+        if (lockedFields.size) fields.locked = [...lockedFields];
         return fields;
       }
 
-      document.getElementById("saveBtn").addEventListener("click", async () => {
-        const thumbnail = await generateThumbnail();
-        const payload = {
-          nombre: nombreInput.value.trim() || "Rótulo sin nombre",
-          cliente: document
-            .querySelector('.field[data-field="destinatario"]')
-            .textContent.trim(),
-          thumbnail,
-          size: {
-            widthCm: parseFloat(document.getElementById("widthCm").value) || 10,
-            heightCm:
-              parseFloat(document.getElementById("heightCm").value) || 15,
-          },
-          logo:
-            document.getElementById("logoImg").style.display !== "none"
-              ? document.getElementById("logoImg").src
-              : null,
-          fields: collectFields(),
-          order: currentOrderId,
-          template: currentTemplateId,
-        };
+      // Una regla "mover" sin las dos coordenadas no se puede guardar
+      // (collectFields la descarta): se avisa antes en vez de perderla.
+      async function confirmIncompleteRules() {
+        const incomplete = window.LabelEditorRules.incompleteCount();
+        if (!incomplete) return true;
+        return appConfirm(
+          `${incomplete === 1 ? "Hay una regla" : `Hay ${incomplete} reglas`} de "mover" sin la posición completa. ` +
+            "Si seguís, no se guardan. ¿Seguir?",
+        );
+      }
 
-        if (editingId) {
-          await updateRotulo(editingId, payload);
-        } else {
-          await createRotulo(payload);
-        }
-        window.location.href = "mis_rotulos.html";
+      window.LabelEditorRules.init(document.getElementById("rulesPanel"));
+      window.LabelEditorMarkers.initSamplesToggle(
+        document.getElementById("samplesToggle"),
+        () => applyRenderMetrics(),
+      );
+      window.LabelEditorMarkers.initSequencePanel(document.getElementById("sequencePanel"));
+
+      // --- Deshacer / rehacer (fase 4, label_editor_history.js) ---
+      // Una instantánea = lo que se guardaría + la medida.
+      const undoBtn = document.getElementById("undoBtn");
+      const redoBtn = document.getElementById("redoBtn");
+      const duplicateBtn = document.getElementById("duplicateBtn");
+
+      window.LabelEditorHistory.init({
+        capture: () =>
+          JSON.stringify({ design: collectFields(), width: widthCmInput.value, height: heightCmInput.value }),
+        restore: (state) => {
+          const { design, width, height } = JSON.parse(state);
+          widthCmInput.value = width;
+          heightCmInput.value = height;
+          window.LabelEditorAlign.clear();
+          selectField(null);
+          updateLabelSize();
+          applyFields(design);
+          refreshCodePreview("qr");
+          refreshCodePreview("barcode");
+        },
+        onChange: ({ canUndo, canRedo }) => {
+          undoBtn.disabled = !canUndo;
+          redoBtn.disabled = !canRedo;
+        },
+      });
+      undoBtn.addEventListener("click", () => window.LabelEditorHistory.undo());
+      redoBtn.addEventListener("click", () => window.LabelEditorHistory.redo());
+
+      // Se graba al terminar cada gesto; si nada cambió no hay paso nuevo.
+      document.addEventListener("pointerup", () => setTimeout(() => window.LabelEditorHistory.record(), 0));
+      document.addEventListener("change", () => window.LabelEditorHistory.record());
+      document.addEventListener("input", () => window.LabelEditorHistory.scheduleRecord());
+      document.addEventListener("keyup", (event) => {
+        if (event.key.startsWith("Arrow")) window.LabelEditorHistory.scheduleRecord(400);
+        else if (event.key === "Delete" || event.key === "Backspace") window.LabelEditorHistory.record();
       });
 
-      loadExisting();
+      // --- Duplicar (Ctrl+D) ---
+      function duplicateSelectedDeco() {
+        if (!selectedDeco) return false;
+        const key = selectedDeco.type === "line" ? "lines" : "texts";
+        const entry = decorations[key]?.[selectedDeco.index];
+        if (!entry) return false;
+        const copy = JSON.parse(JSON.stringify(entry));
+        delete copy.locked;
+        copy.top = Math.min(100, (parseFloat(copy.top) || 0) + 2);
+        if (key === "texts") copy.left = Math.min(100, (parseFloat(copy.left) || 0) + 2);
+        decorations[key].push(copy);
+        selectDeco(selectedDeco.type, decorations[key].length - 1);
+        return true;
+      }
+
+      function duplicateSelection() {
+        const done = window.LabelEditorShapes.selectedId()
+          ? window.LabelEditorShapes.duplicateSelected()
+          : duplicateSelectedDeco();
+        if (done) window.LabelEditorHistory.record();
+        return done;
+      }
+      duplicateBtn.addEventListener("click", duplicateSelection);
+
+      // El botón Duplicar solo con una forma, línea o texto fijo elegido (los
+      // campos de datos son únicos).
+      function syncDuplicateButton() {
+        duplicateBtn.disabled = !(window.LabelEditorShapes.selectedId() || selectedDeco);
+      }
+      document.addEventListener("pointerup", () => setTimeout(syncDuplicateButton, 0));
+      document.addEventListener("keyup", syncDuplicateButton);
+
+      // --- Atajos ---
+      // Mientras se escribe, Ctrl+Z y compañía son del navegador (deshace el
+      // texto), no del diseño.
+      document.addEventListener("keydown", (event) => {
+        if (window.LabelEditorHistory.isTypingTarget(document.activeElement)) return;
+        // Con la vista previa abierta el diseño está tapado: nada lo toca.
+        if (!serverPreviewOverlay.hidden) return;
+        const mod = event.ctrlKey || event.metaKey;
+        const key = event.key.toLowerCase();
+        if (mod && key === "z") {
+          event.preventDefault();
+          if (event.shiftKey) window.LabelEditorHistory.redo();
+          else window.LabelEditorHistory.undo();
+        } else if (mod && key === "y") {
+          event.preventDefault();
+          window.LabelEditorHistory.redo();
+        } else if (mod && key === "d") {
+          event.preventDefault();
+          duplicateSelection();
+        } else if (
+          !mod &&
+          (event.key === "Delete" || event.key === "Backspace") &&
+          selectedDeco &&
+          !["INPUT", "SELECT", "BUTTON"].includes(document.activeElement?.tagName)
+        ) {
+          // Las formas ya se borran solas (label_editor_shapes.js).
+          event.preventDefault();
+          document.getElementById("decoDeleteBtn").click();
+        }
+      });
+
+      loadExisting().finally(() => window.LabelEditorHistory.reset());
     </script>
   </body>
 </html>

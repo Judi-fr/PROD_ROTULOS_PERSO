@@ -14,7 +14,7 @@ const importValidateUrl = (id) => `${API_BASE}/orders/imports/${id}/validate/`;
 const importConfirmUrl = (id) => `${API_BASE}/orders/imports/${id}/confirm/`;
 
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
-const getAccessToken = () => window.Auth.getAccessToken();
+const hasSession = () => window.Auth.hasSession();
 const getCurrentUser = () => window.Auth.getCurrentUser();
 
 
@@ -343,6 +343,12 @@ document.getElementById("validateMappingBtn")?.addEventListener("click", async (
     document.getElementById("invalidCountValue").textContent = data.error_count;
     document.getElementById("totalRowsValue").textContent = data.total_rows;
     renderValidationErrors("validationErrorList", data.errors);
+    const warning = document.getElementById("validationWarning");
+    const noPostal = data.rows_without_postal_code || [];
+    warning.hidden = !noPostal.length;
+    warning.textContent = noPostal.length
+      ? `${noPostal.length} fila(s) sin código postal (${noPostal.slice(0, 10).join(", ")}${noPostal.length > 10 ? "…" : ""}): se importan igual, pero su rótulo sale sin ese dato.`
+      : "";
     setImportStep(2.5);
   } catch (err) {
     if (err.isSessionExpired) return;
@@ -410,7 +416,10 @@ async function init() {
     if (err.isSessionExpired) return;
   }
 
-  const canManual = hasPermission("orders.create_manual");
+  // Un comerciante carga un pedido suelto con "+ Nuevo pedido" en Mis pedidos, que
+  // pide lo que el rótulo necesita. Este alta queda solo para dar de alta a nombre
+  // de otro usuario (admin).
+  const canManual = hasPermission("orders.create_manual") && hasPermission("orders.create_for_others");
   const canImport = hasPermission("orders.import");
   if (!canManual && !canImport) {
     window.location.replace("dashboard.html");
@@ -421,7 +430,11 @@ async function init() {
     : "none";
 
   if (!canManual) {
-    document.getElementById("tabManualBtn").style.display = "none";
+    document.querySelector(".tabs").style.display = "none";
+    document.querySelector(".main-heading h1").textContent = "Importar pedidos";
+    document.title = "Importar pedidos · Human Log Rótulos";
+    document.querySelector(".main-heading p").innerHTML =
+      'Subí un CSV o Excel con tus pedidos. Para cargar uno solo, usá <a href="pedidos.html#nuevo">+ Nuevo pedido</a>.';
     activateTab("import");
   }
   if (!canImport) {
@@ -429,7 +442,7 @@ async function init() {
   }
 }
 
-if (!getAccessToken()) {
+if (!hasSession()) {
   window.location.replace("index.html");
 } else {
   init();

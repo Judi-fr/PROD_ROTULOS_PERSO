@@ -1,0 +1,204 @@
+/* Acciones masivas sobre pedidos (planilla_retiro, estado_pedidos,
+   exportar_pedidos, cargar_seguimientos). Se carga después de pedidos.css
+   (colores, tarjetas, botones) e imprimir_rotulos.css (filtros y lista de
+   pedidos con selección, que dibuja createOrderPicker de utils.js). */
+
+.filters-row input[type="text"],
+.filters-row input[type="file"] {
+  width: 100%;
+}
+
+/* Pedidos que no se pudieron actualizar (renderBulkResult, utils.js). */
+.bulk-result {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--danger-100);
+  background: var(--danger-50);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--danger-700);
+}
+
+.bulk-result-title {
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+
+.bulk-result ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* Exportar: elección de formato. */
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.choice {
+  flex: 1 1 220px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-base);
+}
+
+.choice:has(input:checked) {
+  border-color: var(--blue);
+  background: var(--blue-light);
+}
+
+.choice input {
+  margin: 3px 0 0;
+}
+
+.choice small {
+  color: var(--text-muted);
+}
+
+/* Cargar seguimientos: resumen y tabla de revisión. */
+.counts-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.count-chip {
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.count-ok {
+  background: var(--success-100);
+  color: var(--success-700);
+}
+
+.count-error {
+  background: var(--danger-100);
+  color: var(--danger-700);
+}
+
+.tracking-table-wrap {
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.tracking-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.tracking-table th,
+.tracking-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tracking-table th {
+  position: sticky;
+  top: 0;
+  background: var(--n-50);
+  font-weight: 700;
+  z-index: 1;
+}
+
+.tracking-table tr.row-error td {
+  color: var(--text-muted);
+}
+
+.tracking-table .state {
+  font-weight: 600;
+}
+
+.tracking-table .state-ok {
+  color: var(--green);
+}
+
+.tracking-table tr.row-error .state {
+  color: var(--red);
+}
+
+.tracking-table .state small {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* transportista.html: dirección y credenciales de las novedades push. */
+.push-credentials {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 6px 0 10px;
+  font-size: var(--text-base);
+}
+
+.push-credentials dt {
+  font-weight: 700;
+}
+
+.push-credentials dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* checkout_transportistas.html: un bloque desplegable por transportista. */
+.carrier-checkout {
+  border-top: 1px solid var(--border, var(--n-200));
+  padding: 10px 0;
+}
+
+.carrier-checkout:first-child {
+  border-top: none;
+}
+
+.carrier-checkout-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: var(--text-base);
+  padding: 4px 0;
+}
+
+.carrier-checkout-summary::before {
+  content: "▸";
+  color: var(--text-muted, var(--n-500));
+}
+
+.carrier-checkout[open] > .carrier-checkout-summary::before {
+  content: "▾";
+}
+
+.carrier-checkout-summary::-webkit-details-marker {
+  display: none;
+}
+
+.carrier-checkout-summary .selection-count {
+  margin-left: auto;
+}
+
+.carrier-checkout[open] > .carrier-checkout-summary {
+  margin-bottom: 8px;
+}
+
+/* transportista.html: "Quitar" de cada servicio, al pie de la fila y de su
+   tamaño (en la fila flex se estiraba a todo el alto: 63 px). */
+.contract-row .btn-danger-text {
+  align-self: flex-end;
+  margin-bottom: 4px;
+}

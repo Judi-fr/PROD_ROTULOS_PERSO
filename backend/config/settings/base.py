@@ -9,6 +9,8 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from corsheaders.defaults import default_headers as default_cors_headers
+from django.core.exceptions import ImproperlyConfigured
 
 # BASE_DIR apunta a la raíz del repo (dos niveles arriba de config/settings/)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -63,6 +65,9 @@ LOCAL_APPS = [
     "apps.orders",      # direcciones y pedidos del cliente final
     "apps.audit",       # registro de auditoría (solo lectura)
     "apps.integrations",  # claves de API y webhooks (entrada/salida)
+    "apps.carriers",    # transportistas (Andreani): envíos, etiquetas y seguimiento
+    "apps.printing",    # impresión directa: impresoras, agente y cola de trabajos
+    "apps.monitoring",  # estado del sistema y alertas de disponibilidad por mail
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -75,8 +80,14 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Una sola lectura de la membresía del comercio por request
+    # (apps/accounts/teams.py).
+    "apps.accounts.teams.TeamCacheMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Último: es el primero en ver la excepción de una vista. Para /api/
+    # contesta un 500 JSON con código de error (ver config/errors.py).
+    "config.errors.ApiExceptionMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -113,6 +124,7 @@ DATABASES = {
 # ---------------------------------------------------------------------------
 
 REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "config.errors.api_exception_handler",
     # Toda la API se autentica con JWT (djangorestframework-simplejwt).
     # El frontend manda el access token en el header:
     #   Authorization: Bearer <access>
@@ -152,6 +164,8 @@ REST_FRAMEWORK = {
         "anon": "60/min",
         "user": "1000/min",
         "login": "5/min",
+        # El agente de impresión consulta cada pocos segundos (apps.printing).
+        "print_agent": "240/min",
         # Pedir/confirmar reset de contraseña: frena el email bombing a una
         # víctima y la fuerza bruta sobre el token del link.
         "password_reset": "5/min",
@@ -162,7 +176,7 @@ REST_FRAMEWORK = {
         # tumbar la API. Configurable por .env porque el volumen esperado
         # varía mucho de un cliente a otro.
         "ingest": env("INGEST_THROTTLE_RATE", default="120/min"),
-        # Rótulos que pide la tienda (apps.integrations.store_labels): un
+        # Rótulos que pide la tienda (apps.integrations.providers.tiendanube.labels): un
         # lote masivo son hasta 50 etiquetas y la plataforma se baja UN PDF
         # por etiqueta, así que el límite anónimo por defecto (60/min) la
         # dejaría afuera a mitad de camino.
@@ -175,19 +189,12 @@ REST_FRAMEWORK = {
         # paga por token, así que se limita por usuario para que un bucle en el
         # frontend no gaste dinero antes de que nadie lo note.
         "importacion_rotulo": env("IMPORTACION_THROTTLE_RATE", default="20/min"),
-        # Tope DIARIO de lecturas por usuario: el de minuto solo frena ráfagas
-        # (20/min sostenido son ~29.000 por día). El techo de gasto real es el
-        # límite mensual configurado en la consola de Anthropic.
-        "label_import_daily": env("IMPORTACION_DAILY_THROTTLE_RATE", default="100/day"),
-        # Correos (ver auth_views): el cupo diario del SMTP es compartido; si
-        # alguien lo agota, nadie más recibe resets ni verificaciones.
-        "password_reset_email": env("PASSWORD_RESET_EMAIL_THROTTLE_RATE", default="3/hour"),
-        "password_reset_daily": env("PASSWORD_RESET_DAILY_THROTTLE_RATE", default="20/day"),
-        "register_daily": env("REGISTER_DAILY_THROTTLE_RATE", default="20/day"),
-        "email_verification_hourly": env("EMAIL_VERIFICATION_HOURLY_THROTTLE_RATE", default="3/hour"),
-        # Dibujar rótulos ocupa un worker de gunicorn (hay 3): ver labels/throttles.py.
-        "labels_batch": env("LABELS_BATCH_THROTTLE_RATE", default="10/min"),
-        "labels_render": env("LABELS_RENDER_THROTTLE_RATE", default="60/min"),
+        # Invitar o reenviar una invitación a un comercio manda un mail a
+        # cualquier dirección (apps/accounts/team_views.py).
+        "team_invite": env("TEAM_INVITE_THROTTLE_RATE", default="30/hour"),
+        # Pedir sumarse con un código: pocos intentos, para que no se puedan
+        # probar códigos a lo bruto.
+        "team_join": env("TEAM_JOIN_THROTTLE_RATE", default="10/hour"),
     },
 }
 
@@ -197,17 +204,26 @@ REST_FRAMEWORK = {
 
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
 
+# El frontend manda los tokens en cookies (auth_cookies.py): un request de
+# otro origen solo las lleva con credenciales, y el header X-Auth-Mode tiene
+# que estar permitido en el preflight.
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_cors_headers, "x-auth-mode", "x-team-id")
+
 # El navegador solo le deja leer al JavaScript de otro origen un puñado de
-# cabeceras estándar. Sin esta lista, el frontend (otro puerto que la API)
-# recibe el rótulo impreso pero no se entera de que a un campo le faltó el
-# dato, de que un domicilio se cortó o de que el QR quedó ilegible: el render
-# de ElementLayout informa eso en estas cabeceras (ver
-# ElementLayoutViewSet.render). Un domicilio recortado en silencio termina en
-# un paquete que no llega.
+# cabeceras estándar: las que el frontend (otro puerto que la API) necesita
+# leer van en esta lista.
 CORS_EXPOSE_HEADERS = [
-    "X-Layout-Missing",
-    "X-Layout-Truncated",
-    "X-Layout-Warnings",
+    # Vista previa del editor de rótulos (PreviewLabelView): código de
+    # barras que no entra legible.
+    "X-Label-Warnings",
+    # Exportación de pedidos y planilla de retiro (apps.orders.bulk_views):
+    # el nombre del archivo y cuántos pedidos salieron.
+    "Content-Disposition",
+    "X-Order-Count",
+    # Exportación de auditoría (apps.audit.views.AuditLogExportView).
+    "X-Audit-Count",
+    "X-Audit-Truncated",
 ]
 
 # ---------------------------------------------------------------------------
@@ -239,17 +255,19 @@ EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 
 # Remitente de los correos transaccionales (reset de contraseña, etc.).
 DEFAULT_FROM_EMAIL = env(
-    "DEFAULT_FROM_EMAIL", default="ROTULOS <no-reply@rotulos.local>"
+    "DEFAULT_FROM_EMAIL", default="Human Log · Rótulos <no-reply@rotulos.local>"
 )
 
 # Base del frontend (SPA) para armar links que van en los correos, p. ej. el
-# de reset apunta a {FRONTEND_URL}/reset-password.html?uid=...&token=...
+# de reset apunta a {FRONTEND_URL}/reset-password?uid=...&token=...
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 
 # URL de la página que resuelve el reset (a la que apunta el enlace del correo).
-# Por defecto es frontend/reset-password.html; se puede sobreescribir desde el .env.
+# Por defecto es {FRONTEND_URL}/reset-password (la ruta de la SPA), pero se puede
+# sobreescribir desde el .env; p. ej. mientras no exista el frontend, apuntarla a
+# la página de prueba de oauth-test (http://localhost:3000/reset-password.html).
 PASSWORD_RESET_URL = env(
-    "PASSWORD_RESET_URL", default=f"{FRONTEND_URL}/reset-password.html"
+    "PASSWORD_RESET_URL", default=f"{FRONTEND_URL}/reset-password"
 )
 
 # URL de la página que confirma la verificación de email (a la que apunta el
@@ -278,9 +296,17 @@ ADMIN_CREATED_USER_PASSWORD = env("ADMIN_CREATED_USER_PASSWORD", default="")
 # multi-cliente, así que no hay un remitente global configurable.
 
 # Tope de rótulos por lote (POST /api/v1/labels/batch/, ver
-# apps.labels.batch_views). El lote corre síncrono, en el mismo request:
-# sin esto, un lote gigante sería un timeout en vez de un error claro.
-LABELS_BATCH_MAX_ITEMS = env.int("LABELS_BATCH_MAX_ITEMS", default=200)
+# apps.labels.batch_views). Hasta LABELS_BATCH_SYNC_MAX_ITEMS se genera en el
+# mismo request (el resultado sale enseguida); más que eso lo genera el worker
+# (apps.labels.batch_jobs) y "Mis documentos" lo muestra "Procesando" hasta
+# que está. El tope sigue existiendo: un lote gigante es un error claro, no
+# una PC trabada.
+LABELS_BATCH_MAX_ITEMS = env.int("LABELS_BATCH_MAX_ITEMS", default=1000)
+LABELS_BATCH_SYNC_MAX_ITEMS = env.int("LABELS_BATCH_SYNC_MAX_ITEMS", default=25)
+# Un lote que el worker tomó y no terminó en este tiempo (se cortó el
+# proceso) vuelve a la cola, hasta LABELS_BATCH_JOB_MAX_ATTEMPTS veces.
+LABELS_BATCH_JOB_TIMEOUT_SECONDS = env.int("LABELS_BATCH_JOB_TIMEOUT_SECONDS", default=600)
+LABELS_BATCH_JOB_MAX_ATTEMPTS = env.int("LABELS_BATCH_JOB_MAX_ATTEMPTS", default=3)
 
 # ---------------------------------------------------------------------------
 # Importación de pedidos (apps.orders.import_views) — story 21
@@ -288,6 +314,9 @@ LABELS_BATCH_MAX_ITEMS = env.int("LABELS_BATCH_MAX_ITEMS", default=200)
 
 # Igual que LABELS_BATCH_MAX_ITEMS: corre síncrono, en el mismo request.
 ORDERS_IMPORT_MAX_ROWS = env.int("ORDERS_IMPORT_MAX_ROWS", default=1000)
+# Tope duro del lector de planillas (apps/orders/import_parsing.py), por encima
+# del máximo de cada pantalla: corta un .xlsx gigante mientras lo lee.
+IMPORT_PARSE_MAX_ROWS = env.int("IMPORT_PARSE_MAX_ROWS", default=20000)
 ORDERS_IMPORT_MAX_FILE_SIZE_MB = env.int("ORDERS_IMPORT_MAX_FILE_SIZE_MB", default=10)
 
 # ---------------------------------------------------------------------------
@@ -328,18 +357,129 @@ TIENDANUBE_API_VERSION = env("TIENDANUBE_API_VERSION", default="2025-03")
 TIENDANUBE_USER_AGENT = env("TIENDANUBE_USER_AGENT", default="")
 TIENDANUBE_HTTP_TIMEOUT_SECONDS = env.int("TIENDANUBE_HTTP_TIMEOUT_SECONDS", default=10)
 
+# App de Shopify (Dev Dashboard). El client secret firma el callback del
+# OAuth, la apertura de la app (hmac en la query string) y los webhooks
+# (header X-Shopify-Hmac-Sha256). En el panel se configuran como App URL
+# {INTEGRATIONS_PUBLIC_BASE_URL}/api/v1/integrations/shopify/launch/ y como
+# redirect URL .../shopify/callback/. Ver apps.integrations.providers.shopify.provider.
+SHOPIFY_CLIENT_ID = env("SHOPIFY_CLIENT_ID", default="")
+SHOPIFY_CLIENT_SECRET = env("SHOPIFY_CLIENT_SECRET", default="")
+# Versión de la GraphQL Admin API (trimestral: AAAA-01/04/07/10).
+SHOPIFY_API_VERSION = env("SHOPIFY_API_VERSION", default="2026-07")
+# Sumar un scope después obliga al comerciante a aprobar de nuevo (lo pide
+# ShopifyLaunchView al abrir la app). write_fulfillments es para informar
+# "en tránsito" y "entregado" (fulfillmentEventCreate). Leer nombre/dirección
+# del comprador además requiere que Shopify apruebe el acceso a "protected
+# customer data" en el panel.
+SHOPIFY_SCOPES = env(
+    "SHOPIFY_SCOPES",
+    default="read_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,write_fulfillments",
+)
+SHOPIFY_HTTP_TIMEOUT_SECONDS = env.int("SHOPIFY_HTTP_TIMEOUT_SECONDS", default=10)
+# Pedidos por página al importar. Chico a propósito: el costo de una consulta
+# GraphQL crece con pedidos x productos por pedido, y Shopify corta en 1000.
+SHOPIFY_ORDERS_PAGE_SIZE = env.int("SHOPIFY_ORDERS_PAGE_SIZE", default=25)
+# Vida del enlace al PDF que carga la vista previa de impresión del admin de
+# Shopify (apps.integrations.store_print, común a las tres plataformas). Corto: lleva datos de compradores.
+SHOPIFY_PRINT_LINK_MAX_AGE_SECONDS = env.int("SHOPIFY_PRINT_LINK_MAX_AGE_SECONDS", default=900)
+
+# WooCommerce (apps.integrations.providers.woocommerce/). No hay app que
+# registrar: cada tienda autoriza en su propio sitio. El nombre es el que ve
+# el comerciante al aprobar.
+WOOCOMMERCE_APP_NAME = env("WOOCOMMERCE_APP_NAME", default="Rotulos perso")
+# Más que en las plataformas grandes: muchos WordPress son hostings chicos.
+WOOCOMMERCE_HTTP_TIMEOUT_SECONDS = env.int("WOOCOMMERCE_HTTP_TIMEOUT_SECONDS", default=15)
+WOOCOMMERCE_ORDERS_PAGE_SIZE = env.int("WOOCOMMERCE_ORDERS_PAGE_SIZE", default=50)
+# VTEX (apps.integrations.providers.vtex). Tampoco hay app que registrar: cada
+# comerciante crea un appKey/appToken en su cuenta y lo pega. La API se llama
+# en {account}.vtexcommercestable.com.br (el host de la API de VTEX, distinto
+# del de la tienda).
+VTEX_API_HOST_TEMPLATE = env("VTEX_API_HOST_TEMPLATE", default="https://{account}.vtexcommercestable.com.br")
+VTEX_HTTP_TIMEOUT_SECONDS = env.int("VTEX_HTTP_TIMEOUT_SECONDS", default=15)
+# La lista de pedidos de VTEX admite hasta 100 por página y 30 páginas.
+VTEX_ORDERS_PAGE_SIZE = env.int("VTEX_ORDERS_PAGE_SIZE", default=50)
+# Cada cuánto se lee el feed de pedidos, el respaldo del hook (ver
+# VtexProvider.list_updated_orders_page). Más seguido que WooCommerce: leer el
+# feed es barato y, sin hook (sin URL pública), es lo único que trae pedidos.
+VTEX_RECONCILE_MINUTES = env.int("VTEX_RECONCILE_MINUTES", default=5)
+# Tabla de fletes que publicamos para el checkout de VTEX (VtexProvider.push_shipping_rates).
+# VTEX pesa en la unidad del catálogo de la cuenta, normalmente gramos (A CONFIRMAR
+# con una cuenta real), y exige un plazo por fila: el de las tarifas sin días cargados.
+VTEX_FREIGHT_WEIGHT_UNITS_PER_KG = env.int("VTEX_FREIGHT_WEIGHT_UNITS_PER_KG", default=1000)
+VTEX_DEFAULT_DELIVERY_DAYS = env.int("VTEX_DEFAULT_DELIVERY_DAYS", default=5)
+# Andreani (apps.carriers.andreani). Cada cliente usa su cuenta y sus contratos;
+# el ambiente (QA o producción) se elige por cuenta. A CONFIRMAR: la URL pública
+# de seguimiento que se le muestra al comprador.
+ANDREANI_API_BASE_PRODUCTION = env("ANDREANI_API_BASE_PRODUCTION", default="https://apis.andreani.com")
+ANDREANI_API_BASE_QA = env("ANDREANI_API_BASE_QA", default="https://apisqa.andreani.com")
+ANDREANI_HTTP_TIMEOUT_SECONDS = env.int("ANDREANI_HTTP_TIMEOUT_SECONDS", default=20)
+ANDREANI_TRACKING_URL_TEMPLATE = env("ANDREANI_TRACKING_URL_TEMPLATE", default="https://www.andreani.com/envio/{numero}")
+# Cada cuánto el worker consulta el seguimiento de un envío abierto, y hasta
+# cuántos días después de creado lo sigue haciendo.
+ANDREANI_TRACKING_POLL_MINUTES = env.int("ANDREANI_TRACKING_POLL_MINUTES", default=30)
+ANDREANI_TRACKING_MAX_DAYS = env.int("ANDREANI_TRACKING_MAX_DAYS", default=60)
+# Precio de Andreani en el checkout de las tiendas (apps/carriers/andreani/checkout.py):
+# está en medio de una venta ajena, así que espera poco y guarda las respuestas.
+ANDREANI_CHECKOUT_TIMEOUT_SECONDS = env.int("ANDREANI_CHECKOUT_TIMEOUT_SECONDS", default=4)
+ANDREANI_CHECKOUT_CACHE_SECONDS = env.int("ANDREANI_CHECKOUT_CACHE_SECONDS", default=1800)
+ANDREANI_CHECKOUT_FAILURE_CACHE_SECONDS = env.int("ANDREANI_CHECKOUT_FAILURE_CACHE_SECONDS", default=120)
+# Correo Argentino (apps.carriers.correo_argentino): Paq.ar despacha (acuerdo +
+# API key) y MiCorreo solo cotiza (usuario/clave de su API + customerId). A
+# CONFIRMAR: la URL pública de seguimiento.
+CORREO_ARGENTINO_PAQAR_BASE_PRODUCTION = env("CORREO_ARGENTINO_PAQAR_BASE_PRODUCTION", default="https://api.correoargentino.com.ar/paqar/v1")
+CORREO_ARGENTINO_PAQAR_BASE_QA = env("CORREO_ARGENTINO_PAQAR_BASE_QA", default="https://apitest.correoargentino.com.ar/paqar/v1")
+CORREO_ARGENTINO_MICORREO_BASE_PRODUCTION = env("CORREO_ARGENTINO_MICORREO_BASE_PRODUCTION", default="https://api.correoargentino.com.ar/micorreo/v1")
+CORREO_ARGENTINO_MICORREO_BASE_QA = env("CORREO_ARGENTINO_MICORREO_BASE_QA", default="https://apitest.correoargentino.com.ar/micorreo/v1")
+CORREO_ARGENTINO_HTTP_TIMEOUT_SECONDS = env.int("CORREO_ARGENTINO_HTTP_TIMEOUT_SECONDS", default=20)
+CORREO_ARGENTINO_TRACKING_URL_TEMPLATE = env(
+    "CORREO_ARGENTINO_TRACKING_URL_TEMPLATE", default="https://www.correoargentino.com.ar/formularios/e-commerce?id={numero}"
+)
+# OCA e-Pak (apps.carriers.oca). Su QA es público (developers.oca.com.ar). A
+# CONFIRMAR: la URL pública de seguimiento.
+OCA_API_BASE_PRODUCTION = env("OCA_API_BASE_PRODUCTION", default="https://webservice.oca.com.ar/ePak_tracking/Oep_TrackEPak.asmx")
+OCA_API_BASE_QA = env("OCA_API_BASE_QA", default="https://integraciones.ocadev.com.ar/epak_tracking_test/Oep_TrackEPak.asmx")
+OCA_HTTP_TIMEOUT_SECONDS = env.int("OCA_HTTP_TIMEOUT_SECONDS", default=30)
+OCA_TRACKING_URL_TEMPLATE = env("OCA_TRACKING_URL_TEMPLATE", default="https://www1.oca.com.ar/OEPTrackingWeb/detalleenviore.asp?numero={numero}")
+# Seguimiento de los transportistas que no tienen su propio valor (Andreani usa
+# los ANDREANI_TRACKING_*).
+CARRIER_TRACKING_POLL_MINUTES = env.int("CARRIER_TRACKING_POLL_MINUTES", default=30)
+CARRIER_TRACKING_MAX_DAYS = env.int("CARRIER_TRACKING_MAX_DAYS", default=60)
+# Precio de Correo Argentino y OCA en el checkout de las tiendas (apps/carriers/checkout.py):
+# como el de Andreani, espera poco y guarda las respuestas (y las fallas, menos tiempo).
+CARRIER_CHECKOUT_TIMEOUT_SECONDS = env.int("CARRIER_CHECKOUT_TIMEOUT_SECONDS", default=4)
+CARRIER_CHECKOUT_CACHE_SECONDS = env.int("CARRIER_CHECKOUT_CACHE_SECONDS", default=1800)
+CARRIER_CHECKOUT_FAILURE_CACHE_SECONDS = env.int("CARRIER_CHECKOUT_FAILURE_CACHE_SECONDS", default=120)
+
+# Magento (apps.integrations.providers.magento). Como WooCommerce: cada tienda es
+# un sitio propio y el comerciante pega las credenciales de una Integración.
+# Sin webhooks en la fase 1, el repaso es lo que trae los pedidos: por eso
+# seguido (es una consulta por fecha de modificación, barata).
+MAGENTO_HTTP_TIMEOUT_SECONDS = env.int("MAGENTO_HTTP_TIMEOUT_SECONDS", default=15)
+MAGENTO_ORDERS_PAGE_SIZE = env.int("MAGENTO_ORDERS_PAGE_SIZE", default=50)
+MAGENTO_RECONCILE_MINUTES = env.int("MAGENTO_RECONCILE_MINUTES", default=5)
+
+# alcanzan (WooCommerce los desactiva tras 5 fallas; ver stores.enqueue_due_reconciliations).
+INTEGRATIONS_RECONCILE_MINUTES = env.int("INTEGRATIONS_RECONCILE_MINUTES", default=30)
+
 # Instalación de tiendas (apps.integrations.stores): vida del "state" firmado
 # de la URL de autorización y del enlace para vincular una tienda instalada
 # desde la tienda de apps a una cuenta.
 INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS = env.int("INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS", default=900)
 INTEGRATIONS_STORE_CLAIM_MAX_AGE_SECONDS = env.int("INTEGRATIONS_STORE_CLAIM_MAX_AGE_SECONDS", default=1800)
+# Vida del link de instalación para compartir (72 h): lo abre otra persona,
+# la que administra la tienda, cuando puede.
+INTEGRATIONS_INSTALL_SHARE_MAX_AGE_SECONDS = env.int("INTEGRATIONS_INSTALL_SHARE_MAX_AGE_SECONDS", default=259200)
 # Página del frontend (relativa a FRONTEND_URL) a la que vuelve el comerciante
 # después de instalar la app, con el resultado en la query string.
 STORE_CONNECT_FRONTEND_PATH = env("STORE_CONNECT_FRONTEND_PATH", default="tiendas.html")
+# Página PÚBLICA a la que vuelve quien instaló con un link para compartir: no
+# tiene sesión nuestra, así que no puede ir a la del comerciante.
+STORE_SHARED_CONNECT_FRONTEND_PATH = env("STORE_SHARED_CONNECT_FRONTEND_PATH", default="tienda_conectada.html")
 
 # URL pública HTTPS del backend, sin barra final. Con ella se registran los
-# webhooks de cada tienda ({base}/api/v1/integrations/tiendanube/webhooks/);
-# vacía = no se registran (la tienda queda con un aviso en last_error).
+# webhooks de cada tienda ({base}/api/v1/integrations/<plataforma>/webhooks/)
+# y se arma la redirect URL del OAuth de Shopify; vacía = no se registran
+# webhooks (la tienda queda con un aviso en last_error) y Shopify no conecta.
 INTEGRATIONS_PUBLIC_BASE_URL = env("INTEGRATIONS_PUBLIC_BASE_URL", default="")
 # Al conectar/vincular una tienda se importan los pedidos creados en los
 # últimos N días.
@@ -347,7 +487,7 @@ INTEGRATIONS_INITIAL_IMPORT_DAYS = env.int("INTEGRATIONS_INITIAL_IMPORT_DAYS", d
 # Pedidos por página al importar (máximo de la API de Tiendanube: 200).
 TIENDANUBE_ORDERS_PAGE_SIZE = env.int("TIENDANUBE_ORDERS_PAGE_SIZE", default=200)
 
-# Rótulos que pide la tienda desde su propio admin (apps.integrations.store_labels).
+# Rótulos que pide la tienda desde su propio admin (apps.integrations.providers.tiendanube.labels).
 # Plazo propio para resolver un rótulo: pasado esto se informa "falló" con el
 # motivo. Va con margen sobre los 30 minutos en que Tiendanube lo da por
 # vencido solo, para que el comerciante vea SIEMPRE por qué no le salió.
@@ -379,9 +519,24 @@ SIMPLE_JWT = {
     "UPDATE_LAST_LOGIN": True,
 }
 
+# Tokens del frontend web en cookies HttpOnly (apps/accounts/auth_cookies.py,
+# donde está explicada cada decisión). Secure por defecto salvo en DEBUG, que
+# corre por HTTP; en un server de prueba por HTTP plano, AUTH_COOKIE_SECURE=False.
+AUTH_COOKIE_ACCESS_NAME = "rotulos_access"
+AUTH_COOKIE_REFRESH_NAME = "rotulos_refresh"
+AUTH_COOKIE_ACCESS_PATH = "/api/"
+AUTH_COOKIE_REFRESH_PATH = "/api/v1/auth/"
+AUTH_COOKIE_DOMAIN = env("AUTH_COOKIE_DOMAIN", default="") or None
+AUTH_COOKIE_SECURE = env.bool("AUTH_COOKIE_SECURE", default=not DEBUG)
+AUTH_COOKIE_SAMESITE = "Lax"
+
 # ---------------------------------------------------------------------------
 # Validación de contraseñas
 # ---------------------------------------------------------------------------
+
+# Logos y fotos viajan en base64 dentro del JSON (un tercio más) con tope de 2 MB:
+# con el default de Django (2,5 MB) una imagen de 1,9 MB se rechazaba sin motivo.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 4 * 1024 * 1024
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -451,6 +606,12 @@ RENDER_FONTS_TTF = env.json("RENDER_FONTS_TTF", default={})
 # en vez de reventar (un error ahí no puede romperle el checkout a un
 # comprador), y esa decisión depende de que alguien pueda leer los logs.
 LOG_LEVEL = env("LOG_LEVEL", default="INFO")
+# "text" (legible, el default) o "json" (una línea JSON por registro, para un
+# recolector de logs en el servidor; ver config/log_format.py).
+LOG_FORMAT = env("LOG_FORMAT", default="text")
+if LOG_FORMAT not in ("text", "json"):
+    raise ImproperlyConfigured("LOG_FORMAT tiene que ser 'text' o 'json'.")
+_LOG_FORMATTER = "json" if LOG_FORMAT == "json" else "standard"
 
 LOGGING = {
     "version": 1,
@@ -460,12 +621,13 @@ LOGGING = {
             "format": "{asctime} {levelname} {name}: {message}",
             "style": "{",
         },
+        "json": {"()": "config.log_format.JsonFormatter"},
     },
     "handlers": {
         # Para nuestro código: deja pasar todo lo que el logger permita.
         "app_console": {
             "class": "logging.StreamHandler",
-            "formatter": "standard",
+            "formatter": _LOG_FORMATTER,
         },
         # Para Django y las librerías de terceros. Tiene nivel propio, y no
         # alcanza con el del logger raíz: un registro que PROPAGA hacia la
@@ -473,7 +635,7 @@ LOGGING = {
         # esto, cada aviso de Django saldría dos veces en desarrollo.
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "standard",
+            "formatter": _LOG_FORMATTER,
             "level": "WARNING",
         },
     },
@@ -490,3 +652,64 @@ LOGGING = {
         "django": {"handlers": ["app_console"], "level": LOG_LEVEL, "propagate": False},
     },
 }
+
+# ---------------------------------------------------------------------------
+# Impresión directa (apps.printing)
+# ---------------------------------------------------------------------------
+# Un trabajo que el agente tomó y no confirmó en este tiempo pasa a "error"
+# (nunca se reimprime solo: podría duplicar rótulos, ver services.py).
+PRINT_JOB_CONFIRM_TIMEOUT_SECONDS = env.int("PRINT_JOB_CONFIRM_TIMEOUT_SECONDS", default=300)
+# Un agente cuenta como "en línea" si consultó en este lapso.
+PRINT_AGENT_ONLINE_SECONDS = env.int("PRINT_AGENT_ONLINE_SECONDS", default=60)
+# El agente empaquetado para Windows (un .exe hecho con PyInstaller en el
+# pipeline de CI, backend/azure-pipelines.yml, que lo deja acá antes de armar la
+# imagen). Sin el archivo, la descarga de Windows contesta 404 y queda el .py.
+PRINT_AGENT_WINDOWS_EXE = env.str(
+    "PRINT_AGENT_WINDOWS_EXE", default=str(BASE_DIR / "apps" / "printing" / "agent" / "dist" / "RotulosAgente.exe")
+)
+
+# ---------------------------------------------------------------------------
+# Monitoreo y alertas (apps.monitoring)
+# ---------------------------------------------------------------------------
+# Cada cuánto `run_monitor` corre los chequeos (y el worker, si el monitor no late).
+MONITORING_INTERVAL_SECONDS = env.int("MONITORING_INTERVAL_SECONDS", default=60)
+# Cada cuánto escribe su latido el worker (da una vuelta cada pocos segundos).
+MONITORING_HEARTBEAT_EVERY_SECONDS = env.int("MONITORING_HEARTBEAT_EVERY_SECONDS", default=30)
+# Sin latido del worker en este lapso = detenido. Generoso porque entre dos
+# latidos puede estar dibujando un lote grande de rótulos.
+MONITORING_WORKER_STALE_SECONDS = env.int("MONITORING_WORKER_STALE_SECONDS", default=900)
+# Sin latido del monitor en este lapso, el worker hace las alertas.
+MONITORING_MONITOR_STALE_SECONDS = env.int("MONITORING_MONITOR_STALE_SECONDS", default=300)
+# Un evento pendiente que pasó su hora por más que esto = la cola no avanza.
+MONITORING_QUEUE_DELAY_SECONDS = env.int("MONITORING_QUEUE_DELAY_SECONDS", default=900)
+# Espacio libre en disco (porcentaje) para aviso y para error.
+MONITORING_DISK_WARNING_PERCENT = env.int("MONITORING_DISK_WARNING_PERCENT", default=10)
+MONITORING_DISK_ERROR_PERCENT = env.int("MONITORING_DISK_ERROR_PERCENT", default=5)
+# Gracia antes del primer mail: un reinicio no despierta a nadie.
+MONITORING_ALERT_AFTER_SECONDS = env.int("MONITORING_ALERT_AFTER_SECONDS", default=180)
+# Recordatorio mientras siga fallando.
+MONITORING_REMINDER_HOURS = env.int("MONITORING_REMINDER_HOURS", default=6)
+# Tras un envío fallido, no reintentar antes de esto.
+MONITORING_MAIL_RETRY_SECONDS = env.int("MONITORING_MAIL_RETRY_SECONDS", default=600)
+# A quién avisar. Vacío = a los admins activos con email. Con la base caída
+# solo se puede avisar a estas direcciones (la lista de admins está en la base).
+MONITORING_ALERT_EMAILS = env.list("MONITORING_ALERT_EMAILS", default=[])
+MONITORING_SUBJECT_PREFIX = env("MONITORING_SUBJECT_PREFIX", default="[Rótulos]")
+
+# ---------------------------------------------------------------------------
+# Comercios con equipo (apps/accounts/teams.py)
+# ---------------------------------------------------------------------------
+# Días que vale una invitación al comercio, y la página donde se acepta.
+TEAM_INVITATION_DAYS = env.int("TEAM_INVITATION_DAYS", default=7)
+TEAM_INVITATION_URL = env("TEAM_INVITATION_URL", default=f"{FRONTEND_URL}/invitaciones.html")
+
+# Pedidos a direcciones que escribe el comerciante (WooCommerce, Magento):
+# se rechazan las que resuelven a una red interna (apps/integrations/safe_http.py).
+# Solo en desarrollo se permiten: la tienda de prueba local resuelve a 100.x.
+INTEGRATIONS_ALLOW_PRIVATE_HOSTS = env.bool("INTEGRATIONS_ALLOW_PRIVATE_HOSTS", default=DEBUG)
+
+# Avisos al comerciante (apps/monitoring/notices.py): lotes, impresiones y
+# rótulos de la tienda fallidos en estos días; reintento del mail.
+NOTICES_RECENT_DAYS = env.int("NOTICES_RECENT_DAYS", default=3)
+NOTICES_MAIL_RETRY_SECONDS = env.int("NOTICES_MAIL_RETRY_SECONDS", default=600)
+NOTICES_MAIL_ENABLED = env.bool("NOTICES_MAIL_ENABLED", default=True)

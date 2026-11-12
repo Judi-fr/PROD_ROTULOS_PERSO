@@ -2,11 +2,32 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "oauth-test",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "3000",
+        "--directory",
+        "oauth-test"
+      ],
+      "port": 3000
+    },
+    {
       "name": "backend",
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
         "cd backend && exec venv/bin/python manage.py runserver 127.0.0.1:8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "backend-sin-mail",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend exec venv/bin/python manage.py runserver 127.0.0.1:8000"
       ],
       "port": 8000
     },
@@ -17,6 +38,24 @@
         "-c",
         "cd backend && exec venv/bin/python manage.py run_integrations_worker"
       ]
+    },
+    {
+      "name": "fake-andreani",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && exec venv/bin/python manage.py fake_andreani_server"
+      ],
+      "port": 8099
+    },
+    {
+      "name": "fake-correo",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && exec venv/bin/python manage.py fake_correo_server"
+      ],
+      "port": 8098
     },
     {
       "name": "frontend",
@@ -30,7 +69,8 @@
         "--directory",
         "frontend"
       ],
-      "port": 8001
+      "port": 8001,
+      "autoPort": false
     }
   ]
 }

@@ -7,7 +7,6 @@ técnico del código vive en `CLAUDE.md`.
 - [Conectar una tienda de Tiendanube](#conectar-una-tienda-de-tiendanube)
 - [Conectar un cliente que NO tiene Tiendanube](#conectar-un-cliente-que-no-tiene-tiendanube)
 - [Poner la app en un servidor](#poner-la-app-en-un-servidor)
-- [Backups y cómo restaurar](#backups-y-cómo-restaurar)
 
 ---
 
@@ -326,30 +325,19 @@ veces.
 
 **1.** Clonar el repo en el servidor.
 
-**2.** Crear el `.env` en la raíz, al lado de `docker-compose.prod.yml`, a
-partir de la plantilla, y completar cada `<...>`:
-
-```bash
-cp .env.prod.example .env && chmod 600 .env
-```
-
-La plantilla trae todas las variables y el comando para generar cada secreto
-(se generan en el servidor, no se reusan los de la PC). Las que más se olvidan:
+**2.** Crear un `.env` en la raíz, al lado de `docker-compose.prod.yml`. Las
+variables mínimas están listadas en el encabezado de ese archivo. Las que más
+se olvidan:
 
 ```
 DOMINIO=rotulos.tudominio.com
 ALLOWED_HOSTS=rotulos.tudominio.com
 FRONTEND_URL=https://rotulos.tudominio.com
 INTEGRATIONS_PUBLIC_BASE_URL=https://rotulos.tudominio.com
-TIENDANUBE_USER_AGENT=Rotulos (contacto@tudominio.com)
 ```
 
-> Las de dominio tienen que ser el dominio real. `ALLOWED_HOSTS` **no puede
-> ser `*`**: `prod.py` se niega a arrancar, a propósito. Sin
-> `TIENDANUBE_USER_AGENT`, Tiendanube contesta 400 a todo.
->
-> `INTEGRATIONS_ENCRYPTION_KEY` se genera una sola vez y se guarda aparte: si
-> se pierde, todas las tiendas conectadas tienen que volver a conectarse.
+> Las cuatro tienen que ser el dominio real. `ALLOWED_HOSTS` **no puede ser
+> `*`**: `prod.py` se niega a arrancar, a propósito.
 
 **3.** Levantar todo:
 
@@ -394,172 +382,4 @@ docker compose -f docker-compose.prod.yml ps               # qué está sano
 
 El error más común la primera vez es que el certificado no sale porque el
 dominio todavía no resuelve al servidor. Se ve en los logs de Caddy.
-
-### En AWS (Lightsail)
-
-Todo lo de arriba vale igual: esto es solo lo específico de AWS. Es **Lightsail**
-y no EC2 a propósito: el mismo servidor por un precio fijo (IP, disco y 3 TB de
-tráfico incluidos) y un panel más simple. Una sola máquina con el compose tal
-cual — ECS, Beanstalk o RDS recién se justifican cuando una máquina no alcance,
-y el paso siguiente sería mover la base a RDS y `media` a S3, no un cluster.
-
-Lo que está creado hoy (cuenta `829622621467`, región `us-east-2`):
-
-| | |
-|---|---|
-| Instancia | `rotulos-prod` — Ubuntu 24.04, plan `small_3_0` (2 vCPU, 2 GB, 60 GB), `us-east-2a` |
-| IP estática | `rotulos-prod-ip` = **3.135.46.69** |
-| Clave SSH | key pair `rotulos`; la privada en `~/.ssh/rotulos-lightsail.pem` de la PC que la creó |
-| Código | clonado en `/opt/rotulos` |
-
-**1. Crear la instancia** (consola de Lightsail → *Create instance*, o
-`aws lightsail create-instances`):
-
-- **Plataforma:** Linux, blueprint **Ubuntu 24.04 LTS**.
-- **Plan:** el de **2 GB con IPv4** (`small_3_0`). El de 1 GB se queda corto para
-  construir las imágenes con Postgres y gunicorn corriendo. **No el "IPv6
-  only"**: GitHub no tiene IPv6, así que el servidor no podría clonar el repo.
-- **Launch script:** el contenido de `deploy/server-bootstrap.sh`. Instala
-  Docker con Compose v2, agrega 2 GB de swap y crea `/opt/rotulos`. Tarda unos
-  minutos después de que la instancia figura como "Running"
-  (`cloud-init status` dice `done` cuando terminó).
-- **Key pair:** crear uno nuevo y guardar el `.pem`. **AWS lo entrega una sola
-  vez**: guardar una copia en el gestor de contraseñas. Si se pierde, solo queda
-  la consola SSH del navegador.
-
-> En Windows, OpenSSH rechaza un `.pem` que otros usuarios pueden leer.
-> Dejarlo solo para el tuyo:
-> `icacls rotulos-lightsail.pem /inheritance:r /grant:r "%USERNAME%:R"`
-
-**2. IP estática** (*Networking → Create static IP*, asociarla a la instancia).
-Sin ella la IP cambia cada vez que la instancia se para y arranca, y el dominio
-queda apuntando a nada. Es gratis mientras esté asociada; suelta se cobra.
-
-**3. Firewall** (la instancia → *Networking → IPv4 Firewall*, y lo mismo en
-IPv6): **80 y 443 abiertos a todos** (Let's Encrypt valida por el 80 y Caddy
-redirige a HTTPS) y **22**. Nada más: Postgres no se expone.
-
-El 22 está **abierto a todos**, no "solo desde tu IP": la conexión de casa sale
-por IPs que van cambiando, y con la regla restringida el SSH se cortaba al azar.
-No es un agujero: Ubuntu en Lightsail **solo acepta la clave**, el login con
-contraseña viene apagado (`sudo sshd -T | grep passwordauthentication` dice
-`no`). Si algún día se restringe, agregar también *Allow Lightsail browser SSH*,
-para no quedar afuera.
-
-**4. DNS:** un registro `A` del dominio a la IP estática. Esperar a que resuelva
-(`nslookup rotulos.tudominio.com`) **antes** del `up`, o Caddy no saca el
-certificado.
-
-**5. Entrar y traer el código:**
-
-```bash
-ssh -i ~/.ssh/rotulos-lightsail.pem ubuntu@3.135.46.69
-cd /opt/rotulos && git clone https://github.com/Judi-fr/PROD_ROTULOS_PERSO.git .
-```
-
-El repo hoy es **público**, así que clona por HTTPS sin credenciales. Si pasa a
-privado, el servidor ya tiene una *deploy key* de solo lectura en
-`~/.ssh/github_deploy` (con `~/.ssh/config` apuntando a ella para github.com):
-cargar `~/.ssh/github_deploy.pub` en GitHub → repo → *Settings → Deploy keys*
-(sin "Allow write access") y cambiar el remoto a
-`git@github.com:Judi-fr/PROD_ROTULOS_PERSO.git`. Nunca clonar con tu usuario o
-un token personal: si el servidor se ve comprometido, lo único que tiene que
-filtrarse es lectura de este repo.
-
-Lo que no esté commiteado y pusheado **no llega al servidor**.
-
-**6.** Seguir los pasos 2 a 5 de arriba (`.env`, `up -d --build`,
-`createsuperuser`, redirect URL de Tiendanube).
-
-**Correo:** Lightsail bloquea el puerto 25 de salida. La plantilla ya usa el
-587, que no está bloqueado; no cambiarlo.
-
-**Backups en AWS.** `./backups` vive en el mismo disco que la base, así que si se
-pierde la instancia se pierden los dos. Dos capas, independientes:
-
-- **Snapshots automáticos** (la instancia → *Snapshots*): activados, diarios a
-  las 06:00 UTC (03:00 en Argentina); Lightsail guarda los últimos 7. Restauran
-  la máquina entera, como una instancia nueva a partir del snapshot.
-- **Copia externa con restic a S3:** un bucket privado y un usuario IAM con
-  permiso **solo sobre ese bucket**, y en el `.env`:
-
-  ```
-  RESTIC_REPOSITORY=s3:s3.us-east-2.amazonaws.com/<bucket>
-  RESTIC_PASSWORD=<generar>
-  AWS_ACCESS_KEY_ID=<del usuario IAM del bucket>
-  AWS_SECRET_ACCESS_KEY=<del usuario IAM del bucket>
-  ```
-
-**Agrandar:** si 2 GB no alcanzan, se crea una instancia nueva desde un snapshot
-con el plan de 4 GB (`medium_3_0`) y se le pasa la IP estática. El dominio no
-cambia.
-
-**Actualizar** después de pushear cambios:
-
-```bash
-cd /opt/rotulos && git pull && docker compose -f docker-compose.prod.yml up -d --build
-```
-
----
-
-## Backups y cómo restaurar
-
-El servicio `backup` arranca solo con el resto. Todos los días a las 03:00
-(y una vez cada vez que el contenedor arranca) copia **la base** (`pg_dump`) y
-**la carpeta media** a `./backups/AAAA-MM-DD_HHMM/`, al lado de
-`docker-compose.prod.yml`, y guarda las últimas 7. Si `RESTIC_REPOSITORY` está
-configurado en el `.env`, además las sube **cifradas** afuera del servidor
-(7 diarias, 4 semanales, 6 mensuales).
-
-Lo que NO está en el backup y hay que guardar aparte, en un gestor de
-contraseñas: **el `.env`**. Sin `INTEGRATIONS_ENCRYPTION_KEY` los tokens de las
-tiendas restaurados no se pueden leer, y sin `RESTIC_PASSWORD` las copias
-externas no se pueden abrir.
-
-### ¿Está funcionando?
-
-```bash
-docker compose -f docker-compose.prod.yml ps backup        # tiene que decir (healthy)
-docker compose -f docker-compose.prod.yml logs --tail 30 backup
-ls backups/
-```
-
-`unhealthy` = pasaron más de 26 horas sin un backup completo (incluida la
-copia externa, si está configurada). Los logs dicen por qué.
-
-### Hacer un backup ahora (por ejemplo, antes de actualizar la app)
-
-```bash
-docker compose -f docker-compose.prod.yml exec backup backup.sh
-```
-
-### Restaurar
-
-Reemplaza la base y la carpeta media por las de la copia: todo lo que se haya
-cargado después de esa copia se pierde.
-
-```bash
-# 1. Frenar lo que usa la base
-docker compose -f docker-compose.prod.yml stop api worker
-
-# 2. Ver qué haría (no cambia nada)
-docker compose -f docker-compose.prod.yml run --rm restore latest
-
-# 3. Hacerlo
-docker compose -f docker-compose.prod.yml run --rm restore latest --yes
-
-# 4. Volver a arrancar
-docker compose -f docker-compose.prod.yml start api worker
-```
-
-- En vez de `latest` se puede poner una copia puntual: `2026-10-06_0300`.
-- Si el servidor murió y la carpeta `backups/` no existe, desde la copia
-  externa: `run --rm restore latest --restic --yes` (en un servidor nuevo, con
-  el mismo `.env`).
-- Antes de tocar nada verifica que la copia no esté corrupta, y si la API
-  sigue conectada a la base se niega a seguir.
-
-> Un backup que nunca se restauró es una suposición. Cada tanto (o después de
-> cambiar algo del servidor) conviene probar el restore en una máquina de
-> prueba, no en producción.
 

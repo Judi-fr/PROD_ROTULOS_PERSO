@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group
 from rest_framework.test import APITestCase
 
 from ..models import LabelTemplate
+from apps.accounts.tests.team_helpers import new_business
 
 User = get_user_model()
 
@@ -30,6 +31,7 @@ def make_user(email="disenador@example.com"):
 class PreviewLabelTests(APITestCase):
     def setUp(self):
         self.user = make_user()
+        self.biz = new_business(self.user)
         self.client.force_authenticate(user=self.user)
 
     def test_devuelve_un_pdf_sin_guardar_nada(self):
@@ -108,3 +110,15 @@ class PreviewLabelTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.content.startswith(b"%PDF"))
+
+    def test_avisa_si_el_codigo_de_barras_no_entra_legible(self):
+        # La muestra usa un tracking de 19 dígitos (OCA), que necesita
+        # ~4,4 cm para leerse a 203 dpi; en un recuadro de 3 cm se avisa.
+        angosto = {"barcode": {"left": 5, "top": 70, "width": 3, "height": 1.5, "data": "{{tracking}}"}}
+        response = self.client.post(URL, {"design": angosto}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Label-Warnings"], "barcode_widened:4.4")
+
+        ancho = {"barcode": {"left": 5, "top": 70, "width": 8, "height": 1.5, "data": "{{tracking}}"}}
+        response = self.client.post(URL, {"design": ancho}, format="json")
+        self.assertNotIn("X-Label-Warnings", response)

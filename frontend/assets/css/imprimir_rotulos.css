@@ -12,8 +12,20 @@
   margin: 0;
 }
 
+/* Desde y Hasta siempre juntos: con 200px cada uno, según cuántos filtros hubiera,
+   "Hasta" caía solo en otro renglón. */
+.filters-row .field:has(> input[type="date"]) {
+  flex-basis: calc(50% - 7px);
+}
+
+@media (max-width: 480px) {
+  .filters-row .field:has(> input[type="date"]) {
+    flex-basis: 100%;
+  }
+}
+
 .selection-count {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--blue);
 }
@@ -25,7 +37,7 @@
   padding: 0 0 10px;
   border-bottom: 1px solid var(--border);
   margin: 0 0 10px;
-  font-size: 13.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -43,7 +55,7 @@
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
@@ -63,11 +75,11 @@
 
 .print-order-title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .print-order-meta {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -77,7 +89,7 @@
   justify-content: center;
   gap: 12px;
   margin: 14px 0 0;
-  font-size: 13.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -85,12 +97,12 @@
    fila de filtros (ver .filters-row .field). */
 .filters-row input[type="date"] {
   padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
   font-family: inherit;
   color: var(--text-dark);
-  background: #fff;
+  background: var(--n-0);
   width: 100%;
 }
 
@@ -101,6 +113,226 @@
 
 .filters-hint {
   margin: 10px 0 0;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
+}
+
+/* "Configurar impresoras", debajo del selector de formato. */
+.field-hint {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--text-sm);
+  color: var(--blue);
+}
+
+/* Barra flotante con lo tildado (print_labels.js, updatePrintDock). */
+.print-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: min(760px, calc(100vw - 32px));
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--ink);
+  color: var(--n-0);
+  font-size: var(--text-base);
+  box-shadow: var(--shadow-md);
+}
+
+.print-dock-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.print-dock-hint {
+  font-size: var(--text-xs);
+  color: var(--n-300);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.print-dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.print-dock .btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.main:has(.print-dock:not([hidden])) {
+  padding-bottom: 110px;
+}
+
+/* =========================================================================
+   Imprimir rótulos (imprimir_rotulos.html, main.print-main), 2026-11-11.
+   Este archivo lo comparten otras pantallas de acciones masivas: todo lo de
+   abajo va con .print-main para no tocarlas.
+   ========================================================================= */
+
+.print-main {
+  max-width: 1180px;
+}
+
+.print-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+.print-main .print-layout > .profile-card {
+  margin: 0;
+}
+
+/* "Cómo imprimir" acompaña al bajar: el botón queda siempre a la vista (y la
+   barra flotante, que aparece solo cuando no se ve, no hace falta). */
+.print-main .print-side {
+  position: sticky;
+  top: 16px;
+}
+
+.print-main .print-side .filters-row {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.print-main .print-side .filters-row .field {
+  flex: none;
+}
+
+.print-side-count {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.print-side-count strong {
+  color: var(--ink);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.print-main .print-side .field-checkbox {
+  margin-top: 12px;
+  align-items: flex-start;
+  font-size: var(--text-sm);
+}
+
+.print-main .print-side .field-checkbox input {
+  margin-top: 2px;
+}
+
+.print-side-btn {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 18px;
+  gap: 8px;
+}
+
+/* Filtros: compactos, arriba de la lista dentro de la misma tarjeta. */
+.print-main .print-orders .filters-row {
+  gap: 10px;
+}
+
+.print-main .print-orders .filters-row .field {
+  flex: 1 1 150px;
+}
+
+.print-main .print-orders .filters-row .field:has(> input[type="date"]) {
+  flex-basis: calc(50% - 5px);
+}
+
+.print-main .filters-hint {
+  margin: 8px 0 16px;
+  font-size: var(--text-xs);
+}
+
+.print-main .select-all-row {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--n-50);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+/* La lista: filas en una caja (antes, una tarjeta con borde por pedido). */
+.print-main .print-order-list {
+  gap: 0;
+  max-height: 560px;
+  border: 1px solid var(--line);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.print-main .print-order {
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  transition: background var(--speed) var(--ease);
+}
+
+.print-main .print-order + .print-order {
+  border-top: 1px solid var(--line);
+}
+
+.print-main .print-order:hover {
+  background: var(--n-50);
+}
+
+.print-main .print-order:has(input:checked) {
+  background: var(--accent-50);
+}
+
+.print-main .print-order input {
+  margin: 0;
+  flex: none;
+}
+
+.print-main .print-order-title {
+  font-weight: 600;
+}
+
+.print-main .print-order-list > .empty-state {
+  margin: 0;
+  padding: 28px 16px;
+}
+
+@media (max-width: 960px) {
+  .print-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .print-main .print-side {
+    position: static;
+  }
 }

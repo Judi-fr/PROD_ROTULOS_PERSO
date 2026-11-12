@@ -10,6 +10,7 @@ from apps.orders.ingestion import create_order_from_data
 from apps.orders.models import Address, Order
 
 from .test_orders import auth_headers_for
+from apps.accounts.tests.team_helpers import new_business
 
 User = get_user_model()
 
@@ -21,11 +22,12 @@ class AddressOriginTests(APITestCase):
             username="vendedor3@example.com", email="vendedor3@example.com", password="Clave123!"
         )
         self.user.groups.add(subscriber)
+        self.biz = new_business(self.user)
         self.own = Address.objects.create(
-            user=self.user, label="Depósito", street="Corrientes", number="1000", city="CABA"
+            user=self.biz, label="Depósito", street="Corrientes", number="1000", city="CABA"
         )
         self.shipment = Address.objects.create(
-            user=self.user,
+            user=self.biz,
             origin=Address.Origin.SHIPMENT,
             recipient_name="María Gómez",
             street="Cabildo",
@@ -81,7 +83,7 @@ class AddressOriginTests(APITestCase):
         self.assertNotIn(order.address.pk, [address["id"] for address in response.data["results"]])
 
     def test_el_pedido_sigue_mostrando_su_direccion(self):
-        order = Order.objects.create(user=self.user, address=self.shipment)
+        order = Order.objects.create(user=self.biz, address=self.shipment)
 
         response = self.client.get(f"/api/v1/orders/{order.pk}/", **auth_headers_for(self.user))
 

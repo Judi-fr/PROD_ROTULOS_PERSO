@@ -30,6 +30,7 @@ from ..zpl import (
     render_label_zpl,
     render_labels_zpl,
 )
+from apps.accounts.tests.team_helpers import new_business
 
 
 User = get_user_model()
@@ -213,6 +214,16 @@ class CodigosTests(SimpleTestCase):
         self.assertTrue(any(linea.startswith("^BCN,") for linea in salida))
         self.assertTrue(any(linea.startswith("^BY") for linea in salida))
 
+    def test_un_codigo_que_no_entra_no_baja_de_2_dots_por_modulo(self):
+        # 19 dígitos en 3 cm: con 1 dot por módulo no se lee (medido en
+        # test_scanning), así que el código sale más ancho y no más angosto.
+        salida = comandos(
+            render_label_zpl(
+                {"barcode": {"left": 0, "top": 50, "width": 3, "data": "3600001016516001234"}}, 10, 15
+            )
+        )
+        self.assertIn("^BY2,3,", " ".join(l for l in salida if l.startswith("^BY")))
+
     def test_ean13(self):
         salida = comandos(
             render_label_zpl(
@@ -391,22 +402,23 @@ class RenderEndpointZplTests(APITestCase):
             username="zebra@example.com", email="zebra@example.com", password="Clave123!"
         )
         self.user.groups.add(subscriber)
+        self.biz = new_business(self.user)
         self.template = LabelTemplate.objects.create(
             name="Para térmica",
-            owner=self.user,
+            owner=self.biz,
             width_cm=10,
             height_cm=15,
             design={"destinatario": {"left": 10, "top": 20, "text": "{{destinatario}}"}},
         )
         self.address = Address.objects.create(
-            user=self.user,
+            user=self.biz,
             origin=Address.Origin.SHIPMENT,
             recipient_name="María Gutiérrez",
             street="Cabildo",
             number="4781",
             city="CABA",
         )
-        self.order = Order.objects.create(user=self.user, address=self.address)
+        self.order = Order.objects.create(user=self.biz, address=self.address)
         self.client.force_authenticate(user=self.user)
 
     def _post(self, **extra):
@@ -460,6 +472,7 @@ class RenderEndpointZplTests(APITestCase):
             username="ajeno@example.com", email="ajeno@example.com", password="Clave123!"
         )
         otro.groups.add(Group.objects.get(name="subscriber"))
+        new_business(otro)
         self.client.force_authenticate(user=otro)
         self.assertEqual(self._post(format="zpl").status_code, 404)
 
@@ -483,9 +496,10 @@ class BatchZplTests(APITestCase):
             username="lotezpl@example.com", email="lotezpl@example.com", password="Clave123!"
         )
         self.user.groups.add(subscriber)
+        self.biz = new_business(self.user)
         self.template = LabelTemplate.objects.create(
             name="Plantilla térmica",
-            owner=self.user,
+            owner=self.biz,
             width_cm=10,
             height_cm=15,
             design={"destinatario": {"left": 10, "top": 20, "text": "{{destinatario}}"}},
@@ -493,14 +507,14 @@ class BatchZplTests(APITestCase):
         self.orders = []
         for numero in range(3):
             address = Address.objects.create(
-                user=self.user,
+                user=self.biz,
                 origin=Address.Origin.SHIPMENT,
                 recipient_name=f"Cliente {numero}",
                 street="Cabildo",
                 number=str(1000 + numero),
                 city="CABA",
             )
-            self.orders.append(Order.objects.create(user=self.user, address=address))
+            self.orders.append(Order.objects.create(user=self.biz, address=address))
         self.client.force_authenticate(user=self.user)
 
     def _post(self, **extra):
@@ -583,15 +597,16 @@ class BatchZplDensidadDeLaTiendaTests(APITestCase):
             username="densidad@example.com", email="densidad@example.com", password="Clave123!"
         )
         self.user.groups.add(subscriber)
+        self.biz = new_business(self.user)
         self.template = LabelTemplate.objects.create(
-            name="Térmica", owner=self.user, width_cm=10, height_cm=15,
+            name="Térmica", owner=self.biz, width_cm=10, height_cm=15,
             design={"destinatario": {"left": 10, "top": 20, "text": "{{destinatario}}"}},
         )
         self.client.force_authenticate(user=self.user)
 
     def _tienda(self, external_id, dpmm=None):
         return self.StoreConnection.objects.create(
-            owner=self.user,
+            owner=self.biz,
             platform=self.StoreConnection.Platform.TIENDANUBE,
             external_store_id=external_id,
             name=f"Tienda {external_id}",
@@ -600,11 +615,11 @@ class BatchZplDensidadDeLaTiendaTests(APITestCase):
 
     def _pedido(self, store=None, sufijo="1"):
         address = Address.objects.create(
-            user=self.user, origin=Address.Origin.SHIPMENT,
+            user=self.biz, origin=Address.Origin.SHIPMENT,
             recipient_name=f"Cliente {sufijo}", street="Cabildo", number=sufijo, city="CABA",
         )
         return Order.objects.create(
-            user=self.user, address=address, store_connection=store,
+            user=self.biz, address=address, store_connection=store,
             external_id=f"e{sufijo}" if store else None,
         )
 

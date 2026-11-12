@@ -18,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.orders.models import Address, Order
 
 from ..models import IncomingWebhook, IntegrationKey, WebhookDelivery, WebhookEndpoint
+from apps.accounts.tests.team_helpers import new_business
 
 User = get_user_model()
 
@@ -38,15 +39,16 @@ class IncomingWebhookSignatureTests(APITestCase):
             email="tienda@example.com",
             password="Clave123!",
         )
+        self.owner_biz = new_business(self.owner)
         self.integration_key = IntegrationKey.objects.create(
-            owner=self.owner,
+            owner=self.owner_biz,
             name="Tienda X",
             key_hash=IntegrationKey.hash_key("bp_test-key"),
             prefix="bp_test-ke",
         )
         self.secret = "un-secreto-compartido"
         self.webhook = IncomingWebhook.objects.create(
-            owner=self.owner,
+            owner=self.owner_biz,
             integration_key=self.integration_key,
             name="Tienda X - pedidos",
             slug="tienda-x",
@@ -93,7 +95,7 @@ class IncomingWebhookSignatureTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(Order.objects.count(), 1)
         order = Order.objects.get()
-        self.assertEqual(order.user_id, self.owner.id)
+        self.assertEqual(order.user_id, self.owner_biz.id)
         self.assertEqual(order.external_id, "TIENDA-0001")
         self.assertEqual(order.source, Order.Source.WEBHOOK)
 
@@ -111,8 +113,9 @@ class OutgoingWebhookDispatchTests(APITestCase):
             email="cliente-webhook@example.com",
             password="Clave123!",
         )
+        self.owner_biz = new_business(self.owner)
         self.endpoint = WebhookEndpoint.objects.create(
-            owner=self.owner,
+            owner=self.owner_biz,
             name="ERP del cliente",
             url="https://erp.example.com/webhooks/buspack/",
             secret=WebhookEndpoint.generate_secret(),
@@ -129,9 +132,9 @@ class OutgoingWebhookDispatchTests(APITestCase):
         self._ok_response(mock_post)
 
         address = Address.objects.create(
-            user=self.owner, street="Av. Siempre Viva", number="742", city="CABA"
+            user=self.owner_biz, street="Av. Siempre Viva", number="742", city="CABA"
         )
-        Order.objects.create(user=self.owner, address=address, description="Paquete")
+        Order.objects.create(user=self.owner_biz, address=address, description="Paquete")
 
         self.assertEqual(mock_post.call_count, 1)
         self.assertEqual(WebhookDelivery.objects.count(), 1)
@@ -143,8 +146,8 @@ class OutgoingWebhookDispatchTests(APITestCase):
     def test_importacion_no_dispara_un_webhook_por_fila(self, mock_post):
         self._ok_response(mock_post)
 
-        operator_group, _ = Group.objects.get_or_create(name="operator")
-        self.owner.groups.add(operator_group)
+        merchant_group, _ = Group.objects.get_or_create(name="subscriber")
+        self.owner.groups.add(merchant_group)
 
         headers = ["Destinatario", "Domicilio", "Ciudad", "ID Externo"]
         rows = [

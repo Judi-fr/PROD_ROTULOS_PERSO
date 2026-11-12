@@ -6,16 +6,16 @@ const statusLabel = {
 // manda el backend (role_label, en inglés). No traducir estas claves —
 // solo se traduce el texto que se muestra (ver translateRole, en
 // assets/js/admin_common.js).
+// Un rol que no es ninguno de los dos fijos es personal de la plataforma
+// (rol personalizado, 2026-10-21): lleva la clase "staff".
 const roleClass = {
   Admin: "admin",
-  Designer: "designer",
-  Operator: "operator",
   Subscriber: "subscriber",
 };
 function formatLockoutRemaining(seconds) {
   const totalMinutes = Math.ceil((seconds || 0) / 60);
-  if (totalMinutes <= 1) return "Locked - menos de 1 min restante";
-  return `Locked - ${totalMinutes} min restantes`;
+  if (totalMinutes <= 1) return "Bloqueado: menos de 1 min";
+  return `Bloqueado: ${totalMinutes} min`;
 }
 function formatLastLogin(value) {
   if (!value) return "Nunca";
@@ -101,8 +101,12 @@ function buildQueryString(baseUrl = API_URL, { includePage = true } = {}) {
   return qs ? `${baseUrl}?${qs}` : baseUrl;
 }
 
+// "Actualizar" no tenía nada conectado: la lista seguía igual aunque hubiera cambios.
+document.getElementById("refreshUsersBtn")?.addEventListener("click", () => loadUsers());
+
 async function loadUsers() {
-  tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px;">Cargando usuarios...</td></tr>`;
+  updateFilterIndicators();
+  tbody.innerHTML = `<tr><td colspan="8" class="table-placeholder"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></td></tr>`;
 
   try {
     const response = await apiFetch(buildQueryString());
@@ -130,7 +134,12 @@ async function loadUsers() {
     const pagination = raw.pagination || null;
 
     if (users.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px;">No hay usuarios para mostrar.</td></tr>`;
+      const filtered = activeFilterCount() > 0 || currentSearch;
+      tbody.innerHTML = `<tr><td colspan="8" class="table-placeholder">${appEmptyState(
+        filtered
+          ? { icon: "list", title: "Nadie coincide con la búsqueda", text: "Probá con otra búsqueda o sacá algún filtro." }
+          : { icon: "list", title: "Todavía no hay usuarios", text: "Los que se registren o crees con «Crear usuario» aparecen acá." }
+      )}</td></tr>`;
     } else {
       renderUsers(users);
     }
@@ -143,9 +152,7 @@ async function loadUsers() {
     const message = err.isFilterValidationError
       ? err.message
       : "No se pudieron cargar los usuarios. Intentá de nuevo más tarde.";
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:red;">
-      ${escapeHtml(message)}
-    </td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="table-placeholder table-error">${escapeHtml(message)}</td></tr>`;
   }
 }
 
@@ -163,47 +170,51 @@ function renderUsers(users) {
 
   users.forEach((u, i) => {
     const tr = document.createElement("tr");
+    tr.style.setProperty("--row", Math.min(i, 12));
     const role = u.role_label || "User";
     const roleText = translateRole(role);
     const statusKey = u.status_key || (u.is_active ? "active" : "inactive");
     const statusText = statusLabel[statusKey] || u.status_label || statusKey;
     const isSelf = Number(u.id) === currentUserId;
     const lockedLine = u.is_locked
-      ? `<div style="font-size:11px; color:#7c3aed; margin-top:2px;">${formatLockoutRemaining(u.lockout_remaining_seconds)}</div>`
+      ? `<div style="font-size:11px; color:var(--info-500); margin-top:2px;">${formatLockoutRemaining(u.lockout_remaining_seconds)}</div>`
       : "";
     // El admin NO puede desactivarse/eliminarse a sí mismo (protección doble:
     // backend devuelve 403 y el frontend no muestra siquiera la opción).
     const deleteAction = !canDeactivateUsers
       ? ""
       : isSelf
-      ? `<span class="self-protected" style="font-size:12px; color:#94a3b8;" title="No podés desactivar tu propia cuenta">No podés eliminarte</span>`
-      : `<a href="#" class="danger delete-user" data-delete-id="${u.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Eliminar</a>`;
+      ? `<span class="self-protected" style="font-size:12px; color:var(--subtle);" title="No podés desactivar tu propia cuenta">No podés eliminarte</span>`
+      : `<a href="#" class="danger delete-user" data-delete-id="${u.id}"><i class="ph ph-trash" aria-hidden="true"></i>Eliminar</a>`;
 
     tr.innerHTML = `
       <td><input type="checkbox" class="row-checkbox" data-user-id="${u.id}"></td>
       <td>
         <div class="user-cell">
-          <img class="user-avatar" src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(u.email || u.id)}" alt="">
-          <span class="user-name" title="${escapeHtml(u.display_name || u.email)}">${escapeHtml(u.display_name || u.email)}</span>
+          <img class="user-avatar" src="${personAvatarUrl(u)}" alt="">
+          <div class="user-ident">
+            <span class="user-name" title="${escapeHtml(u.display_name || u.email)}">${escapeHtml(u.display_name || u.email)}</span>
+            ${u.display_name && u.display_name !== u.email ? `<span class="user-email" title="${escapeHtml(u.email || "")}">${escapeHtml(u.email || "")}</span>` : ""}
+          </div>
         </div>
       </td>
-      <td class="cell-muted" title="${escapeHtml(u.email || "")}">${escapeHtml(u.email)}</td>
-      <td><span class="badge ${roleClass[role] || ""}">${escapeHtml(roleText)}</span></td>
+      <td><span class="badge ${roleClass[role] || "staff"}">${escapeHtml(roleText)}</span></td>
       <td class="status-cell"><span class="status ${statusKey}"><span class="dot"></span>${escapeHtml(statusText)}</span>${lockedLine}</td>
-      <td class="cell-muted">${escapeHtml(u.created_date || "-")}</td>
-      <td class="cell-muted">${u.orders_count ?? 0}</td>
-      <td class="cell-muted">${formatLastOrderDate(u.last_order_at)}</td>
+      <td class="date-col cell-muted">${escapeHtml(u.created_date || "-")}</td>
+      <td class="num-col${u.orders_count ? "" : " cell-muted"}">${u.orders_count ?? 0}</td>
+      <td class="date-col cell-muted">${formatLastOrderDate(u.last_order_at)}</td>
       <td class="actions-col">
         <div class="row-actions">
-          <button class="more-btn" data-idx="${i}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          <button class="more-btn" data-idx="${i}" aria-label="Más acciones">
+            <i class="ph ph-dots-three-vertical" aria-hidden="true"></i>
           </button>
           <div class="dropdown" id="dd-${i}" style="display:none;">
-            <a href="#" class="view-user" data-view-id="${u.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Ver</a>
-            ${canEditUsers ? `<a href="#" class="edit-user" data-edit-id="${u.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>Editar</a>` : ""}
+            <a href="#" class="view-user" data-view-id="${u.id}"><i class="ph ph-eye" aria-hidden="true"></i>Ver</a>
+            ${canEditUsers ? `<a href="#" class="edit-user" data-edit-id="${u.id}"><i class="ph ph-pencil-simple" aria-hidden="true"></i>Editar</a>` : ""}
+            ${canEditUsers ? `<a href="comercio_usuario.html?user=${u.id}"><i class="ph ph-storefront" aria-hidden="true"></i>Comercio</a>` : ""}
             <div class="sep"></div>
-            ${canReactivateUsers && u.can_reactivate ? `<a href="#" class="reactivate-user" data-reactivate-id="${u.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Reactivar</a>` : ""}
-            ${canUnlockUsers && u.is_locked ? `<a href="#" class="unlock-user" data-unlock-id="${u.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>Unlock</a>` : ""}
+            ${canReactivateUsers && u.can_reactivate ? `<a href="#" class="reactivate-user" data-reactivate-id="${u.id}"><i class="ph ph-arrows-clockwise" aria-hidden="true"></i>Reactivar</a>` : ""}
+            ${canUnlockUsers && u.is_locked ? `<a href="#" class="unlock-user" data-unlock-id="${u.id}"><i class="ph ph-lock-key-open" aria-hidden="true"></i>Desbloquear</a>` : ""}
             ${deleteAction}
           </div>
         </div>
@@ -240,13 +251,33 @@ function updateBulkActionsBar() {
   const countEl = document.getElementById("bulkActionsCount");
   if (!bar) return;
   const count = selectedUserIds.size;
-  bar.style.display = count > 0 ? "flex" : "none";
-  if (countEl) countEl.textContent = `${count} seleccionado${count === 1 ? "" : "s"}`;
+  const open = count > 0;
+  bar.classList.toggle("is-open", open);
+  bar.inert = !open;
+  bar.setAttribute("aria-hidden", open ? "false" : "true");
+  const numEl = document.getElementById("bulkActionsNum");
+  if (numEl) numEl.textContent = String(count);
+  if (countEl) countEl.textContent = count === 1 ? "seleccionado" : "seleccionados";
 }
+
+function clearSelection() {
+  selectedUserIds.clear();
+  document.querySelectorAll(".row-checkbox").forEach((cb) => {
+    cb.checked = false;
+    cb.closest("tr")?.classList.remove("row-selected");
+  });
+  updateSelectAllCheckboxState();
+  updateBulkActionsBar();
+}
+
+document.getElementById("bulkClearBtn")?.addEventListener("click", clearSelection);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && selectedUserIds.size > 0 && !document.querySelector("dialog[open]")) clearSelection();
+});
 
 async function runBulkAction(payload) {
   if (selectedUserIds.size === 0) {
-    alert("Seleccioná al menos un usuario (tildá su casilla).");
+    appAlert("Seleccioná al menos un usuario (tildá su casilla).", { tone: "info" });
     return;
   }
   try {
@@ -267,12 +298,12 @@ async function runBulkAction(payload) {
       const reasons = data.skipped.map((s) => `#${s.id}: ${s.reason}`).join("\n");
       message += `\n${skippedCount} se salteó(aron):\n${reasons}`;
     }
-    alert(message);
+    appAlert(message);
     loadUsers();
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error("Error en la acción masiva:", err);
-    alert(err.message || "No se pudo completar la acción masiva.");
+    appAlert(err.message || "No se pudo completar la acción masiva.");
   }
 }
 
@@ -285,7 +316,7 @@ document.getElementById("bulkDeactivateBtn")?.addEventListener("click", () => {
 document.getElementById("bulkSetRoleBtn")?.addEventListener("click", () => {
   const role = document.getElementById("bulkRoleSelect")?.value;
   if (!role) {
-    alert("Elegí un rol para aplicar.");
+    appAlert("Elegí un rol para aplicar.", { tone: "info" });
     return;
   }
   runBulkAction({ action: "set_role", role });
@@ -327,88 +358,99 @@ document.addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// EXPORTAR A EXCEL: toma los usuarios tildados (selectedUserIds) de la
-// página/filtro actual y arma un .xlsx en el navegador con SheetJS (no pega
-// contra el backend: los datos ya están en lastUsers, cargados por loadUsers).
+// EXPORTAR: un solo botón (antes había dos que no se distinguían: "Exportar"
+// armaba un Excel en el navegador con los tildados y "Exportar CSV" bajaba del
+// servidor). El panel pregunta qué usuarios (toda la lista con los filtros de
+// ahora, o los tildados) y el formato; el archivo lo arma siempre el servidor
+// (users/export/?file_type=csv|xlsx), sin límite de página.
 // ---------------------------------------------------------------------------
 const exportUsersBtn = document.getElementById("exportUsersBtn");
-if (exportUsersBtn) {
-  exportUsersBtn.addEventListener("click", () => {
-    if (selectedUserIds.size === 0) {
-      alert("Seleccioná al menos un usuario (tildá su casilla) para exportar.");
-      return;
-    }
+const exportUsersPanel = document.getElementById("exportUsersPanel");
+let lastTotalCount = null;
 
-    if (typeof XLSX === "undefined") {
-      alert("No se pudo cargar la librería de Excel. Revisá tu conexión e intentá de nuevo.");
-      return;
-    }
-
-    const selectedUsers = lastUsers.filter((u) => selectedUserIds.has(Number(u.id)));
-    const rows = selectedUsers.map((u) => ({
-      ID: u.id,
-      Nombre: u.display_name || "",
-      Email: u.email || "",
-      Rol: translateRole(u.role_label || "User"),
-      Estado: statusLabel[u.status_key] || u.status_label || (u.is_active ? "Activo" : "Inactivo"),
-      "Fecha de creación": u.created_date || "",
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    worksheet["!cols"] = [
-      { wch: 6 },
-      { wch: 28 },
-      { wch: 32 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 16 },
-    ];
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Usuarios");
-
-    const today = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `usuarios-${today}.xlsx`);
-  });
+function refreshExportPanel() {
+  const selectedRadio = document.querySelector('input[name="exportScope"][value="selected"]');
+  const filteredRadio = document.querySelector('input[name="exportScope"][value="filtered"]');
+  const count = selectedUserIds.size;
+  if (selectedRadio) {
+    selectedRadio.disabled = count === 0;
+    if (count === 0 && selectedRadio.checked && filteredRadio) filteredRadio.checked = true;
+    // Con usuarios tildados, lo más probable es que quiera esos.
+    if (count > 0 && exportUsersPanel?.hidden) selectedRadio.checked = true;
+  }
+  const selectedHint = document.getElementById("exportSelectedHint");
+  if (selectedHint) {
+    selectedHint.textContent = count ? `${count} usuario${count === 1 ? "" : "s"} tildado${count === 1 ? "" : "s"}` : "Tildá usuarios en la tabla";
+  }
+  const filteredHint = document.getElementById("exportFilteredHint");
+  if (filteredHint) {
+    const filtered = activeFilterCount() > 0 || currentSearch;
+    const people = lastTotalCount == null ? "" : `${lastTotalCount} usuario${lastTotalCount === 1 ? "" : "s"}`;
+    filteredHint.textContent = [people, filtered ? "con la búsqueda y los filtros de ahora" : "sin filtros"].filter(Boolean).join(", ");
+  }
 }
 
-// ---------------------------------------------------------------------------
-// EXPORTAR A CSV: generado en el BACKEND (a diferencia del .xlsx de arriba,
-// que arma el navegador). Si hay selección, exporta solo esos IDs; si no,
-// exporta el resultado de los filtros actualmente activos (sin límite de
-// página: toda la lista filtrada, no solo la página visible).
-// ---------------------------------------------------------------------------
-const exportUsersCsvBtn = document.getElementById("exportUsersCsvBtn");
-if (exportUsersCsvBtn) {
-  exportUsersCsvBtn.addEventListener("click", async () => {
-    let url = buildQueryString(EXPORT_CSV_URL, { includePage: false });
-    if (selectedUserIds.size > 0) {
-      const separator = url.includes("?") ? "&" : "?";
-      url += `${separator}ids=${Array.from(selectedUserIds).join(",")}`;
-    }
-
-    try {
-      const response = await apiFetch(url);
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.detail || `Error HTTP: ${response.status}`);
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `usuarios-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch (err) {
-      if (err.isSessionExpired) return;
-      console.error("Error al exportar CSV:", err);
-      alert(err.message || "No se pudo exportar el CSV.");
-    }
-  });
+function setExportPanelOpen(open) {
+  if (!exportUsersPanel || !exportUsersBtn) return;
+  if (open) refreshExportPanel();
+  exportUsersPanel.hidden = !open;
+  exportUsersBtn.setAttribute("aria-expanded", String(open));
 }
+
+exportUsersBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setExportPanelOpen(exportUsersPanel.hidden);
+});
+exportUsersPanel?.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", () => setExportPanelOpen(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && exportUsersPanel && !exportUsersPanel.hidden) {
+    setExportPanelOpen(false);
+    exportUsersBtn.focus();
+  }
+});
+
+document.getElementById("exportUsersGo")?.addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  const scope = document.querySelector('input[name="exportScope"]:checked')?.value || "filtered";
+  const format = document.querySelector('input[name="exportFormat"]:checked')?.value || "xlsx";
+  if (scope === "selected" && selectedUserIds.size === 0) {
+    appAlert("Tildá al menos un usuario en la tabla.", { tone: "info" });
+    return;
+  }
+
+  const params = new URLSearchParams(buildQueryString("", { includePage: false }).replace(/^\?/, ""));
+  params.set("file_type", format);
+  if (scope === "selected") params.set("ids", Array.from(selectedUserIds).join(","));
+
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Preparando…";
+  try {
+    const response = await apiFetch(`${EXPORT_CSV_URL}?${params.toString()}`);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(getErrorMessage(data, `No se pudo exportar (error ${response.status}).`));
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `usuarios-${new Date().toISOString().slice(0, 10)}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setExportPanelOpen(false);
+  } catch (err) {
+    if (err.isSessionExpired) return;
+    console.error("Error al exportar usuarios:", err);
+    appAlert(err.message || "No se pudo exportar.");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+});
 
 function renderPagination(pagination) {
   const infoEl = document.getElementById("paginationInfo");
@@ -422,6 +464,7 @@ function renderPagination(pagination) {
   }
 
   const { count, from, to, total_pages, page, has_previous, has_next, previous_page, next_page } = pagination;
+  lastTotalCount = count ?? null;
   lastPage = total_pages || 1;
 
   if (infoEl) {
@@ -468,7 +511,71 @@ function renderSummary(summary) {
   if (activeEl) activeEl.textContent = summary.active ?? "—";
   if (inactiveEl) inactiveEl.textContent = summary.inactive ?? "—";
   if (lockedEl) lockedEl.textContent = summary.locked ?? "—";
+
+  // Barra del total: la parte activa y la inactiva, en proporción.
+  const total = Number(summary.total) || 0;
+  const share = (value) => (total ? `${((Number(value) || 0) / total) * 100}%` : "0%");
+  document.getElementById("pulseBarActive")?.style.setProperty("width", share(summary.active));
+  document.getElementById("pulseBarInactive")?.style.setProperty("width", share(summary.inactive));
+  const activePct = total ? Math.round(((Number(summary.active) || 0) / total) * 100) : 0;
+  document.getElementById("usersPulseBar")?.setAttribute("aria-label", `${activePct} % activos`);
+  const note = document.getElementById("pulseNote");
+  if (note) note.textContent = total ? `${activePct} % con la cuenta activa` : "Todavía no hay usuarios";
+  document.querySelector(".pulse-stat-locked")?.classList.toggle("has-locked", Number(summary.locked) > 0);
 }
+
+// Cuántos filtros hay puestos (el orden no cuenta): se muestra en el botón
+// "Filtros", y los atajos del resumen se ven apretados si coinciden.
+function activeFilterCount() {
+  return [
+    currentStatus !== "all",
+    currentRole !== "all",
+    Boolean(currentDateJoinedFrom),
+    Boolean(currentDateJoinedTo),
+    Boolean(currentLastLoginFrom),
+    Boolean(currentLastLoginTo),
+    currentNeverLoggedIn,
+    Boolean(currentInactiveDays),
+    currentLocked !== "all",
+    currentFailedAttempts !== "all",
+    currentAuthMethod !== "all",
+  ].filter(Boolean).length;
+}
+
+function updateFilterIndicators() {
+  const count = activeFilterCount();
+  const badge = document.getElementById("userFilterCount");
+  if (badge) {
+    badge.hidden = count === 0;
+    badge.textContent = String(count);
+  }
+  document.querySelectorAll("[data-summary-filter]").forEach((button) => {
+    const kind = button.dataset.summaryFilter;
+    const pressed = kind === "locked" ? currentLocked === "true" : currentStatus === kind;
+    button.setAttribute("aria-pressed", String(pressed));
+  });
+}
+
+// Atajos del resumen: Activos / Inactivos filtran por estado y Bloqueados por
+// bloqueo; tocar el que ya está puesto lo saca. Usan los mismos selects del
+// panel de filtros, así los dos lugares dicen lo mismo.
+document.querySelectorAll("[data-summary-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const kind = button.dataset.summaryFilter;
+    const on = button.getAttribute("aria-pressed") !== "true";
+    if (kind === "locked") {
+      currentLocked = on ? "true" : "all";
+      const select = document.getElementById("userLockedFilter");
+      if (select) select.value = currentLocked;
+    } else {
+      currentStatus = on ? kind : "all";
+      const select = document.getElementById("userStatusFilter");
+      if (select) select.value = currentStatus;
+    }
+    currentPage = 1;
+    loadUsers();
+  });
+});
 
 function attachDropdownListeners() {
   document.querySelectorAll(".more-btn").forEach((btn) => {
@@ -527,11 +634,11 @@ document.addEventListener("click", (e) => {
   }
 });
 
-function reactivateUser(userId) {
+async function reactivateUser(userId) {
   const user = lastUsers.find((u) => Number(u.id) === userId);
   const userName = user ? user.display_name || user.email : `#${userId}`;
 
-  const confirmed = window.confirm(
+  const confirmed = await appConfirm(
     `¿Reactivar al usuario "${userName}"?\n\nEl usuario volverá a estar activo.`
   );
   if (!confirmed) return;
@@ -555,22 +662,22 @@ function reactivateUser(userId) {
       }
     })
     .then(() => {
-      alert(`El usuario "${userName}" fue reactivado correctamente.`);
+      appAlert(`El usuario "${userName}" fue reactivado correctamente.`, { tone: "success" });
       // Recargar la lista manteniendo la página actual si sigue siendo válida.
       loadUsers();
     })
     .catch((err) => {
       if (err.isSessionExpired) return;
       console.error("Error al reactivar usuario:", err);
-      alert(err.message || "No se pudo reactivar el usuario. Intentá de nuevo.");
+      appAlert(err.message || "No se pudo reactivar el usuario. Intentá de nuevo.");
     });
 }
 
-function unlockUser(userId) {
+async function unlockUser(userId) {
   const user = lastUsers.find((u) => Number(u.id) === userId);
   const userName = user ? user.display_name || user.email : `#${userId}`;
 
-  const confirmed = window.confirm(
+  const confirmed = await appConfirm(
     `¿Desbloquear al usuario "${userName}"?\n\nSe reseteará el bloqueo y el contador de intentos fallidos.`
   );
   if (!confirmed) return;
@@ -590,22 +697,22 @@ function unlockUser(userId) {
       }
     })
     .then(() => {
-      alert(`El usuario "${userName}" fue desbloqueado correctamente.`);
+      appAlert(`El usuario "${userName}" fue desbloqueado correctamente.`, { tone: "success" });
       loadUsers();
     })
     .catch((err) => {
       if (err.isSessionExpired) return;
       console.error("Error al desbloquear usuario:", err);
-      alert(err.message || "No se pudo desbloquear el usuario. Intentá de nuevo.");
+      appAlert(err.message || "No se pudo desbloquear el usuario. Intentá de nuevo.");
     });
 }
 
-function softDeleteUser(userId) {
+async function softDeleteUser(userId) {
   const user = lastUsers.find((u) => Number(u.id) === userId);
   const userName = user ? user.display_name || user.email : `#${userId}`;
 
-  const confirmed = window.confirm(
-    `¿Desactivar al usuario "${userName}"?\n\nEl usuario será desactivado (soft delete), NO eliminado permanentemente.`
+  const confirmed = await appConfirm(
+    `¿Desactivar al usuario "${userName}"?\n\nNo va a poder entrar, pero sus datos se conservan y se puede volver a activar.`
   );
   if (!confirmed) return;
 
@@ -624,7 +731,7 @@ function softDeleteUser(userId) {
       }
     })
     .then(() => {
-      alert(`El usuario "${userName}" fue desactivado correctamente.`);
+      appAlert(`El usuario "${userName}" fue desactivado correctamente.`, { tone: "success" });
       // Recargar la lista manteniendo la página actual si sigue siendo válida.
       // Si la página actual quedó fuera de rango, el backend ajusta automáticamente.
       loadUsers();
@@ -632,7 +739,7 @@ function softDeleteUser(userId) {
     .catch((err) => {
       if (err.isSessionExpired) return;
       console.error("Error al desactivar usuario:", err);
-      alert(err.message || "No se pudo desactivar el usuario. Intentá de nuevo.");
+      appAlert(err.message || "No se pudo desactivar el usuario. Intentá de nuevo.");
     });
 }
 
@@ -646,7 +753,7 @@ function openViewModal(userId) {
   const content = document.getElementById("viewUserContent");
   if (!modal || !content) return;
 
-  content.innerHTML = `<div style="text-align:center; color:#64748b; padding:20px;">Cargando usuario...</div>`;
+  content.innerHTML = `<div style="text-align:center; color:var(--muted); padding:20px;"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></div>`;
   modal.style.display = "flex";
 
   apiFetch(`${API_URL}${userId}/`)
@@ -688,9 +795,9 @@ function openViewModal(userId) {
       content.innerHTML = rows
         .map(
           ([label, value]) => `
-            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:16px; padding:9px 0; border-bottom:1px solid #e7eaf1;">
-              <span style="flex:0 0 auto; max-width:55%; font-size:12.5px; font-weight:600; color:#64748b; line-height:1.35;">${escapeHtml(label)}</span>
-              <span style="flex:1; font-size:14px; color:#0f172a; text-align:right; word-break:break-word;">${escapeHtml(value)}</span>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:16px; padding:9px 0; border-bottom:1px solid var(--line);">
+              <span style="flex:0 0 auto; max-width:55%; font-size:12.5px; font-weight:600; color:var(--muted); line-height:1.35;">${escapeHtml(label)}</span>
+              <span style="flex:1; font-size:14px; color:var(--ink); text-align:right; word-break:break-word;">${escapeHtml(value)}</span>
             </div>
           `
         )
@@ -699,7 +806,7 @@ function openViewModal(userId) {
     .catch((err) => {
       if (err.isSessionExpired) return;
       console.error("Error al ver usuario:", err);
-      content.innerHTML = `<div style="text-align:center; color:#dc2626; padding:20px;">${escapeHtml(err.message)}</div>`;
+      content.innerHTML = `<div style="text-align:center; color:var(--danger-500); padding:20px;">${escapeHtml(err.message)}</div>`;
     });
 }
 
@@ -790,7 +897,7 @@ function resetCreateForm() {
 function openEditPanel(userId) {
   const user = lastUsers.find((u) => Number(u.id) === userId);
   if (!user) {
-    alert("No se pudo encontrar el usuario seleccionado.");
+    appAlert("No se pudo encontrar el usuario seleccionado.");
     return;
   }
 
@@ -930,8 +1037,53 @@ bindAdvancedFilter(inactiveDaysFilter, () => (currentInactiveDays = inactiveDays
 bindAdvancedFilter(lockedFilter, () => (currentLocked = lockedFilter.value));
 bindAdvancedFilter(failedAttemptsFilter, () => (currentFailedAttempts = failedAttemptsFilter.value));
 bindAdvancedFilter(authMethodFilter, () => (currentAuthMethod = authMethodFilter.value));
-bindAdvancedFilter(orderingFieldFilter, () => (currentOrderingField = orderingFieldFilter.value));
-bindAdvancedFilter(orderingDirFilter, () => (currentOrderingDir = orderingDirFilter.value));
+bindAdvancedFilter(orderingFieldFilter, () => {
+  currentOrderingField = orderingFieldFilter.value;
+  updateSortHeaders();
+});
+bindAdvancedFilter(orderingDirFilter, () => {
+  currentOrderingDir = orderingDirFilter.value;
+  updateSortHeaders();
+});
+
+// ORDEN POR ENCABEZADO: un clic ordena por esa columna, otro invierte el
+// sentido y el tercero vuelve al orden normal. Las fechas y los pedidos
+// arrancan por lo más reciente / lo más alto, que es lo que se busca. Es el
+// mismo estado que "Ordenar por" de los filtros avanzados (se mantienen iguales).
+const SORT_STARTS_DESC = new Set(["date_joined", "last_order_at", "orders_count", "last_login"]);
+
+function updateSortHeaders() {
+  document.querySelectorAll(".th-sort[data-sort]").forEach((button) => {
+    const active = button.dataset.sort === currentOrderingField;
+    button.dataset.dir = active ? currentOrderingDir : "";
+    button.closest("th")?.setAttribute(
+      "aria-sort",
+      active ? (currentOrderingDir === "desc" ? "descending" : "ascending") : "none"
+    );
+  });
+  if (orderingFieldFilter) orderingFieldFilter.value = currentOrderingField;
+  if (orderingDirFilter) orderingDirFilter.value = currentOrderingDir;
+}
+
+document.querySelectorAll(".th-sort[data-sort]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const field = button.dataset.sort;
+    const firstDir = SORT_STARTS_DESC.has(field) ? "desc" : "asc";
+    if (currentOrderingField !== field) {
+      currentOrderingField = field;
+      currentOrderingDir = firstDir;
+    } else if (currentOrderingDir === firstDir) {
+      currentOrderingDir = firstDir === "asc" ? "desc" : "asc";
+    } else {
+      currentOrderingField = "id";
+      currentOrderingDir = "asc";
+    }
+    updateSortHeaders();
+    currentPage = 1;
+    loadUsers();
+  });
+});
+updateSortHeaders();
 
 if (clearUserFiltersBtn) {
   clearUserFiltersBtn.addEventListener("click", () => {
@@ -958,6 +1110,7 @@ if (clearUserFiltersBtn) {
     if (authMethodFilter) authMethodFilter.value = "all";
     if (orderingFieldFilter) orderingFieldFilter.value = "id";
     if (orderingDirFilter) orderingDirFilter.value = "asc";
+    updateSortHeaders();
 
     currentPage = 1;
     loadUsers();
@@ -1017,6 +1170,13 @@ document
     resetCreateForm();
     panel.style.display = "none";
   });
+// Ahora es una ventana centrada: Esc la cierra, como a los diálogos.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && panel.style.display === "block") {
+    resetCreateForm();
+    panel.style.display = "none";
+  }
+});
 
 // Crear/Editar usuario: el submit se maneja más abajo (handleAdminSubmit).
 const createUserForm = document.getElementById("createUserForm");
@@ -1029,7 +1189,7 @@ async function loadMyProfile() {
     }
     const user = await response.json();
     const stored = getCurrentUser();
-    localStorage.setItem("user", JSON.stringify({ ...stored, ...user }));
+    window.Auth.saveSession({ ...stored, ...user });
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error("Error al cargar perfil:", err);
@@ -1049,7 +1209,7 @@ async function handleAdminSubmit(e) {
   const status = document.getElementById("statusSelect").value.trim().toLowerCase();
 
   if (!fullName || !email || !role || !status) {
-    alert("Completá todos los campos obligatorios.");
+    appAlert("Completá todos los campos obligatorios.", { tone: "info" });
     return;
   }
 
@@ -1083,9 +1243,11 @@ async function handleAdminSubmit(e) {
     if (!response.ok) {
       const messages = [];
       if (data && typeof data === "object") {
+        const labels = { email: "Email", first_name: "Nombre", last_name: "Apellido", full_name: "Nombre", role: "Rol", status: "Estado" };
         for (const [field, errors] of Object.entries(data)) {
-          if (Array.isArray(errors)) messages.push(`${field}: ${errors.join(", ")}`);
-          else if (typeof errors === "string") messages.push(`${field}: ${errors}`);
+          const text = Array.isArray(errors) ? errors.join(", ") : errors;
+          if (typeof text !== "string") continue;
+          messages.push(labels[field] ? `${labels[field]}: ${text}` : text);
         }
       }
       throw new Error(messages.length ? messages.join("\n") : `Error HTTP: ${response.status}`);
@@ -1098,7 +1260,7 @@ async function handleAdminSubmit(e) {
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error(isEditing ? "Error al editar usuario:" : "Error al crear usuario:", err);
-    alert(err.message || (isEditing ? "No se pudo editar el usuario." : "No se pudo crear el usuario."));
+    appAlert(err.message || (isEditing ? "No se pudo editar el usuario." : "No se pudo crear el usuario."));
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = originalText;
@@ -1130,6 +1292,12 @@ function bootstrap() {
   }
 
   document.getElementById("openCreatePanel").style.display = canUseUserPermission("users.create") ? "" : "none";
+  // Exportar tiene su permiso (migración 0029), aparte de ver la lista.
+  const canExport = canUseUserPermission("users.export");
+  ["exportUsersBtn", "exportUsersCsvBtn"].forEach((id) => {
+    const button = document.getElementById(id);
+    if (button) button.hidden = !canExport;
+  });
   loadMyProfile();
   loadUsers();
   // Cargar dinámicamente TODOS los roles (básicos + personalizados).

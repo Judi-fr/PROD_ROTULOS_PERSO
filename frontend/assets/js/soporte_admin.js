@@ -39,7 +39,7 @@ function renderSupportRows(messages) {
   const body = document.getElementById("supportBody");
   if (!body) return;
   if (!messages.length) {
-    body.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px;">No hay mensajes para mostrar.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="4" class="table-placeholder">No hay mensajes para mostrar.</td></tr>`;
     return;
   }
   body.innerHTML = "";
@@ -59,7 +59,7 @@ function renderSupportRows(messages) {
 
 async function loadSupportMessages() {
   const body = document.getElementById("supportBody");
-  if (body) body.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px;">Cargando...</td></tr>`;
+  if (body) body.innerHTML = `<tr><td colspan="4" class="table-placeholder"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></td></tr>`;
   try {
     const response = await apiFetch(supportQueryString());
     if (response.status === 403) throw new Error("No tenés permisos para ver la bandeja de soporte.");
@@ -143,10 +143,12 @@ document.getElementById("saveSupportDetailBtn")?.addEventListener("click", async
   button.disabled = true;
   button.textContent = "Guardando...";
   try {
-    const payload = {
-      status: document.getElementById("supportDetailStatus").value,
-      response: document.getElementById("supportDetailResponse").value,
-    };
+    const payload = { response: document.getElementById("supportDetailResponse").value };
+    // El estado va solo si se cambió: mandarlo siempre anulaba la regla del backend
+    // de que responder un mensaje pendiente lo resuelve, y quedaba "Pendiente".
+    const chosenStatus = document.getElementById("supportDetailStatus").value;
+    const current = supportMessages.find((m) => Number(m.id) === Number(selectedSupportMessageId));
+    if (!current || chosenStatus !== current.status) payload.status = chosenStatus;
     const response = await apiFetch(`${SUPPORT_MESSAGES_URL}${selectedSupportMessageId}/`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

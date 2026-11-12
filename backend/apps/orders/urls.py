@@ -9,6 +9,13 @@ Se montan bajo ``/api/v1/`` (ver config/urls.py), igual que
 from django.urls import path
 from rest_framework.routers import SimpleRouter
 
+from .bulk_views import (
+    BulkStatusView,
+    DispatchManifestView,
+    OrderExportView,
+    TrackingImportConfirmView,
+    TrackingImportPreviewView,
+)
 from .import_views import (
     ImportMappingViewSet,
     OrderImportConfirmView,
@@ -16,6 +23,10 @@ from .import_views import (
     OrderImportUploadView,
     OrderImportValidateView,
 )
+from .public_tracking_views import PublicTrackingView
+from .sample_views import SampleOrdersView
+from .stats_views import BusinessStatsView
+from .summary_views import OrderSummaryView
 from .views import AddressViewSet, AdminOrderListView, ManualOrderCreateView, OrderMetricsView, OrderViewSet
 
 router = SimpleRouter()
@@ -29,9 +40,29 @@ urlpatterns = [
     # self-service: Django resuelve urlpatterns en orden y estos van primero.
     path("admin/orders/", AdminOrderListView.as_view(), name="admin-order-list"),
     path("orders/metrics/", OrderMetricsView.as_view(), name="order-metrics"),
+    path("orders/summary/", OrderSummaryView.as_view(), name="order-summary"),
+    path("orders/sample/", SampleOrdersView.as_view(), name="order-sample"),
+    # Seguimiento público (seguimiento.html, sin sesión): el link firmado del QR.
+    path("tracking/<str:token>/", PublicTrackingView.as_view(), name="public-tracking"),
+    path("orders/stats/", BusinessStatsView.as_view(), name="order-stats"),
     # Carga operativa (story 20): alta manual de un envío a nombre propio o
     # (con orders.create_for_others) de otro usuario.
     path("orders/manual/", ManualOrderCreateView.as_view(), name="order-manual-create"),
+    # Acciones masivas sobre los pedidos propios (ver bulk_views). Antes del
+    # router: si no, "export" se tomaría como el <pk> de /orders/<pk>/.
+    path("orders/bulk-status/", BulkStatusView.as_view(), name="order-bulk-status"),
+    path("orders/export/", OrderExportView.as_view(), name="order-export"),
+    path("orders/manifest/", DispatchManifestView.as_view(), name="order-manifest"),
+    path(
+        "orders/tracking-import/preview/",
+        TrackingImportPreviewView.as_view(),
+        name="order-tracking-import-preview",
+    ),
+    path(
+        "orders/tracking-import/confirm/",
+        TrackingImportConfirmView.as_view(),
+        name="order-tracking-import-confirm",
+    ),
     # Importación CSV/Excel (story 21), en tres pasos: subir -> mapear ->
     # confirmar. La plantilla descargable (story 22) va antes del router
     # para no chocar con /orders/imports/<pk>/.

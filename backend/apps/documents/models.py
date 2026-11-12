@@ -13,9 +13,12 @@ los dos campos lo explique.
 
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 
 class Document(models.Model):
@@ -43,6 +46,15 @@ class Document(models.Model):
     # Qué falló (o qué se omitió, en un lote parcialmente exitoso) — nunca
     # se deja al usuario con un "falló" sin explicación.
     error_message = models.TextField(blank=True, default="")
+    # Un lote grande no se genera en el request: queda acá lo necesario para
+    # armarlo (ids, plantilla, formato...) y lo hace el worker
+    # (apps.labels.batch_jobs). Vacío cuando no hay nada pendiente.
+    job = models.JSONField(default=dict, blank=True)
+    # Ids de las tiendas de los pedidos del lote (vacío = solo pedidos
+    # cargados a mano; null = no se sabe: los lotes anteriores a esto). Un
+    # empleado limitado a algunas tiendas no ve un lote que incluya pedidos
+    # de otra, ni uno que no se sabe (apps/accounts/teams.py).
+    store_ids = models.JSONField(null=True, blank=True, default=None)
     # Soft-delete, igual criterio que Label/User: un documento nunca se
     # destruye de verdad.
     is_active = models.BooleanField(default=True)
@@ -53,6 +65,16 @@ class Document(models.Model):
         verbose_name = "documento"
         verbose_name_plural = "documentos"
         ordering = ["-created_at"]
+
+    @property
+    def download_name(self):
+        """El nombre con que se baja: ``rotulos-<id>.<ext>``. El archivo en
+        disco lleva además una parte al azar (nadie lo puede adivinar en
+        /media/, ver el Caddyfile)."""
+        if not self.file:
+            return None
+        extension = self.file.name.rsplit(".", 1)[-1] if "." in self.file.name else "pdf"
+        return f"rotulos-{self.pk}.{extension}"
 
     def __str__(self):
         return f"{self.name} ({self.user.email})"
@@ -122,10 +144,18 @@ def validar_archivo(archivo):
     return tipo
 
 
+def uploaded_label_path(instance, filename):
+    """``rotulos/AAAA/MM/<al azar>.<ext>``: el nombre original (que suele
+    llevar el del comprador) queda en ``original_filename``, no en disco."""
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    today = timezone.localdate()
+    return f"rotulos/{today:%Y}/{today:%m}/{uuid.uuid4().hex}.{extension}"
+
+
 class UploadedLabelFile(models.Model):
     """Una foto o un PDF de rótulo subido por un usuario para importar."""
 
-    file = models.FileField("archivo", upload_to="rotulos/%Y/%m/")
+    file = models.FileField("archivo", upload_to=uploaded_label_path)
     original_filename = models.CharField(
         "nombre original",
         max_length=255,

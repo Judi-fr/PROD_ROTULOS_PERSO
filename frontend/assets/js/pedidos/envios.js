@@ -1,0 +1,425 @@
+// El envío de cada pedido en "Mis pedidos" (pedidos.html): con qué transportista
+// salió, su número y link de seguimiento, la impresión (rótulo + etiqueta del
+// transportista) y la selección de pedidos para despacharlos juntos. El diálogo
+// de despacho es pedidos/despacho.js.
+//
+// Los transportistas con API (Andreani, Correo Argentino, OCA) salen de
+// GET /api/v1/carriers/ (apps/carriers/views.py): este archivo no nombra a
+// ninguno. Con una cuenta lista, despachar crea el envío y el pedido queda con
+// transportista, número y link cargados solos; sin ninguna, el diálogo ofrece
+// conectar una o cargar el seguimiento a mano (despachar.html).
+//
+// Todo texto que viene de un pedido o de un transportista se inserta con textContent.
+// apiFetch sale de auth.js; showMessage, getErrorMessage y downloadResponse, de utils.js.
+
+window.OrderShipping = (() => {
+  const CARRIERS_API = `${window.APP_CONFIG.API_BASE}/carriers`;
+  const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
+
+  // null = todavía no se sabe; {allowed: false} = el rol no despacha por API;
+  // {allowed: true, carriers: [...]} = GET /carriers/ (cada uno con su cuenta).
+  let account = null;
+  let shipmentsByOrder = new Map();
+  let ordersById = new Map();
+  const selected = new Set();
+  let reloadOrders = async () => {};
+
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  function button(text, className, handler) {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = className;
+    node.textContent = text;
+    node.addEventListener("click", () => handler(node));
+    return node;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transportistas y sus cuentas
+  // ---------------------------------------------------------------------------
+  async function loadAccount() {
+    try {
+      const response = await apiFetch(`${CARRIERS_API}/`);
+      account = response.ok ? { allowed: true, carriers: (await response.json()).results || [] } : { allowed: false };
+    } catch (err) {
+      if (err.isSessionExpired) return;
+      account = { allowed: false };
+    }
+    renderStrip();
+  }
+
+  // Los transportistas con la cuenta cargada, completa y aceptada.
+  function readyCarriers() {
+    return (account?.carriers || []).filter((carrier) => carrier.account.ready);
+  }
+
+  function accountReady() {
+    return Boolean(account?.allowed && readyCarriers().length);
+  }
+
+  function accountPage(carrier) {
+    return `transportista.html?carrier=${encodeURIComponent(carrier.code)}`;
+  }
+
+  // Una línea con cada transportista y el estado de su cuenta: el nombre lleva a
+  // su página (conectar, completar o revisar).
+  function renderStrip() {
+    // Cargar seguimientos tiene su permiso desde la migración 0029.
+    el("trackingImportBtn").hidden = !account?.allowed || !sessionHasPermission("orders.tracking_import");
+    const strip = el("carrierStrip");
+    if (!account?.allowed) {
+      strip.hidden = true;
+      return;
+    }
+    strip.replaceChildren();
+    // Discreta cuando todo anda (una línea gris con los transportistas listos:
+    // es configuración, no trabajo); un aviso solo cuando hay algo que hacer.
+    const ready = readyCarriers();
+    const broken = account.carriers.filter((carrier) => carrier.account.exists && !carrier.account.ready);
+    const unconnected = account.carriers.filter((carrier) => !carrier.account.exists);
+
+    if (!ready.length || broken.length) {
+      const text = document.createElement("span");
+      const links = document.createElement("span");
+      links.className = "carrier-strip-links";
+      if (broken.length) {
+        const names = new Intl.ListFormat("es", { type: "conjunction" }).format(broken.map((carrier) => carrier.name));
+        text.textContent = broken.length === 1
+          ? `La cuenta de ${names} necesita atención: no vas a poder despachar con ese transportista hasta revisarla.`
+          : `Las cuentas de ${names} necesitan atención: no vas a poder despachar con esos transportistas hasta revisarlas.`;
+        broken.forEach((carrier) => {
+          const link = document.createElement("a");
+          link.href = accountPage(carrier);
+          link.textContent = `Revisar ${carrier.name}`;
+          link.title = carrier.account.last_error || (carrier.account.missing || []).join(", ");
+          links.appendChild(link);
+        });
+      } else {
+        text.textContent = "Conectá la cuenta de un transportista para despachar con un clic: el envío y el seguimiento se cargan solos.";
+        unconnected.forEach((carrier) => {
+          const link = document.createElement("a");
+          link.href = accountPage(carrier);
+          link.textContent = `Conectar ${carrier.name}`;
+          links.appendChild(link);
+        });
+      }
+      strip.className = "carrier-strip";
+      strip.append(text, links);
+      strip.hidden = false;
+      return;
+    }
+
+    const label = document.createElement("span");
+    label.className = "carrier-quiet-label";
+    label.textContent = "Despachás con";
+    strip.appendChild(label);
+    ready.forEach((carrier) => {
+      const chip = document.createElement("a");
+      chip.className = "carrier-chip";
+      chip.href = accountPage(carrier);
+      chip.title = `Cuenta de ${carrier.name}`;
+      chip.textContent = carrier.name;
+      strip.appendChild(chip);
+    });
+    const extras = document.createElement("span");
+    extras.className = "carrier-quiet-links";
+    // El precio de los transportistas en el checkout de las tiendas.
+    if (ready.some((carrier) => carrier.supports_checkout)) {
+      const checkout = document.createElement("a");
+      checkout.href = "checkout_transportistas.html";
+      checkout.textContent = "Precio en el checkout";
+      extras.appendChild(checkout);
+    }
+    if (unconnected.length) {
+      const more = document.createElement("a");
+      more.href = accountPage(unconnected[0]);
+      more.textContent = "Conectar otro";
+      more.title = unconnected.map((carrier) => carrier.name).join(", ");
+      extras.appendChild(more);
+    }
+    strip.appendChild(extras);
+    strip.className = "carrier-strip carrier-strip-quiet";
+    strip.hidden = false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Envíos de los pedidos de la página
+  // ---------------------------------------------------------------------------
+  async function prepare(orders) {
+    ordersById = new Map(orders.map((order) => [order.id, order]));
+    shipmentsByOrder = new Map();
+    if (account && !account.allowed) return;
+    try {
+      const response = await apiFetch(`${CARRIERS_API}/shipments/`);
+      if (!response.ok) return;
+      // Vienen del más nuevo al más viejo: por pedido queda el vigente (o el
+      // último, si todos están cancelados).
+      for (const shipment of (await response.json()).results || []) {
+        const current = shipmentsByOrder.get(shipment.order_id);
+        if (!current || (current.status === "cancelled" && shipment.status !== "cancelled")) {
+          shipmentsByOrder.set(shipment.order_id, shipment);
+        }
+      }
+    } catch (err) {
+      if (err.isSessionExpired) return;
+    }
+  }
+
+  function activeShipment(orderId) {
+    const shipment = shipmentsByOrder.get(orderId);
+    return shipment && shipment.status !== "cancelled" ? shipment : null;
+  }
+
+  function isSelectable(order) {
+    return Boolean(order.is_shippable || activeShipment(order.id));
+  }
+
+  // Lo que ve el comerciante del envío: transportista, número con su link y el
+  // último estado que informó el transportista.
+  function shippingLine(order, shipment) {
+    const line = document.createElement("p");
+    line.className = "shipping-line";
+    const carrier = document.createElement("strong");
+    carrier.textContent = order.carrier || "Envío";
+    line.appendChild(carrier);
+    if (order.tracking_number) {
+      line.appendChild(document.createTextNode(" · "));
+      const number = document.createElement(order.tracking_url ? "a" : "span");
+      number.textContent = order.tracking_number;
+      if (order.tracking_url) {
+        number.href = order.tracking_url;
+        number.target = "_blank";
+        number.rel = "noopener noreferrer";
+      }
+      line.appendChild(number);
+    }
+    if (shipment) {
+      const state = document.createElement("span");
+      state.className = `shipment-state ${shipment.status}`;
+      // El texto del transportista suma solo si dice algo más ("Entregado — Entregado"),
+      // y algunos vienen como código pegado ("EnvioDespachado").
+      const carrierText = (shipment.carrier_status || "").replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2").trim();
+      // "Pendiente" tampoco suma: el envío recién creado ya dice que falta entregarlo.
+      state.textContent = shipment.status !== "pending" && carrierText && carrierText.toLowerCase() !== String(shipment.status_label).toLowerCase()
+        ? `${shipment.status_label} — ${carrierText}`
+        : shipment.status_label;
+      line.append(" ", state);
+    }
+    return line;
+  }
+
+  // Avisos debajo de la línea del envío, en palabras del comerciante:
+  // - el pedido figura despachado (lo marcó la tienda, una planilla o
+  //   "Cambiar estado") pero el transportista todavía no recibió el paquete;
+  // - el último intento de actualizar el seguimiento falló. El worker lo
+  //   vuelve a intentar solo, así que va en gris y no como error.
+  const OUT_STATUSES = ["dispatched", "in_transit", "delivered"];
+
+  function shippingNotes(order, shipment) {
+    const notes = [];
+    const carrierName = shipment.carrier_name || order.carrier || "El transportista";
+    if (shipment.status === "pending" && OUT_STATUSES.includes(order.status)) {
+      notes.push({
+        kind: "warning",
+        icon: "warning",
+        text: `Figura como despachado, pero ${carrierName} todavía no recibió el paquete. Cuando lo retire o lo lleves a la sucursal, se actualiza solo.`,
+      });
+    }
+    if (shipment.last_error) {
+      notes.push({
+        kind: "retry",
+        icon: "arrows-clockwise",
+        text: `No se pudo actualizar el seguimiento: ${shipment.last_error} Lo volvemos a intentar solo.`,
+      });
+    }
+    return notes.map(({ kind, icon, text }) => {
+      const note = document.createElement("p");
+      note.className = `shipment-note ${kind}`;
+      const glyph = document.createElement("i");
+      glyph.className = `ph ph-${icon}`;
+      glyph.setAttribute("aria-hidden", "true");
+      const span = document.createElement("span");
+      span.textContent = text;
+      note.append(glyph, span);
+      return note;
+    });
+  }
+
+  function decorate(order, item) {
+    const shipment = activeShipment(order.id);
+    if (isSelectable(order)) {
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "order-select";
+      checkbox.checked = selected.has(order.id);
+      checkbox.setAttribute("aria-label", `Elegir el pedido ${order.external_number || order.id}`);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selected.add(order.id);
+        else selected.delete(order.id);
+        item.classList.toggle("selected", checkbox.checked);
+        renderSelectionBar();
+      });
+      item.classList.toggle("selected", checkbox.checked);
+      item.querySelector(".order-item-header").prepend(checkbox);
+    }
+    if (order.carrier || order.tracking_number || shipment) {
+      const line = shippingLine(order, shipment);
+      item.querySelector(".order-item-header").after(line);
+      if (shipment) line.after(...shippingNotes(order, shipment));
+    }
+
+    const footer = item.querySelector(".order-item-footer");
+    const actions = [];
+    if (shipment) {
+      actions.push(button("Imprimir", "btn btn-outline btn-small", (node) => downloadLabels([shipment], node)));
+      actions.push(button("Actualizar seguimiento", "btn btn-outline btn-small", (node) => refreshShipment(shipment, node)));
+      if (shipment.can_cancel) {
+        actions.push(button("Cancelar envío", "btn-danger-text", (node) => cancelShipment(shipment, node)));
+      }
+    } else if (order.is_shippable) {
+      // Sin envío del transportista: si todavía no salió, despacharlo es lo
+      // que falta hacer (botón principal). Si ya figura despachado (lo marcó
+      // la tienda o se cargó a mano), crear el envío es opcional: solo da
+      // etiqueta y seguimiento automático, así que va como secundario.
+      const pending = order.status === "created" || order.status === "preparing";
+      const action = pending
+        ? button("Despachar", "btn btn-primary btn-small", () => window.OrderDispatch.open([order]))
+        : button("Crear envío", "btn btn-outline btn-small", () => window.OrderDispatch.open([order]));
+      if (!pending) {
+        action.title = "Ya figura despachado. Crear el envío con un transportista te da la etiqueta y el seguimiento automático.";
+      }
+      actions.push(action);
+    }
+    footer.prepend(...actions);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selección
+  // ---------------------------------------------------------------------------
+  function selectedOrders() {
+    return [...selected].map((id) => ordersById.get(id)).filter(Boolean);
+  }
+
+  function renderSelectionBar() {
+    // La selección vale para la página que se ve.
+    for (const id of [...selected]) if (!ordersById.has(id)) selected.delete(id);
+    const orders = selectedOrders();
+    const toDispatch = orders.filter((order) => order.is_shippable && !activeShipment(order.id));
+    const withLabel = orders.filter((order) => activeShipment(order.id));
+    el("selectionBar").hidden = !orders.length;
+    el("selectionCount").textContent = orders.length === 1 ? "1 pedido elegido" : `${orders.length} pedidos elegidos`;
+    el("dispatchSelectedBtn").hidden = !toDispatch.length;
+    el("dispatchSelectedBtn").textContent = `Despachar (${toDispatch.length})`;
+    el("labelsSelectedBtn").hidden = !withLabel.length;
+    el("labelsSelectedBtn").textContent = `Imprimir (${withLabel.length})`;
+    el("manifestSelectedBtn").textContent = `Planilla de retiro (${orders.length})`;
+    el("manifestSelectedBtn").hidden = !sessionHasPermission("orders.manifest");
+  }
+
+  function clearSelection() {
+    selected.clear();
+    document.querySelectorAll(".order-select").forEach((box) => {
+      box.checked = false;
+      box.closest(".order-item")?.classList.remove("selected");
+    });
+    renderSelectionBar();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Imprimir, seguimiento y cancelación
+  // ---------------------------------------------------------------------------
+  // Un solo PDF para mandar a la impresora: por cada envío, nuestro rótulo
+  // (con el número del transportista) y después la etiqueta del transportista.
+  async function downloadLabels(shipments, node) {
+    if (node) node.disabled = true;
+    try {
+      const response = await apiFetch(`${CARRIERS_API}/shipments/print/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shipment_ids: shipments.map((shipment) => shipment.id) }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(getErrorMessage(data, "No se pudo armar el PDF para imprimir."));
+      }
+      await downloadResponse(
+        response,
+        shipments.length === 1 ? `envio-${shipments[0].tracking_number}.pdf` : `envios-${shipments.length}.pdf`
+      );
+    } catch (err) {
+      if (err.isSessionExpired) return;
+      showMessage(err.message || "No se pudo armar el PDF para imprimir.");
+    } finally {
+      if (node) node.disabled = false;
+    }
+  }
+
+  async function refreshShipment(shipment, node) {
+    node.disabled = true;
+    try {
+      const response = await apiFetch(`${CARRIERS_API}/shipments/${shipment.id}/refresh/`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(getErrorMessage(data, "No se pudo consultar el seguimiento."));
+      showMessage(`Envío ${data.tracking_number}: ${data.status_label}.`, "success");
+      await reloadOrders();
+    } catch (err) {
+      if (err.isSessionExpired) return;
+      showMessage(err.message || "No se pudo consultar el seguimiento.");
+      node.disabled = false;
+    }
+  }
+
+  async function cancelShipment(shipment, node) {
+    if (!await appConfirm(`¿Cancelar el envío ${shipment.tracking_number} en ${shipment.carrier_name}? El pedido queda sin seguimiento y se puede volver a despachar.`)) {
+      return;
+    }
+    node.disabled = true;
+    try {
+      const response = await apiFetch(`${CARRIERS_API}/shipments/${shipment.id}/cancel/`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(getErrorMessage(data, "No se pudo cancelar el envío."));
+      showMessage(`Envío ${shipment.tracking_number} cancelado.`, "success");
+      await reloadOrders();
+    } catch (err) {
+      if (err.isSessionExpired) return;
+      showMessage(err.message || "No se pudo cancelar el envío.");
+      node.disabled = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inicio
+  // ---------------------------------------------------------------------------
+  function init(options) {
+    reloadOrders = async () => {
+      await options.reloadOrders();
+      renderSelectionBar();
+    };
+    el("dispatchSelectedBtn").addEventListener("click", () => {
+      window.OrderDispatch.open(selectedOrders().filter((order) => order.is_shippable && !activeShipment(order.id)));
+    });
+    el("labelsSelectedBtn").addEventListener("click", (event) => {
+      downloadLabels(selectedOrders().map((order) => activeShipment(order.id)).filter(Boolean), event.currentTarget);
+    });
+    el("clearSelectionBtn").addEventListener("click", clearSelection);
+    loadAccount();
+  }
+
+  return {
+    init,
+    prepare,
+    decorate,
+    clearSelection,
+    selectedOrders,
+    downloadLabels,
+    account: () => account,
+    accountReady,
+    readyCarriers,
+    accountPage,
+    loadAccount,
+    reload: () => reloadOrders(),
+  };
+})();

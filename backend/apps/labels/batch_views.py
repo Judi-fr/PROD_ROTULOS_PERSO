@@ -15,6 +15,7 @@ el dibujo, solo se decide QUÉ rótulos entran y cómo se empaquetan
 
 from __future__ import annotations
 
+import secrets
 import zipfile
 from io import BytesIO
 
@@ -29,8 +30,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .throttles import BATCH_THROTTLES
-
+from apps.accounts.models import account_settings_for
 from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
@@ -38,8 +38,10 @@ from apps.common.date_filters import date_range_q
 from apps.documents.models import Document
 from apps.documents.serializers import DocumentSerializer
 from apps.orders.models import Order
+from apps.accounts.teams import OUTSIDE_SCOPE_MESSAGE, data_owner, order_scope_q, orders_outside_scope
 
 from .models import Label, LabelTemplate
+from .batch_jobs import queue_batch, should_run_async
 from .zpl import DEFAULT_DPMM, SUPPORTED_DPMM, render_label_zpl
 from .label_rendering import (
     CM_TO_POINTS,
@@ -48,11 +50,12 @@ from .label_rendering import (
     compute_a4_grid,
     draw_label_page,
     render_label_pdf,
+    sender_logo,
 )
 
 VALID_OUTPUTS = {"pdf", "zip", "zpl"}
 VALID_PAGE_LAYOUTS = {"label", "a4"}
-SELECTOR_KEYS = ("order_ids", "label_ids", "filters")
+SELECTOR_KEYS = ("order_ids", "filters")
 
 
 def _as_int_list(value, field_label):
@@ -65,22 +68,15 @@ def _as_int_list(value, field_label):
 
 
 def _render_params_for_item(item, template):
-    """Datos de dibujo para UN ítem del lote (``Label`` u ``Order``), y un
-    nombre legible para identificarlo en el ZIP / en los mensajes de
-    ítems omitidos. Mismo criterio que ``views.LabelViewSet.pdf`` (rótulo
-    propio) y ``views.RenderLabelView`` (plantilla + pedido)."""
-    if isinstance(item, Label):
-        context = build_label_context(order=item.order, label=item) if item.order else {}
-        name_hint = context.get("tracking") or f"rotulo-{item.pk}"
-        return item.design, item.width_cm, item.height_cm, context, (item.logo or None), name_hint
-
+    """Datos de dibujo para UN pedido del lote, y un nombre legible para
+    identificarlo en el ZIP / en los mensajes de ítems omitidos. Mismo criterio
+    que ``views.RenderLabelView`` (plantilla + pedido)."""
     # Order: el diseño sale de la plantilla del lote. El logo, de la tienda
-    # del pedido si la cargó (cada tienda imprime el suyo); un pedido sin
-    # tienda, o una tienda sin logo, sale sin logo como antes.
+    # del pedido si la cargó (cada tienda imprime el suyo), si no el de la
+    # cuenta; sin ninguno de los dos sale sin logo.
     context = build_label_context(order=item)
     name_hint = context.get("tracking") or f"pedido-{item.pk}"
-    store = getattr(item, "store_connection", None)
-    logo_file = getattr(store, "logo", None) or None
+    logo_file = sender_logo(item.user, getattr(item, "store_connection", None))
     return template.design, template.width_cm, template.height_cm, context, logo_file, name_hint
 
 
@@ -349,31 +345,37 @@ class LabelBatchView(APIView):
     """POST /api/v1/labels/batch/
 
     ``{"template_id": N, "order_ids": [...], "output": "pdf"}`` (o
-    ``label_ids``/``filters`` en vez de ``order_ids`` — exactamente una de
-    las tres). Devuelve 202 con el ``Document`` recién creado.
+    ``filters`` en vez de ``order_ids`` — exactamente una de las dos). Devuelve 202 con el ``Document`` recién creado.
 
     ``output``: ``"pdf"`` (uno solo, una página por rótulo), ``"zip"`` (un
     PDF por rótulo) o ``"zpl"`` (un archivo para mandarle crudo a una
     térmica Zebra). Con ``zpl``, ``dpmm`` es la densidad de la impresora
     (8 = 203 dpi por defecto, 12 = 300) y ``page_layout`` se ignora: no hay
     hoja que aprovechar, el rollo ya viene troquelado.
-    """
 
-    # Cada lote ocupa un worker varios segundos: límite propio (ver throttles.py).
-    throttle_classes = BATCH_THROTTLES
+    ``printer_id`` (opcional, ``apps.printing``): en vez de solo dejarlo para
+    descargar, lo manda a esa impresora. El formato y la densidad salen de la
+    impresora (lo que dijeran ``output``/``dpmm`` no aplica) y la respuesta
+    trae ``print_job`` — o ``print_error`` si el lote no salió.
+    """
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.batch")]
 
     def post(self, request):
         data = request.data
+        printer = self._resolve_printer(data_owner(request.user), data.get("printer_id"))
         output = str(data.get("output") or "pdf").strip().lower()
+        if printer is not None:
+            output = printer.format
         if output not in VALID_OUTPUTS:
             raise ValidationError({"output": "Debe ser 'pdf', 'zip' o 'zpl'."})
         # Solo se usa con output="zpl"; se valida igual si vino, para no
         # aceptar en silencio un valor que el usuario creía que aplicaba.
         # None = no lo pidió: más abajo puede salir de la tienda.
         requested_dpmm = _parse_dpmm(data.get("dpmm"), default=None)
+        if printer is not None and printer.dpmm:
+            requested_dpmm = printer.dpmm
 
         page_layout = str(data.get("page_layout") or "label").strip().lower()
         if page_layout not in VALID_PAGE_LAYOUTS:
@@ -392,29 +394,29 @@ class LabelBatchView(APIView):
                 {
                     "detail": (
                         "Elegí exactamente una forma de seleccionar qué imprimir: "
-                        "'order_ids', 'label_ids' o 'filters'."
+                        "'order_ids' o 'filters'."
                     )
                 }
             )
         selector = present[0]
         can_view_all = user_has_permission(request.user, "labels.view_all")
 
-        template = None
-        skipped_existing_count = 0
-        if selector == "label_ids":
-            items = self._resolve_labels(request.user, data["label_ids"], can_view_all)
+        if selector == "order_ids":
+            items, skipped_existing_count = self._resolve_orders(
+                data_owner(request.user), data["order_ids"], can_view_all, skip_existing
+            )
         else:
-            if selector == "order_ids":
-                items, skipped_existing_count = self._resolve_orders(
-                    request.user, data["order_ids"], can_view_all, skip_existing
-                )
-            else:
-                items, skipped_existing_count = self._resolve_orders_by_filters(
-                    request.user, data["filters"], can_view_all, skip_existing
-                )
-            # Después de los pedidos: sin template_id, la plantilla puede
-            # salir de la tienda de esos pedidos (ver _resolve_template).
-            template = self._resolve_template(request.user, data.get("template_id"), items)
+            items, skipped_existing_count = self._resolve_orders_by_filters(
+                data_owner(request.user), data["filters"], can_view_all, skip_existing
+            )
+        # Después de los pedidos: sin template_id, la plantilla puede
+        # salir de la tienda de esos pedidos (ver _resolve_template).
+        template = self._resolve_template(data_owner(request.user), data.get("template_id"), items)
+
+        # Un empleado limitado a algunas tiendas no imprime pedidos de otra,
+        # ni pidiéndolos por id (apps/accounts/teams.py).
+        if not can_view_all and orders_outside_scope(request.user, items):
+            raise ValidationError({"detail": OUTSIDE_SCOPE_MESSAGE})
 
         if not items:
             if skipped_existing_count:
@@ -422,7 +424,7 @@ class LabelBatchView(APIView):
                     {
                         "detail": (
                             f"Los {skipped_existing_count} pedido(s) seleccionados ya tienen "
-                            "un rótulo generado (skip_existing)."
+                            "un rótulo generado."
                         )
                     }
                 )
@@ -444,10 +446,11 @@ class LabelBatchView(APIView):
             )
 
         document = Document.objects.create(
-            user=request.user,
-            name=f"Rótulos {timezone.localdate().strftime('%d/%m')} ({len(items)} envíos)",
+            user=data_owner(request.user),
+            name=f"Rótulos {timezone.localdate().strftime('%d/%m')} ({len(items)} {'envío' if len(items) == 1 else 'envíos'})",
             kind=Document.Kind.LABELS_BATCH,
             status=Document.Status.PROCESSING,
+            store_ids=sorted({order.store_connection_id for order in items if order.store_connection_id}),
         )
         record(
             request,
@@ -463,14 +466,57 @@ class LabelBatchView(APIView):
             },
         )
 
+        # Un lote grande lo genera el worker (batch_jobs.py): la respuesta
+        # sale enseguida con el documento "processing" y queued=true.
+        if should_run_async(len(items)):
+            queue_batch(
+                document,
+                items,
+                template,
+                output,
+                page_layout,
+                skipped_existing_count,
+                dpmm,
+                printer,
+                view_all=user_has_permission(request.user, "labels.view_all"),
+            )
+            payload = DocumentSerializer(document, context={"request": request}).data
+            payload["queued"] = True
+            if printer is not None:
+                payload.update({"print_job": None, "print_error": None})
+            return Response(payload, status=status.HTTP_202_ACCEPTED)
+
         self._run_batch(
             document, items, template, output, page_layout, skipped_existing_count, dpmm
         )
 
-        return Response(
-            DocumentSerializer(document, context={"request": request}).data,
-            status=status.HTTP_202_ACCEPTED,
-        )
+        payload = DocumentSerializer(document, context={"request": request}).data
+        payload["queued"] = False
+        if printer is not None:
+            payload.update(self._queue_for_printer(data_owner(request.user), printer, document))
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
+
+    def _resolve_printer(self, user, printer_id):
+        if printer_id in (None, ""):
+            return None
+        from apps.printing.models import Printer
+
+        printer = Printer.objects.filter(pk=printer_id, owner=user, is_active=True).first()
+        if printer is None:
+            raise ValidationError({"printer_id": "Esa impresora no existe."})
+        return printer
+
+    def _queue_for_printer(self, user, printer, document):
+        from apps.printing.serializers import PrintJobSerializer
+        from apps.printing.services import PrintingError, create_job
+
+        if document.status != Document.Status.READY:
+            return {"print_job": None, "print_error": "El lote no se generó, así que no se mandó a la impresora."}
+        try:
+            job = create_job(user, printer, document)
+        except PrintingError as error:
+            return {"print_job": None, "print_error": str(error)}
+        return {"print_job": PrintJobSerializer(job).data, "print_error": None}
 
     # --- Resolución de la selección ------------------------------------
 
@@ -515,6 +561,13 @@ class LabelBatchView(APIView):
                 preferred = store_templates.pop()
                 if preferred.is_active and (preferred.is_public or preferred.owner_id == user.pk):
                     return preferred
+            # Después, la plantilla preferida de la cuenta (organizacion.html).
+            account = account_settings_for(user)
+            preferred = getattr(account, "default_template", None)
+            if preferred is not None and preferred.is_active and (
+                preferred.is_public or preferred.owner_id == user.pk
+            ):
+                return preferred
             # Sin template_id: cae a la plantilla pública "por defecto"
             # (la más antigua activa — normalmente la sembrada por
             # apps.labels.migrations.0003_seed_default_label_template) en
@@ -545,27 +598,11 @@ class LabelBatchView(APIView):
                 {"template_id": f"La plantilla {template_id!r} no existe o no es tuya."}
             )
 
-    def _resolve_labels(self, user, label_ids, can_view_all):
-        label_ids = _as_int_list(label_ids, "label_ids")
-        queryset = Label.objects.filter(pk__in=label_ids, is_active=True)
-        if not can_view_all:
-            queryset = queryset.filter(user=user)
-        found = {label.pk: label for label in queryset}
-        missing = [str(i) for i in label_ids if i not in found]
-        if missing:
-            raise ValidationError(
-                {
-                    "label_ids": (
-                        f"Los siguientes rótulos no existen o no son tuyos: {', '.join(missing)}."
-                    )
-                }
-            )
-        return [found[i] for i in label_ids]
-
     def _filter_skip_existing(self, orders, skip_existing):
         """Si ``skip_existing``, saca de ``orders`` los que ya tienen un
-        ``Label`` activo asociado (correr el mismo lote dos veces no debe
-        volver a imprimir todo sin avisar). Devuelve ``(orders, cuántos se
+        ``Label`` activo asociado o cuyo rótulo ya salió en un lote, desde la
+        tienda o con la etiqueta del transportista (``labels_printed_at``):
+        correr el mismo lote dos veces no debe volver a imprimir todo sin avisar. Devuelve ``(orders, cuántos se
         saltearon)`` — el llamador decide qué hacer con ese conteo (ver
         ``post``/``_run_batch``, que lo suma al ``error_message`` del
         documento junto con los ítems omitidos por error)."""
@@ -576,6 +613,7 @@ class LabelBatchView(APIView):
             .values_list("order_id", flat=True)
             .distinct()
         )
+        order_ids_with_label |= {o.pk for o in orders if o.labels_printed_at}
         if not order_ids_with_label:
             return orders, 0
         remaining = [o for o in orders if o.pk not in order_ids_with_label]
@@ -605,7 +643,8 @@ class LabelBatchView(APIView):
 
         queryset = Order.objects.select_related("address", "user").all()
         if not can_view_all:
-            queryset = queryset.filter(user=user)
+            # Por filtros, "todos" son los pedidos que la persona ve.
+            queryset = queryset.filter(order_scope_q(self.request.user), user=user)
 
         status_param = str(filters.get("status") or "").strip()
         if status_param:
@@ -641,24 +680,24 @@ class LabelBatchView(APIView):
                 # página): se ignora en silencio, no es un error del
                 # usuario.
                 file_bytes, item_count, skipped = _render_zip(items, template, owner=owner)
-                filename = f"rotulos-{document.pk}.zip"
+                filename = f"rotulos-{document.pk}-{secrets.token_hex(8)}.zip"
             elif output == "zpl":
                 file_bytes, item_count, skipped = _render_combined_zpl(
                     items, template, owner=owner, dpmm=dpmm
                 )
-                filename = f"rotulos-{document.pk}.zpl"
+                filename = f"rotulos-{document.pk}-{secrets.token_hex(8)}.zpl"
             elif page_layout == "a4":
                 file_bytes, item_count, skipped = _render_combined_pdf_a4(items, template, owner=owner)
-                filename = f"rotulos-{document.pk}.pdf"
+                filename = f"rotulos-{document.pk}-{secrets.token_hex(8)}.pdf"
             else:
                 file_bytes, item_count, skipped = _render_combined_pdf(items, template, owner=owner)
-                filename = f"rotulos-{document.pk}.pdf"
+                filename = f"rotulos-{document.pk}-{secrets.token_hex(8)}.pdf"
 
             notes = []
             if skipped_existing_count:
                 notes.append(
                     f"{skipped_existing_count} pedido(s) omitido(s) por ya tener un rótulo "
-                    "generado (skip_existing)."
+                    "generado."
                 )
 
             if item_count == 0:
@@ -679,6 +718,11 @@ class LabelBatchView(APIView):
             if notes:
                 document.error_message = " ".join(notes)
             document.save()
+            # Para el panel: estos pedidos ya tienen rótulo (los saltados por
+            # error también se marcan; su rótulo se reintenta a mano).
+            from apps.orders.print_marks import mark_labels_printed
+
+            mark_labels_printed(item.pk if isinstance(item, Order) else item.order_id for item in items)
         except ValidationError as exc:
             # P.ej. "el rótulo no entra en una hoja A4": un error de
             # generación, no de la solicitud (el Document YA existe) — se

@@ -1,34 +1,31 @@
 """Vistas de plantillas y rótulos.
 
-Mismo criterio que ``apps.orders``: el CRUD propio (``LabelViewSet``) se
-recorta siempre a ``request.user`` y nunca confía en un id que mande el
-cliente; el listado de TODOS los rótulos (``AdminLabelListView``) es un
-endpoint aparte, de solo lectura, con su propio permiso (``labels.view_all``).
+Mismo criterio que ``apps.orders``: todo se recorta siempre al comercio actual y
+nunca confía en un id que mande el cliente.
 """
 
 from __future__ import annotations
 
+import re
 
 from django.core.files.base import ContentFile
-from django.db.models import Prefetch, ProtectedError, Q
+from django.db.models import Max, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.generics import ListAPIView
-from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.pagination import UserAdminPagination
 from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
-from apps.common.date_filters import date_range_q
 from apps.orders.models import Order
+from apps.accounts.teams import NoTeam, data_owner, order_scope_q
 
-from .models import ElementLayout, Label, LabelTemplate, LayoutElement, LayoutVariable
+from .models import LabelImage, LabelSequence, LabelTemplate
 from .label_rendering import (
     BARCODE_HEIGHT_RANGE_CM,
     BARCODE_WIDTH_RANGE_CM,
@@ -44,165 +41,96 @@ from .label_rendering import (
     build_qr_drawing,
     render_code_svg,
     render_label_pdf,
+    sender_logo,
 )
-from .throttles import RENDER_THROTTLES
+from . import label_images
+from .template_versions import record_version, restore_version
+from .thumbnails import refresh_template_thumbnail
 from .zpl import DEFAULT_DPMM, SUPPORTED_DPMM, render_label_zpl
-from .element_layout_render import render_element_layout_pdf, render_element_layout_png
-from .element_layout_render.fonts import FontNotAvailable, available_font_families
 from .serializers import (
-    AdminLabelSerializer,
-    ElementLayoutSerializer,
-    LabelSerializer,
+    LabelImageSerializer,
     LabelTemplateSerializer,
-    LayoutVariableSerializer,
-    RenderElementLayoutSerializer,
+    LabelTemplateVersionSerializer,
 )
 
+ID_RE = re.compile(r"[0-9]{1,18}")
+MAX_IDS_PER_REQUEST = 200
 
-class LabelViewSet(viewsets.ModelViewSet):
-    """CRUD de los rótulos propios del usuario autenticado.
 
-    El borrado es soft-delete (``is_active=False``): un rótulo nunca se
-    destruye de forma permanente, igual que el resto del sistema.
-    """
+class _AnyRolePermission(HasRolePermission):
+    """Alcanza con uno de los permisos."""
 
-    serializer_class = LabelSerializer
+    def __init__(self, *permission_keys):
+        super().__init__(permission_keys[0])
+        self.permission_keys = permission_keys
+
+    def has_permission(self, request, view):
+        for key in self.permission_keys:
+            self.permission_key = key
+            if super().has_permission(request, view):
+                return True
+        return False
+
+
+class LabelImageViewSet(viewsets.ModelViewSet):
+    """Biblioteca de imágenes del comercio actual: listar (activas, sin
+    paginar), subir y ocultar. Mismos permisos que las plantillas."""
+
+    serializer_class = LabelImageSerializer
+    pagination_class = None
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_permissions(self):
-        if self.action == "create":
-            permission = "labels.create"
-        elif self.action == "destroy":
-            permission = "labels.delete"
-        elif self.action in ("update", "partial_update"):
-            permission = "labels.edit"
-        elif self.action == "duplicate":
-            # Duplicar no modifica el original: crea uno nuevo a partir de él.
-            permission = "labels.create"
-        else:
-            permission = "labels.view"
-        return [IsAuthenticated(), HasRolePermission(permission)]
+        if self.action == "destroy":
+            return [IsAuthenticated(), HasRolePermission("labels.template_delete")]
+        if self.action == "list":
+            # Quien edita rótulos guardados tiene que ver las imágenes que
+            # sus diseños usan, aunque no pueda subir ni administrar plantillas.
+            return [IsAuthenticated(), _AnyRolePermission("labels.template_create", "labels.edit")]
+        return [IsAuthenticated(), HasRolePermission("labels.template_create")]
 
     def get_queryset(self):
-        queryset = Label.objects.filter(user=self.request.user, is_active=True).select_related(
-            "template", "order"
-        )
-        # ?search= filtra por nombre o destinatario (frontend/mis_rotulos.html).
-        search = self.request.query_params.get("search", "").strip()
-        if search:
-            queryset = queryset.filter(Q(name__icontains=search) | Q(client__icontains=search))
-        return queryset
+        return LabelImage.objects.filter(owner=data_owner(self.request.user), is_active=True)
 
-    def perform_create(self, serializer):
-        label = serializer.save(user=self.request.user)
-        record(
-            self.request,
-            category="labels",
-            action="label.create",
-            target=label,
-            target_type="label",
-            target_repr=str(label),
-        )
+    def list(self, request, *args, **kwargs):
+        """Sin ``?ids``, las imágenes activas del comercio. Con ``?ids=1,2``,
+        esas filas aunque estén ocultas, siempre que el usuario pueda usarlas
+        (``allowed_image_ids``): el editor dibuja lo que el PDF imprime. Con
+        ``?template=<id>`` también valen las de ese diseño, si puede leerlo."""
+        raw = request.query_params.get("ids")
+        if raw is None:
+            return super().list(request, *args, **kwargs)
+        parts = [part.strip() for part in raw.split(",")]
+        wanted = {int(part) for part in parts if ID_RE.fullmatch(part)}
+        wanted = set(sorted(wanted)[:MAX_IDS_PER_REQUEST])
+        extra = []
+        template_id = request.query_params.get("template", "")
+        if ID_RE.fullmatch(template_id.strip()):
+            template = LabelTemplate.objects.filter(
+                Q(is_public=True) | Q(owner=data_owner(request.user)), pk=int(template_id.strip()), is_active=True
+            ).first()
+            if template is not None:
+                extra.append(template.design)
+        rows = LabelImage.objects.filter(
+            pk__in=wanted & label_images.allowed_image_ids(request.user, extra)
+        ).order_by("pk")
+        return Response(self.get_serializer(rows, many=True).data)
 
-    def perform_update(self, serializer):
-        label = serializer.save()
-        record(
-            self.request,
-            category="labels",
-            action="label.update",
-            target=label,
-            target_type="label",
-            target_repr=str(label),
-        )
-
-    def destroy(self, request, *args, **kwargs):
-        label = self.get_object()
-        label.is_active = False
-        label.save(update_fields=["is_active", "updated_at"])
-        record(
-            request,
-            category="labels",
-            action="label.delete",
-            target=label,
-            target_type="label",
-            target_repr=str(label),
-        )
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    @action(detail=True, methods=["post"])
-    def duplicate(self, request, pk=None):
-        """POST /api/v1/labels/labels/<id>/duplicate/
-
-        Clona el rótulo propio (nueva fila independiente, ``name + " (copia)"``):
-        la forma de "partir de uno anterior" sin perder el original.
-        """
-        original = self.get_object()
-        copy = Label.objects.create(
-            user=original.user,
-            template=original.template,
-            name=f"{original.name} (copia)",
-            client=original.client,
-            order=original.order,
-            width_cm=original.width_cm,
-            height_cm=original.height_cm,
-            design=original.design,
-        )
-        if original.logo:
-            copy.logo.save(
-                original.logo.name.rsplit("/", 1)[-1],
-                ContentFile(original.logo.read()),
-                save=False,
+    def create(self, request, *args, **kwargs):
+        owner = data_owner(request.user)
+        if LabelImage.objects.filter(owner=owner, is_active=True).count() >= label_images.MAX_IMAGES_PER_OWNER:
+            raise ValidationError(
+                f"Llegaste al máximo de {label_images.MAX_IMAGES_PER_OWNER} imágenes. Borrá alguna para subir otra."
             )
-        if original.thumbnail:
-            copy.thumbnail.save(
-                original.thumbnail.name.rsplit("/", 1)[-1],
-                ContentFile(original.thumbnail.read()),
-                save=False,
-            )
-        copy.save()
-        record(
-            request,
-            category="labels",
-            action="label.create",
-            target=copy,
-            target_type="label",
-            target_repr=str(copy),
-            changes={"duplicated_from": {"from": None, "to": original.pk}},
-        )
-        return Response(
-            self.get_serializer(copy).data, status=status.HTTP_201_CREATED
-        )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(owner=owner, created_by=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=["get"], throttle_classes=RENDER_THROTTLES)
-    def pdf(self, request, pk=None):
-        """GET /api/v1/labels/labels/<id>/pdf/
-
-        Rótulo definitivo (el que va a imprenta), armado en el servidor con
-        ``apps.labels.label_rendering`` en vez del PNG/PDF del navegador. Si el
-        rótulo tiene ``order``, los marcadores ``{{clave}}`` del diseño se
-        resuelven con los datos de ese envío.
-        """
-        label = self.get_object()
-        context = build_label_context(order=label.order, label=label)
-        computed = build_computed_context(owner=label.user)
-        pdf_bytes = render_label_pdf(
-            design=label.design,
-            width_cm=label.width_cm,
-            height_cm=label.height_cm,
-            context=context,
-            logo_file=label.logo if label.logo else None,
-            computed=computed,
-        )
-        record(
-            request,
-            category="labels",
-            action="label.render",
-            target=label,
-            target_type="label",
-            target_repr=str(label),
-        )
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="rotulo-{label.pk}.pdf"'
-        return response
+    def perform_destroy(self, instance):
+        # Se oculta, el archivo queda: lo que ya la usa sigue imprimiéndola.
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
 
 
 class LabelTemplateViewSet(viewsets.ModelViewSet):
@@ -218,18 +146,33 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
     serializer_class = LabelTemplateSerializer
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "preview"):
+        if self.action in ("list", "retrieve", "preview", "versions", "version_preview"):
             return [IsAuthenticated()]
+        # Crear y duplicar / editar y restaurar / borrar: tres permisos desde
+        # la migración 0029 (antes los tres eran "labels.template_create").
+        if self.action in ("update", "partial_update", "restore_version"):
+            return [IsAuthenticated(), HasRolePermission("labels.template_edit")]
+        if self.action == "destroy":
+            return [IsAuthenticated(), HasRolePermission("labels.template_delete")]
+        if self.action == "list":
+            # Quien edita rótulos guardados tiene que ver las imágenes que
+            # sus diseños usan, aunque no pueda subir ni administrar plantillas.
+            return [IsAuthenticated(), _AnyRolePermission("labels.template_create", "labels.edit")]
         return [IsAuthenticated(), HasRolePermission("labels.template_create")]
 
     def get_queryset(self):
-        user = self.request.user
+        user = data_owner(self.request.user)
         queryset = LabelTemplate.objects.filter(
             Q(is_public=True) | Q(owner=user), is_active=True
-        )
+        ).annotate(current_version=Max("versions__number"))
         search = self.request.query_params.get("search", "").strip()
         if search:
             queryset = queryset.filter(name__icontains=search)
+        # ?gallery=1: los diseños de "+ Nueva plantilla", en su orden.
+        if self.request.query_params.get("gallery") == "1":
+            queryset = queryset.filter(owner__isnull=True, is_public=True, gallery_order__isnull=False).order_by(
+                "gallery_order"
+            )
         return queryset
 
     def _can_manage_templates(self):
@@ -239,7 +182,12 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
         is_public = bool(serializer.validated_data.get("is_public", False))
         if is_public and not self._can_manage_templates():
             raise PermissionDenied("Solo un administrador puede crear una plantilla pública.")
-        template = serializer.save(owner=self.request.user)
+        template = serializer.save(owner=data_owner(self.request.user))
+        record_version(
+            template, user=self.request.user, note=serializer.validated_data.get("version_note", "")
+        )
+        if "preview" not in serializer.validated_data:
+            refresh_template_thumbnail(template)
         record(
             self.request,
             category="labels",
@@ -249,19 +197,36 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
             target_repr=str(template),
         )
 
-    def perform_update(self, serializer):
-        instance = serializer.instance
-        user = self.request.user
+    def _check_can_edit(self, instance, requested_is_public=None):
+        user = data_owner(self.request.user)
         is_own_private = instance.owner_id == user.id and not instance.is_public
         if not self._can_manage_templates():
             if not is_own_private:
                 raise PermissionDenied("Solo podés editar tus propias plantillas privadas.")
-            requested_is_public = serializer.validated_data.get("is_public", instance.is_public)
             if requested_is_public:
                 raise PermissionDenied(
                     "Solo un administrador puede marcar una plantilla como pública."
                 )
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        self._check_can_edit(
+            instance, serializer.validated_data.get("is_public", instance.is_public)
+        )
         template = serializer.save()
+        # Una versión nueva solo si cambió lo que se dibuja (record_version
+        # compara con la última): marcarla pública no llena el historial.
+        record_version(
+            template, user=self.request.user, note=serializer.validated_data.get("version_note", "")
+        )
+        # La anotación de get_queryset quedó vieja: que el serializer la relea.
+        template.current_version = None
+        # La miniatura se rehace cuando cambia lo que se dibuja (o si no hay),
+        # salvo que el pedido mande su propia imagen.
+        data = serializer.validated_data
+        drawing_changed = any(key in data for key in ("design", "width_cm", "height_cm"))
+        if "preview" not in data and (drawing_changed or not template.preview):
+            refresh_template_thumbnail(template)
         record(
             self.request,
             category="labels",
@@ -276,7 +241,7 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
         ``Label``/``Document`` — los rótulos ya generados con esta
         plantilla siguen apuntándola (``Label.template``)."""
         instance = self.get_object()
-        is_own_private = instance.owner_id == request.user.id and not instance.is_public
+        is_own_private = instance.owner_id == data_owner(request.user).id and not instance.is_public
         if not self._can_manage_templates() and not is_own_private:
             raise PermissionDenied("Solo podés archivar tus propias plantillas privadas.")
         instance.is_active = False
@@ -303,11 +268,17 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
         copy = LabelTemplate.objects.create(
             name=f"{original.name} (copia)",
             description=original.description,
-            owner=request.user,
+            owner=data_owner(request.user),
             is_public=False,
             width_cm=original.width_cm,
             height_cm=original.height_cm,
             design=original.design,
+        )
+        current = original.versions.order_by("-number").values_list("number", flat=True).first()
+        record_version(
+            copy,
+            user=request.user,
+            note=f"Copia de «{original.name}»" + (f" (versión {current})" if current else ""),
         )
         if original.preview:
             copy.preview.save(
@@ -315,6 +286,8 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
                 ContentFile(original.preview.read()),
                 save=True,
             )
+        else:
+            refresh_template_thumbnail(copy)
         record(
             request,
             category="labels",
@@ -328,7 +301,7 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
             self.get_serializer(copy).data, status=status.HTTP_201_CREATED
         )
 
-    @action(detail=True, methods=["get"], throttle_classes=RENDER_THROTTLES)
+    @action(detail=True, methods=["get"])
     def preview(self, request, pk=None):
         """GET /api/v1/labels/templates/<id>/preview/
 
@@ -339,69 +312,147 @@ class LabelTemplateViewSet(viewsets.ModelViewSet):
         resultado real sin necesitar un pedido.
         """
         template = self.get_object()
-        computed = build_computed_context(owner=request.user, is_preview=True)
+        computed = build_computed_context(owner=data_owner(request.user), is_preview=True)
         pdf_bytes = render_label_pdf(
             design=template.design,
             width_cm=template.width_cm,
             height_cm=template.height_cm,
             context=SAMPLE_LABEL_CONTEXT,
             computed=computed,
+            logo_file=sender_logo(data_owner(request.user)),
         )
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'inline; filename="plantilla-{template.pk}-preview.pdf"'
         return response
 
+    @action(detail=True, methods=["get"])
+    def versions(self, request, pk=None):
+        """GET /api/v1/labels/templates/<id>/versions/
 
-class AdminLabelPagination(UserAdminPagination):
-    page_size = 20
+        El historial completo, de la más nueva a la más vieja, con el diseño
+        de cada una (lo necesita la comparación de versiones_plantilla.html).
+        Lo ve quien ve la plantilla."""
+        template = self.get_object()
+        versions = template.versions.select_related("created_by").order_by("-number")
+        return Response(LabelTemplateVersionSerializer(versions, many=True).data)
+
+    def _get_version(self, template, number):
+        return get_object_or_404(template.versions, number=number)
+
+    @action(detail=True, methods=["get"], url_path=r"versions/(?P<number>\d+)/preview")
+    def version_preview(self, request, pk=None, number=None):
+        """GET /api/v1/labels/templates/<id>/versions/<n>/preview/ — el PDF de
+        ejemplo de esa versión, igual que ``preview`` con la actual."""
+        template = self.get_object()
+        version = self._get_version(template, number)
+        pdf_bytes = render_label_pdf(
+            design=version.design,
+            width_cm=version.width_cm,
+            height_cm=version.height_cm,
+            context=SAMPLE_LABEL_CONTEXT,
+            computed=build_computed_context(owner=data_owner(request.user), is_preview=True),
+        )
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'inline; filename="plantilla-{template.pk}-v{version.number}.pdf"'
+        )
+        return response
+
+    @action(detail=True, methods=["post"], url_path=r"versions/(?P<number>\d+)/restore")
+    def restore_version(self, request, pk=None, number=None):
+        """POST /api/v1/labels/templates/<id>/versions/<n>/restore/
+
+        Deja la plantilla como estaba en la versión ``n``, registrado como
+        una versión NUEVA (el historial no se reescribe). Mismos permisos que
+        editarla. Audita ``template.update``."""
+        template = self.get_object()
+        self._check_can_edit(template)
+        version = self._get_version(template, number)
+        previous = template.versions.order_by("-number").values_list("number", flat=True).first()
+        restore_version(template, version, user=request.user)
+        refresh_template_thumbnail(template)
+        record(
+            request,
+            category="labels",
+            action="template.update",
+            target=template,
+            target_type="labeltemplate",
+            target_repr=str(template),
+            changes={"version": {"from": previous, "to": f"restaurada la {version.number}"}},
+        )
+        template = self.get_queryset().get(pk=template.pk)
+        return Response(self.get_serializer(template).data)
 
 
-class AdminLabelListView(ListAPIView):
-    """GET /api/v1/labels/admin/
+SEQUENCE_PADDING_MAX = 12
 
-    Rótulos de TODOS los usuarios para el panel admin (``labels.view_all``).
-    Solo lectura: el queryset de ``LabelViewSet`` (self-service) no cambia,
-    este es un endpoint aparte, igual criterio que ``AdminOrderListView``.
-    """
 
-    serializer_class = AdminLabelSerializer
-    pagination_class = AdminLabelPagination
+class LabelSequenceView(APIView):
+    """GET/PUT /api/v1/labels/sequence/
+
+    La numeración de ``{{secuencia}}`` del usuario (``LabelSequence`` con
+    ``key="default"``, la única que usa el render hoy): ``prefix``,
+    ``padding`` (ceros a la izquierda) y ``next`` (el número que va a llevar
+    el próximo rótulo impreso). ``next`` se guarda como ``current = next - 1``,
+    así el contador sigue siendo el mismo que incrementa
+    ``LabelSequence.next_value``. Bajar ``next`` permite repetir números: es
+    decisión del usuario (p. ej. empezar de nuevo cada año), no se impide."""
 
     def get_permissions(self):
-        return [IsAuthenticated(), HasRolePermission("labels.view_all")]
+        return [IsAuthenticated(), HasRolePermission("labels.edit")]
 
-    def get_queryset(self):
-        queryset = Label.objects.select_related("user", "template", "order").all()
-        params = self.request.query_params
+    @staticmethod
+    def _payload(seq):
+        return {
+            "prefix": seq.prefix,
+            "padding": seq.padding,
+            "next": seq.current + 1,
+            "example": f"{seq.prefix}{seq.current + 1:0{seq.padding}d}",
+        }
 
-        search = params.get("search", "").strip()
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search)
-                | Q(client__icontains=search)
-                | Q(user__email__icontains=search)
+    def get(self, request):
+        seq = LabelSequence.objects.filter(owner=data_owner(request.user), key="default").first()
+        if seq is None:
+            seq = LabelSequence(owner=data_owner(request.user), key="default")
+        return Response(self._payload(seq))
+
+    def put(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        errors = {}
+        prefix = data.get("prefix", "")
+        if not isinstance(prefix, str) or len(prefix.strip()) > 20:
+            errors["prefix"] = "Hasta 20 caracteres."
+        padding, next_value = data.get("padding"), data.get("next")
+        if isinstance(padding, bool) or not isinstance(padding, int) or not 0 <= padding <= SEQUENCE_PADDING_MAX:
+            errors["padding"] = f"Un número entero entre 0 y {SEQUENCE_PADDING_MAX}."
+        if isinstance(next_value, bool) or not isinstance(next_value, int) or next_value < 1:
+            errors["next"] = "Un número entero desde 1."
+        if errors:
+            raise ValidationError(errors)
+
+        seq, _ = LabelSequence.objects.get_or_create(owner=data_owner(request.user), key="default")
+        before = self._payload(seq)
+        seq.prefix = prefix.strip()
+        seq.padding = padding
+        seq.current = next_value - 1
+        seq.save(update_fields=["prefix", "padding", "current", "updated_at"])
+        after = self._payload(seq)
+        changes = {
+            key: {"from": before[key], "to": after[key]}
+            for key in ("prefix", "padding", "next")
+            if before[key] != after[key]
+        }
+        if changes:
+            record(
+                request,
+                category="labels",
+                action="label.update",
+                target=seq,
+                target_type="label_sequence",
+                target_repr=f"Numeración de rótulos ({after['example']})",
+                changes=changes,
             )
-
-        user_param = params.get("user", "").strip()
-        if user_param:
-            if user_param.isdigit():
-                queryset = queryset.filter(user_id=int(user_param))
-            else:
-                queryset = queryset.filter(user__email__icontains=user_param)
-
-        template_param = params.get("template", "").strip()
-        if template_param.isdigit():
-            queryset = queryset.filter(template_id=int(template_param))
-
-        is_active_param = params.get("is_active", "").strip().lower()
-        if is_active_param in ("true", "1"):
-            queryset = queryset.filter(is_active=True)
-        elif is_active_param in ("false", "0"):
-            queryset = queryset.filter(is_active=False)
-
-        queryset = queryset.filter(date_range_q(params))
-
-        return queryset.order_by("-created_at")
+        return Response(after)
 
 
 class PreviewLabelView(APIView):
@@ -421,8 +472,6 @@ class PreviewLabelView(APIView):
     de ``RenderLabelView``, que rinde una plantilla guardada con un pedido
     real.
     """
-
-    throttle_classes = RENDER_THROTTLES
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.render")]
@@ -452,24 +501,85 @@ class PreviewLabelView(APIView):
         logo_file = None
         template_id = request.data.get("template_id")
         if template_id:
+            if not ID_RE.fullmatch(str(template_id).strip()):
+                raise ValidationError({"template_id": "Tiene que ser el número de una plantilla."})
+            template_id = int(str(template_id).strip())
             # El logo es un archivo del servidor, no viaja en el diseño: si
             # el editor está trabajando sobre una plantilla guardada, se usa
             # el de esa plantilla para que la vista previa lo incluya.
             template = LabelTemplate.objects.filter(
-                Q(is_public=True) | Q(owner=request.user), pk=template_id
+                Q(is_public=True) | Q(owner=data_owner(request.user)), pk=template_id
             ).first()
             logo_file = getattr(template, "logo", None) or None
+        else:
+            template = None
+        if not logo_file:
+            # Sin logo propio de la plantilla, el del comercio (remitente).
+            try:
+                logo_file = sender_logo(data_owner(request.user))
+            except NoTeam:  # el admin sin comercio no tiene logo que usar
+                pass
 
+        # Mismo permiso que al guardar: solo imágenes del comercio, de
+        # plantillas públicas o de la plantilla que se está editando.
+        from .design_shapes import image_ids
+
+        used = image_ids(design)
+        if used and used - label_images.allowed_image_ids(
+            request.user, [template.design] if template is not None else []
+        ):
+            raise ValidationError({"design": "Una de las imágenes del diseño no existe en tu comercio."})
+
+        warnings = []
         pdf_bytes = render_label_pdf(
             design,
             dimensions["width_cm"],
             dimensions["height_cm"],
             context=build_preview_context(),
             logo_file=logo_file,
+            warnings=warnings,
         )
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        response["Content-Disposition"] = 'inline; filename="vista-previa.pdf"'
+        if request.data.get("thermal") is True:
+            # Vista térmica del editor: el mismo dibujo en 1 bit a 203 dpi.
+            from .thermal_preview import thermal_png
+
+            response = HttpResponse(thermal_png(pdf_bytes), content_type="image/png")
+        else:
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Disposition"] = 'inline; filename="vista-previa.pdf"'
+        # Avisos del dibujo como "código:ancho mínimo en cm" (hoy, un código
+        # de barras que con el tracking de muestra, de 19 dígitos, no entra
+        # legible en su recuadro). El editor los traduce a un mensaje.
+        if warnings:
+            response["X-Label-Warnings"] = ",".join(
+                "%s:%s" % (warning["code"], warning.get("min_width_cm", warning.get("field", ""))) for warning in warnings
+            )
         return response
+
+
+class PreviewContextView(APIView):
+    """GET /api/v1/labels/preview-context/
+
+    Los datos de muestra que usa la vista previa, para que el lienzo del
+    editor muestre el mismo texto que el PDF: ``context`` (datos del envío)
+    y ``computed`` (variables calculadas, ya resueltas). Sin sesión de
+    comercio ``data_owner`` responde 403 ``no_team`` como el resto."""
+
+    COMPUTED_KEYS = ("fecha", "hora", "fecha_hora", "secuencia", "bulto", "bultos", "bulto_de_bultos")
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasRolePermission("labels.render")]
+
+    def get(self, request):
+        resolver = build_computed_context(
+            owner=data_owner(request.user), is_preview=True, bulto=1, bultos=2
+        )
+        return Response(
+            {
+                "context": build_preview_context(),
+                "computed": {key: resolver(key) or "" for key in self.COMPUTED_KEYS},
+            }
+        )
 
 
 class RenderLabelView(APIView):
@@ -488,8 +598,6 @@ class RenderLabelView(APIView):
     correspondan, así que errarle no rompe nada pero saca la etiqueta a
     otra escala. Ver ``apps.labels.zpl``.
     """
-
-    throttle_classes = RENDER_THROTTLES
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("labels.render")]
@@ -510,7 +618,7 @@ class RenderLabelView(APIView):
             )
 
         template = get_object_or_404(
-            LabelTemplate.objects.filter(Q(is_public=True) | Q(owner=request.user)),
+            LabelTemplate.objects.filter(Q(is_public=True) | Q(owner=data_owner(request.user))),
             pk=template_id,
         )
 
@@ -520,7 +628,7 @@ class RenderLabelView(APIView):
         if user_has_permission(request.user, "labels.view_all"):
             order_qs = Order.objects.all()
         else:
-            order_qs = Order.objects.filter(user=request.user)
+            order_qs = Order.objects.filter(order_scope_q(request.user), user=data_owner(request.user))
         order = get_object_or_404(
             order_qs.select_related("address", "user"), pk=order_id
         )
@@ -533,7 +641,7 @@ class RenderLabelView(APIView):
         # /labels/render/ es una vista previa sin persistir (ver el
         # docstring de la clase): no consume la numeración secuencial real,
         # el flag es explícito acá, no se adivina del request.
-        computed = build_computed_context(owner=request.user, is_preview=True)
+        computed = build_computed_context(owner=data_owner(request.user), is_preview=True)
 
         if output_format == "zpl":
             content = render_label_zpl(
@@ -657,220 +765,3 @@ class BarcodeImageView(APIView):
 
         svg = render_code_svg(drawing)
         return HttpResponse(svg, content_type="image/svg+xml")
-
-# ---------------------------------------------------------------------------
-# ElementLayout/LayoutElement/LayoutVariable: plantillas por elementos +
-# catálogo de variables, adaptadas al sistema de roles/permisos del backend.
-# ---------------------------------------------------------------------------
-
-
-class AvailableFontsView(APIView):
-    """GET /api/v1/labels/fonts/
-
-    Familias tipográficas que el editor puede ofrecer. La disponibilidad
-    depende de la máquina: el PDF sale siempre, pero el PNG necesita un
-    ``.ttf`` instalado.
-    """
-
-    def get_permissions(self):
-        return [IsAuthenticated(), HasRolePermission("plantillas.view")]
-
-    def get(self, request):
-        return Response(available_font_families())
-
-
-class LayoutVariableViewSet(viewsets.ModelViewSet):
-    """CRUD del catálogo de variables que puede contener un rótulo.
-
-    Leer el catálogo lo puede hacer cualquier usuario autenticado (el editor
-    lo necesita para armar sus selectores); modificarlo queda reservado a
-    administradores (``variables.manage``), porque es un recurso compartido
-    por todas las plantillas.
-    """
-
-    serializer_class = LayoutVariableSerializer
-    pagination_class = None
-
-    def get_permissions(self):
-        if self.request.method in SAFE_METHODS:
-            return [IsAuthenticated(), HasRolePermission("variables.view")]
-        return [IsAuthenticated(), HasRolePermission("variables.manage")]
-
-    def get_queryset(self):
-        queryset = LayoutVariable.objects.select_related("created_by")
-        if self.action == "list":
-            include_inactive = self.request.query_params.get("incluir_inactivas")
-            if include_inactive not in ("1", "true", "True"):
-                queryset = queryset.filter(is_active=True)
-        return queryset
-
-    def perform_create(self, serializer):
-        variable = serializer.save(created_by=self.request.user)
-        record(
-            self.request,
-            category="labels",
-            action="variable_rotulo.create",
-            target=variable,
-            target_type="variablerotulo",
-            target_repr=str(variable),
-        )
-
-    def perform_update(self, serializer):
-        variable = serializer.save()
-        record(
-            self.request,
-            category="labels",
-            action="variable_rotulo.update",
-            target=variable,
-            target_type="variablerotulo",
-            target_repr=str(variable),
-        )
-
-    def destroy(self, request, *args, **kwargs):
-        """Elimina una variable, salvo que sea del sistema o esté en uso."""
-        variable = self.get_object()
-
-        if variable.is_system:
-            return Response(
-                {
-                    "detail": "Las variables del sistema no se pueden eliminar. "
-                    "Si no se usa, marcala como inactiva."
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        # Se captura antes de borrar: tras el delete(), la instancia pierde
-        # su pk y ya no sirve como ``target`` de record().
-        target_id = str(variable.pk)
-        target_repr = str(variable)
-
-        try:
-            variable.delete()
-        except ProtectedError:
-            return Response(
-                {
-                    "detail": "La variable está en uso en alguna plantilla. "
-                    "Marcala como inactiva en lugar de eliminarla."
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        record(
-            request,
-            category="labels",
-            action="variable_rotulo.delete",
-            target_type="variablerotulo",
-            target_id=target_id,
-            target_repr=target_repr,
-        )
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class ElementLayoutViewSet(viewsets.ModelViewSet):
-    """CRUD de plantillas de rótulos por elementos.
-
-    Self-service: cada usuario opera sobre SUS propias plantillas
-    (``created_by``). Leer/renderizar exige ``plantillas.view``; escribir
-    exige ``plantillas.edit``.
-    """
-
-    serializer_class = ElementLayoutSerializer
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve", "render"):
-            return [IsAuthenticated(), HasRolePermission("plantillas.view")]
-        return [IsAuthenticated(), HasRolePermission("plantillas.edit")]
-
-    def get_queryset(self):
-        return (
-            ElementLayout.objects.filter(created_by=self.request.user)
-            .select_related("created_by")
-            .prefetch_related(
-                Prefetch(
-                    "elements",
-                    queryset=LayoutElement.objects.select_related("variable"),
-                )
-            )
-        )
-
-    def perform_create(self, serializer):
-        layout = serializer.save(created_by=self.request.user)
-        record(
-            self.request,
-            category="labels",
-            action="plantilla.create",
-            target=layout,
-            target_type="plantilla",
-            target_repr=str(layout),
-        )
-
-    def perform_update(self, serializer):
-        layout = serializer.save()
-        record(
-            self.request,
-            category="labels",
-            action="plantilla.update",
-            target=layout,
-            target_type="plantilla",
-            target_repr=str(layout),
-        )
-
-    def perform_destroy(self, instance):
-        # Se captura antes de borrar: tras el delete(), la instancia pierde
-        # su pk y ya no sirve como ``target`` de record().
-        target_id = str(instance.pk)
-        target_repr = str(instance)
-        instance.delete()
-        record(
-            self.request,
-            category="labels",
-            action="plantilla.delete",
-            target_type="plantilla",
-            target_id=target_id,
-            target_repr=target_repr,
-        )
-
-    @action(detail=True, methods=["post"], throttle_classes=RENDER_THROTTLES)
-    def render(self, request, pk=None):
-        """POST /api/v1/labels/element-layouts/<id>/render/
-
-        Convierte un diseño guardado en algo que se pega en un paquete:
-        ``{"datos": {...}}`` un rótulo, ``{}`` vista previa, o
-        ``{"lote": [{...}, ...]}`` un PDF de varias páginas.
-        """
-        layout = self.get_object()
-        input_serializer = RenderElementLayoutSerializer(data=request.data)
-        input_serializer.is_valid(raise_exception=True)
-        options = input_serializer.validated_data
-
-        try:
-            if options["format"] == "png":
-                content, report = render_element_layout_png(
-                    layout,
-                    data=options.get("data"),
-                    user=request.user,
-                    dpi=options.get("dpi"),
-                )
-                content_type, extension = "image/png", "png"
-            else:
-                content, report = render_element_layout_pdf(
-                    layout,
-                    data=options.get("data"),
-                    user=request.user,
-                    batch=options.get("batch"),
-                )
-                content_type, extension = "application/pdf", "pdf"
-        except FontNotAvailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_501_NOT_IMPLEMENTED)
-
-        response = HttpResponse(content, content_type=content_type)
-        response["Content-Disposition"] = (
-            f'attachment; filename="rotulo-{layout.pk}.{extension}"'
-        )
-        if report["missing"]:
-            response["X-Layout-Missing"] = ",".join(report["missing"])
-        if report["truncated"]:
-            response["X-Layout-Truncated"] = ",".join(report["truncated"])
-        if report["warnings"]:
-            response["X-Layout-Warnings"] = ",".join(report["warnings"])
-        return response

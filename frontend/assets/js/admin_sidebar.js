@@ -12,48 +12,69 @@
       id: "dashboard",
       href: "dashboard.html",
       label: "Panel",
-      icon: `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" />`,
+      icon: "house-simple",
     },
     {
       id: "users",
       href: "gestionuser.html",
       label: "Usuarios",
-      icon: `<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />`,
+      icon: "users",
       visible: () => canViewUsers(),
     },
     {
       id: "roles",
       href: "roles.html",
       label: "Roles",
-      icon: `<path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z" />`,
+      icon: "shield-check",
       visible: () => isAdminMode(),
     },
     {
       id: "settings",
-      href: "perfil.html",
+      href: "organizacion.html",
       label: "Ajustes",
-      icon: `<circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 0 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />`,
+      icon: "gear-six",
     },
     {
       id: "audit",
       href: "auditoria.html",
       label: "Registros de auditoría",
-      icon: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" />`,
+      icon: "file-text",
       visible: () => canUseUserPermission("audit.view"),
     },
     {
       id: "support",
       href: "soporte_admin.html",
       label: "Mensajes de soporte",
-      icon: `<circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />`,
+      icon: "chats",
       visible: () => canUseUserPermission("support.view_all"),
+    },
+    {
+      id: "closed_teams",
+      href: "comercios_baja.html",
+      label: "Comercios dados de baja",
+      icon: "archive",
+      visible: () => canViewUsers(),
+    },
+    {
+      id: "catalogs",
+      href: "catalogos.html",
+      label: "Catálogos",
+      icon: "book-open-text",
+      visible: () => canUseUserPermission("catalogs.manage"),
+    },
+    {
+      id: "monitoring",
+      href: "estado_sistema.html",
+      label: "Estado del sistema",
+      icon: "pulse",
+      visible: () => canUseUserPermission("monitoring.view"),
     },
     {
       id: "reports",
       href: "reportes.html",
       label: "Reportes",
-      icon: `<line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />`,
-      visible: () => canViewUsers(),
+      icon: "chart-bar",
+      visible: () => canUseUserPermission("reports.view"),
     },
   ];
 
@@ -67,10 +88,8 @@
       .map(
         (item) => `
         <li>
-          <a href="${item.href}" class="${item.id === active ? "active" : ""}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              ${item.icon}
-            </svg>
+          <a href="${item.href}" class="${item.id === active ? "active" : ""}" data-nav="${item.id}">
+            <i class="ph ph-${item.icon}" aria-hidden="true"></i>
             ${item.label}
           </a>
         </li>`
@@ -80,15 +99,8 @@
     container.innerHTML = `
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#ffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
-          </span>
-          Administradores
+          <img class="brand-mark" src="assets/images/favicon.svg" alt="" width="30" height="30" />
+          <span class="brand-text">Rótulos<small>Administración</small></span>
         </div>
         <ul class="nav">
           ${itemsHtml}
@@ -97,5 +109,59 @@
     `;
   }
 
-  document.addEventListener("DOMContentLoaded", renderAdminSidebar);
+  // Un punto rojo (error) o ámbar (advertencia) en "Estado del sistema" cuando
+  // algo falla, para que el admin no dependa solo del mail de alerta. Lee la
+  // sonda pública /health/system/ (sin detalles), a lo sumo una vez por minuto
+  // por pestaña.
+  const HEALTH_CACHE_KEY = "adminSystemHealth";
+  const HEALTH_CACHE_MS = 60 * 1000;
+
+  async function systemHealth() {
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(HEALTH_CACHE_KEY) || "null");
+      if (cached && Date.now() - cached.at < HEALTH_CACHE_MS) return cached.data;
+    } catch {
+      // Sin sessionStorage se pregunta cada vez.
+    }
+    const response = await fetch(`${window.APP_CONFIG.API_BASE}/health/system/`);
+    const data = await response.json();
+    try {
+      sessionStorage.setItem(HEALTH_CACHE_KEY, JSON.stringify({ at: Date.now(), data }));
+    } catch {
+      // Idem.
+    }
+    return data;
+  }
+
+  async function markSystemHealth() {
+    const link = document.querySelector('#adminSidebar a[data-nav="monitoring"]');
+    if (!link) return;
+    let data;
+    try {
+      data = await systemHealth();
+    } catch {
+      return;
+    }
+    link.querySelector(".nav-alert")?.remove();
+    if (!data || !["error", "warning"].includes(data.status)) return;
+    const failing = Object.values(data.checks || {}).filter((value) => value === data.status).length;
+    const dot = document.createElement("span");
+    dot.className = `nav-alert nav-alert-${data.status}`;
+    const label =
+      data.status === "error"
+        ? `${failing || "Un"} chequeo${failing === 1 ? "" : "s"} con error`
+        : `${failing || "Un"} chequeo${failing === 1 ? "" : "s"} con advertencia`;
+    dot.title = label;
+    dot.setAttribute("aria-label", label);
+    link.appendChild(dot);
+  }
+
+  function renderAndMark() {
+    renderAdminSidebar();
+    markSystemHealth();
+  }
+
+  document.addEventListener("DOMContentLoaded", renderAndMark);
+  // auth.js releyó los permisos y cambiaron: la barra muestra lo que corresponde.
+  window.addEventListener("auth:user-updated", renderAndMark);
 })();

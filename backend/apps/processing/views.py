@@ -12,6 +12,7 @@ from apps.audit.services import record
 from . import agent
 from .models import LabelImport, LabelImportStatus
 from .serializers import LabelImportSerializer
+from .to_template import proposal_to_template
 
 
 class LabelImportThrottle(UserRateThrottle):
@@ -24,22 +25,6 @@ class LabelImportThrottle(UserRateThrottle):
     scope = "importacion_rotulo"
 
 
-class LabelImportDailyThrottle(UserRateThrottle):
-    """Tope diario por usuario de llamadas al modelo.
-
-    El de minuto solo frena ráfagas: 20/min sostenido son casi 29.000 lecturas
-    por día, que con una cuenta robada o un abuso es mucha plata. El techo real
-    de gasto igual es el límite mensual de la consola de Anthropic.
-    """
-
-    scope = "label_import_daily"
-
-
-# Acciones que llaman al modelo: las únicas que pasan por los límites propios.
-# Listar o ver una lectura ya hecha no cuesta nada y no debe gastar el cupo.
-MODEL_CALLING_ACTIONS = {"create", "retry"}
-
-
 class LabelImportViewSet(
     mixins.CreateModelMixin,
     mixins.ListModelMixin,
@@ -49,19 +34,15 @@ class LabelImportViewSet(
     """Lectura de un rótulo desde una foto o un PDF ya subido.
 
     ``POST`` con ``{"uploaded_file": <id>}`` procesa el archivo y devuelve la
-    plantilla **propuesta**. No la guarda: el usuario la revisa en el editor y
-    después la manda él mismo a ``POST /api/v1/labels/element-layouts/``.
+    plantilla **propuesta**. No la guarda: el usuario la revisa y la abre en
+    el editor de rótulos (``GET <id>/template/``, una plantilla nueva).
 
     No hay ``update`` ni ``destroy``: una lectura es un hecho registrado, no
     algo que se edite.
     """
 
     serializer_class = LabelImportSerializer
-
-    def get_throttles(self):
-        if self.action in MODEL_CALLING_ACTIONS:
-            return [LabelImportThrottle(), LabelImportDailyThrottle()]
-        return super().get_throttles()
+    throttle_classes = [LabelImportThrottle]
 
     def get_permissions(self):
         return [IsAuthenticated(), HasRolePermission("processing.import")]
@@ -95,6 +76,19 @@ class LabelImportViewSet(
             else status.HTTP_502_BAD_GATEWAY
         )
         return Response(output.data, status=code)
+
+    # Sin el límite de importaciones: no llama al modelo, solo traduce lo leído.
+    @action(detail=True, methods=["get"], throttle_classes=[])
+    def template(self, request, pk=None):
+        """La lectura como plantilla del editor de rótulos (``to_template``),
+        para abrirla en editor_rotulos.html. No guarda nada."""
+        label_import = self.get_object()
+        if not label_import.proposal:
+            return Response(
+                {"detail": "Esta importación todavía no tiene una lectura para abrir."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(proposal_to_template(label_import.proposal))
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):

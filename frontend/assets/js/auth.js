@@ -1,4 +1,4 @@
-// Sesión compartida del frontend: acceso a los tokens, apiFetch con
+// Sesión compartida del frontend: quién está logueado, apiFetch con
 // renovación automática del access token vía refresh (en vez de expulsar al
 // usuario en cualquier 401) y logout. Se carga como script CLÁSICO antes que
 // el script propio de cada página, porque casi todo el frontend son scripts
@@ -20,31 +20,107 @@
   const CHANGE_PASSWORD_URL = SCRIPT_URL
     ? new URL("../../cambiar-password.html", SCRIPT_URL).href
     : "cambiar-password.html";
+  const TEAM_START_URL = SCRIPT_URL
+    ? new URL("../../comercio_inicio.html", SCRIPT_URL).href
+    : "comercio_inicio.html";
+
+  // Páginas que se usan sin comercio: un `no_team` ahí no redirige.
+  const NO_TEAM_PAGES = /\/(comercio_inicio|unirse|invitaciones|organizacion|ayuda|index|register|logoutpage)\.html$/;
 
   const AUTH_BASE = `${window.APP_CONFIG.API_BASE}/auth`;
   const REFRESH_URL = `${AUTH_BASE}/refresh/`;
   const LOGOUT_URL = `${AUTH_BASE}/logout/`;
+  const ME_URL = `${AUTH_BASE}/me/`;
+  const TEAM_SWITCH_URL = `${window.APP_CONFIG.API_BASE}/team/switch/`;
 
-  function getAccessToken() {
-    return localStorage.getItem("access") || "";
+  // La sesión viaja en cookies HttpOnly que pone el backend
+  // (backend/apps/accounts/auth_cookies.py): este código nunca ve los tokens.
+  // Cada request a la API va con `credentials: "include"` (la API es otro
+  // origen en desarrollo) y con X-Auth-Mode: cookie, que le dice al backend
+  // que use cookies en vez de devolver los tokens en el JSON — y que además
+  // es la defensa contra requests falsificados desde otro sitio.
+  // En localStorage solo queda `user` (nombre, rol, permisos: no es secreto),
+  // que es también la marca de "hay sesión" para las páginas.
+  const AUTH_MODE_HEADERS = { "X-Auth-Mode": "cookie" };
+
+  // Una persona puede estar en varios comercios. Cada pestaña trabaja en el
+  // suyo (sessionStorage) y lo manda en X-Team-Id; una pestaña nueva arranca
+  // en el último que se usó (localStorage). El backend valida que sea suyo.
+  // El `user` (permisos del comercio, rol, etc.) se guarda igual: por
+  // pestaña, y el último también para las pestañas nuevas.
+  function readStorage(storage, key) {
+    try {
+      return storage.getItem(key);
+    } catch {
+      return null;
+    }
   }
 
-  function getRefreshToken() {
-    return localStorage.getItem("refresh") || "";
+  function writeStorage(storage, key, value) {
+    try {
+      if (value === null || value === undefined) storage.removeItem(key);
+      else storage.setItem(key, value);
+    } catch {
+      // Sin almacenamiento la app sigue andando con el comercio por defecto.
+    }
+  }
+
+  function getCurrentTeamId() {
+    return readStorage(sessionStorage, "teamId") || readStorage(localStorage, "lastTeamId") || "";
+  }
+
+  function setCurrentTeamId(teamId) {
+    const value = teamId ? String(teamId) : null;
+    writeStorage(sessionStorage, "teamId", value);
+    if (value) writeStorage(localStorage, "lastTeamId", value);
+  }
+
+  function withSession(options = {}) {
+    const teamId = getCurrentTeamId();
+    return {
+      ...options,
+      credentials: "include",
+      headers: {
+        ...(options.headers || {}),
+        ...AUTH_MODE_HEADERS,
+        ...(teamId ? { "X-Team-Id": teamId } : {}),
+      },
+    };
   }
 
   function getCurrentUser() {
     try {
-      return JSON.parse(localStorage.getItem("user") || "{}");
+      return JSON.parse(readStorage(sessionStorage, "user") || readStorage(localStorage, "user") || "{}");
     } catch {
       return {};
     }
   }
 
+  // Si hay sesión, del lado de esta página: el backend la confirma en cada
+  // request (y apiFetch manda al login si no).
+  function hasSession() {
+    return Boolean(getCurrentUser().id);
+  }
+
+  // Lo que hace cada login (index.html, register.html) con la respuesta: las
+  // cookies ya las dejó el navegador; acá solo se guarda quién es.
+  function saveSession(user) {
+    const value = JSON.stringify(user || {});
+    writeStorage(sessionStorage, "user", value);
+    localStorage.setItem("user", value);
+    // El comercio que el backend resolvió para esta pestaña.
+    if (user && user.team) setCurrentTeamId(user.team.id);
+    else if (user && user.id) writeStorage(sessionStorage, "teamId", null);
+  }
+
   function clearSession() {
+    writeStorage(sessionStorage, "user", null);
+    writeStorage(sessionStorage, "teamId", null);
+    writeStorage(localStorage, "lastTeamId", null);
+    localStorage.removeItem("user");
+    // Restos de cuando los tokens vivían acá.
     localStorage.removeItem("access");
     localStorage.removeItem("refresh");
-    localStorage.removeItem("user");
   }
 
   function redirectToLogin() {
@@ -53,29 +129,22 @@
 
   // Una sola renovación concurrente: si varias llamadas reciben 401 al mismo
   // tiempo, todas esperan esta misma promesa en vez de disparar un refresh
-  // cada una. Se guarda en el módulo (closure) y se limpia al terminar.
+  // cada una. El refresh viaja en su cookie; el backend devuelve las dos
+  // cookies nuevas (rotación).
   let refreshPromise = null;
 
-  function refreshSession() {
+  function refreshSession(body = {}) {
     if (refreshPromise) return refreshPromise;
 
-    const refresh = getRefreshToken();
-    if (!refresh) return Promise.resolve(false);
-
-    refreshPromise = fetch(REFRESH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh }),
-    })
-      .then(async (response) => {
-        if (!response.ok) return false;
-        const data = await response.json().catch(() => ({}));
-        if (!data.access) return false;
-        localStorage.setItem("access", data.access);
-        // Con ROTATE_REFRESH_TOKENS el backend manda un refresh nuevo.
-        if (data.refresh) localStorage.setItem("refresh", data.refresh);
-        return true;
+    refreshPromise = fetch(
+      REFRESH_URL,
+      withSession({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       })
+    )
+      .then((response) => response.ok)
       .catch(() => false)
       .finally(() => {
         refreshPromise = null;
@@ -84,24 +153,28 @@
     return refreshPromise;
   }
 
-  // apiFetch(url, options):
-  // - Agrega Authorization: Bearer <access>.
-  // - Ante un 401, intenta UNA renovación del access token y reintenta la
-  //   request original una sola vez. Si el refresh falla (o no hay refresh
-  //   guardado), recién ahí limpia la sesión y redirige al login. Un 401 en
-  //   la propia llamada de refresh nunca reintenta (evita el bucle).
-  // - Ante un 403 con must_change_password, redirige a cambiar-password.html
-  //   (comportamiento previo, sin cambios).
-  async function apiFetch(url, options = {}) {
-    const isRefreshCall = url === REFRESH_URL;
+  // Una sesión de antes del cambio tiene los tokens en localStorage: se
+  // canjea UNA vez su refresh por las cookies y se borran de acá, así nadie
+  // tiene que volver a loguearse.
+  const legacyRefresh = localStorage.getItem("refresh");
+  const migration = legacyRefresh
+    ? refreshSession({ refresh: legacyRefresh }).finally(() => {
+        localStorage.removeItem("access");
+        localStorage.removeItem("refresh");
+      })
+    : Promise.resolve();
 
-    const doFetch = () => {
-      const headers = {
-        ...(options.headers || {}),
-        Authorization: `Bearer ${getAccessToken()}`,
-      };
-      return fetch(url, { ...options, headers });
-    };
+  // apiFetch(url, options):
+  // - Manda las cookies de sesión (withSession).
+  // - Ante un 401, intenta UNA renovación y reintenta la request original
+  //   una sola vez. Si el refresh falla, recién ahí limpia la sesión y
+  //   redirige al login. Un 401 en la propia llamada de refresh nunca
+  //   reintenta (evita el bucle).
+  // - Ante un 403 con must_change_password, redirige a cambiar-password.html.
+  async function apiFetch(url, options = {}) {
+    await migration;
+    const isRefreshCall = url === REFRESH_URL;
+    const doFetch = () => fetch(url, withSession(options));
 
     let response = await doFetch();
 
@@ -127,40 +200,92 @@
         pendingError.isSessionExpired = true;
         throw pendingError;
       }
+      // Sin comercio: a crear uno o sumarse, salvo en las páginas que se
+      // usan sin comercio (ahí la página muestra lo que corresponda).
+      if (body && body.code === "no_team" && !NO_TEAM_PAGES.test(window.location.pathname)) {
+        window.location.replace(TEAM_START_URL);
+        const noTeamError = new Error("Sin comercio");
+        noTeamError.isSessionExpired = true;
+        throw noTeamError;
+      }
     }
 
     return response;
   }
 
-  // Invalida el refresh token en el backend (best-effort), limpia la sesión
-  // local y redirige al login. Mismo flujo que estaba duplicado en cada
-  // página (dashboard.js, pedidos.js, usuarios.js, ...).
+  // Cambia el comercio de ESTA pestaña: el backend lo guarda como el último
+  // usado y devuelve el usuario visto desde él; después se recarga la página
+  // (todo lo que muestra es del comercio anterior).
+  async function switchTeam(teamId) {
+    const response = await apiFetch(TEAM_SWITCH_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Team-Id": String(teamId) },
+      body: JSON.stringify({ team_id: teamId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "No se pudo cambiar de comercio.");
+    saveSession(data.user);
+    window.location.reload();
+  }
+
+  // Revoca el refresh en el backend y borra las cookies (best-effort), limpia
+  // lo local y redirige al login.
   async function logout() {
-    const refresh = getRefreshToken();
-    if (refresh) {
-      try {
-        await fetch(LOGOUT_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${getAccessToken()}`,
-          },
-          body: JSON.stringify({ refresh }),
-        });
-      } catch (err) {
-        console.warn("No se pudo invalidar el refresh token en el backend:", err);
-      }
+    try {
+      // Por apiFetch: si el access ya venció, renueva y revoca igual.
+      await apiFetch(LOGOUT_URL, { method: "POST" });
+    } catch (err) {
+      if (!err.isSessionExpired) console.warn("No se pudo cerrar la sesión en el backend:", err);
     }
     clearSession();
     redirectToLogin();
   }
 
+  // Los permisos se guardan al iniciar sesión: si el admin cambia un rol en
+  // roles.html (o una migración agrega un permiso), la sesión no se enteraba
+  // hasta volver a entrar y la pantalla ofrecía de más o de menos. Al abrir
+  // una página se releen de me/ en segundo plano, como mucho cada 2 minutos;
+  // si cambiaron se avisa con "auth:user-updated" (la barra del admin se
+  // redibuja). En el login y el registro no: ahí no hay sesión que refrescar.
+  const USER_REFRESH_MS = 2 * 60 * 1000;
+  const NO_REFRESH_PAGES = /\/(index|register|logoutpage)\.html$|\/$/;
+
+  function refreshStoredUser() {
+    if (!hasSession() || NO_REFRESH_PAGES.test(window.location.pathname)) return;
+    let last = 0;
+    try {
+      last = Number(sessionStorage.getItem("userCheckedAt") || 0);
+      if (Date.now() - last < USER_REFRESH_MS) return;
+      sessionStorage.setItem("userCheckedAt", String(Date.now()));
+    } catch {
+      // Sin sessionStorage se relee en cada página: sigue funcionando.
+    }
+    apiFetch(ME_URL)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((fresh) => {
+        const stored = getCurrentUser();
+        if (!fresh || String(fresh.id) !== String(stored.id)) return;
+        const merged = { ...stored, ...fresh };
+        if (JSON.stringify(merged) === JSON.stringify(stored)) return;
+        saveSession(merged);
+        window.dispatchEvent(new CustomEvent("auth:user-updated", { detail: merged }));
+      })
+      .catch(() => {});
+  }
+
   window.Auth = {
-    getAccessToken,
-    getRefreshToken,
+    hasSession,
+    saveSession,
+    withSession,
     getCurrentUser,
+    getCurrentTeamId,
+    setCurrentTeamId,
+    switchTeam,
     clearSession,
     logout,
     apiFetch,
+    TEAM_START_URL,
   };
+
+  refreshStoredUser();
 })();
