@@ -734,8 +734,8 @@ class PasswordResetRequestView(APIView):
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         token = default_token_generator.make_token(user)
 
-        # El link apunta al FRONTEND (la SPA o, en pruebas, la página de
-        # oauth-test), no a una vista de Django: esa página toma uid+token de la
+        # El link apunta al FRONTEND (frontend/reset-password.html), no a una
+        # vista de Django: esa página toma uid+token de la
         # URL y hace el POST a /password-reset/confirm/. La base es configurable
         # (PASSWORD_RESET_URL) para no atar el correo a un puerto/ruta fijos.
         reset_url = f"{settings.PASSWORD_RESET_URL}?uid={uid}&token={token}"

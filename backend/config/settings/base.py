@@ -272,15 +272,13 @@ DEFAULT_FROM_EMAIL = env(
 )
 
 # Base del frontend (SPA) para armar links que van en los correos, p. ej. el
-# de reset apunta a {FRONTEND_URL}/reset-password?uid=...&token=...
+# de reset apunta a {FRONTEND_URL}/reset-password.html?uid=...&token=...
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 
 # URL de la página que resuelve el reset (a la que apunta el enlace del correo).
-# Por defecto es {FRONTEND_URL}/reset-password (la ruta de la SPA), pero se puede
-# sobreescribir desde el .env; p. ej. mientras no exista el frontend, apuntarla a
-# la página de prueba de oauth-test (http://localhost:3000/reset-password.html).
+# Por defecto es frontend/reset-password.html; se puede sobreescribir desde el .env.
 PASSWORD_RESET_URL = env(
-    "PASSWORD_RESET_URL", default=f"{FRONTEND_URL}/reset-password"
+    "PASSWORD_RESET_URL", default=f"{FRONTEND_URL}/reset-password.html"
 )
 
 # URL de la página que confirma la verificación de email (a la que apunta el

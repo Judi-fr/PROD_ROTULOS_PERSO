@@ -250,7 +250,7 @@ access on the repo authorizes the connection or installs the Azure Pipelines Git
   scripts can't use directly (`getElementById("x").y`, `querySelector`/`closest(".x").y`) an element it doesn't have:
   that is how "Recuperar contraseña" showed "Error de red" after succeeding. Permission keys named by the frontend are
   checked in `accounts/tests/test_frontend_contracts.py`;
-  skips `assets/apis/` and `index_test.html`), then the static files (what goes in the image, ~1.6 MB) and
+  skips `assets/apis/`), then the static files (what goes in the image, ~1.6 MB) and
   the nginx image as artifacts.
 - The backend `.dockerignore` excluded `.venv/` but the virtualenv is `venv/`: the API image was carrying
   ~280 MB of it plus the `db.sqlite3*` recovery copies. Fixed with the CI; pipelines and lint configs are
@@ -263,9 +263,8 @@ access on the repo authorizes the connection or installs the Azure Pipelines Git
 store integrations do nothing on their own: webhooks only enqueue `IntegrationEvent` rows. Stuck or
 failed events are visible in the Django admin (`IntegrationEvent`, filters by status/event type). Needs `backend/.env`
 (copy `.env.example`). Without `DATABASE_URL`, Django falls back to local SQLite (`backend/db.sqlite3`) —
-tests/dev work without Docker or Postgres. `backend/db.sqlite3*` also has manual recovery snapshots
-checked in (`.backup-antes-de-reparar`, `-backup-crud`, `-con-admin-recuperado`) — only plain `db.sqlite3`
-is the live one; don't delete the others or treat them as fixtures.
+tests/dev work without Docker or Postgres. `backend/db.sqlite3*` is gitignored: databases
+never go in the repository.
 
 No Redis anywhere. In production (`prod.py`) the cache is `DatabaseCache` (table `django_cache`, created
 by `createcachetable` in the `api` command of `docker-compose.prod.yml`) so DRF throttle counters are
@@ -1910,7 +1909,6 @@ looked "raro"); `gestionuser.css` sets the app font on `body` and carries the fe
 (`[hidden]`, `.nav { display: flex }`, ...). No page loads Bootstrap since 2026-10-26: the access screens
 (`index.html`, `register.html`, `logoutpage.html`) share `assets/css/acceso.css` (split screen, labels above the
 fields, show/hide password via `data-reveal` in `utils.js`, errors inline in `#pageMessage` instead of a pop-up).
-The old `index.css` is only kept for the PHP-era `index_test.html`.
 In `gestionuser.html` "Crear usuario" is a centred window (`.create-panel` is the backdrop, Esc closes it).
 Its column headers sort (2026-10-26; before they were decorative): click = sort, again = reverse, a third
 time = back to normal, kept in sync with "Ordenar por" in the advanced filters. The API's `ordering` takes
@@ -2080,8 +2078,7 @@ and the email moved under the name (no Email column; email order stays in "Orden
   `auth.js`: there is no session to attach, which is the whole point. `PASSWORD_RESET_URL` in `.env` is
   what the email links to, and it must name the real file (`.../reset-password.html`) — its default
   (`{FRONTEND_URL}/reset-password`) matches nothing in `frontend/` and the link 404s. The login's
-  "Olvidaste tu clave?" used to be `href="#!"`: the screen was promised and did not exist. Reused
-  `index_test.html` still has the dead link and is left alone (PHP-era leftover).
+  "Olvidaste tu clave?" used to be `href="#!"`: the screen was promised and did not exist.
 - **`roles.html` layout (2026-10-21)**: tabs "Roles de la plataforma" (roles in a left column with "Nuevo rol" at
   its foot; the chosen role's permissions on the right as one card per category with a count and "Marcar todos",
   a search box, and Guardar/Descartar enabled only with unsaved changes — switching role or leaving asks first) and
@@ -2114,9 +2111,8 @@ and the email moved under the name (no Email column; email order stays in "Orden
   some of the page are (2026-11-02).
 - Orders that come from a store carry third-party text (buyer name/address, store name): any value
   inserted with `innerHTML`/`insertAdjacentHTML` must go through `escapeHtml` or use `textContent` instead.
-- `google.js`/`google_test.js`/`assets/apis/access.php`/`index_test.html` are unused leftovers from a PHP-era
-  Google-login prototype — not part of the real flow (`index.html` calls `GoogleAuthView` directly). Don't
-  delete them. Their dependencies (`assets/apis/vendor/`, ~500 MB) are gitignored and regenerate with
+- `google.js`/`assets/apis/access.php` are unused leftovers from a PHP-era Google-login prototype — not part
+  of the real flow (`index.html` calls `GoogleAuthView` directly). Their dependencies (`assets/apis/vendor/`, ~500 MB) are gitignored and regenerate with
   `composer install` from `assets/apis/composer.json`.
 - `importar_rotulo.html` + `assets/js/importar_rotulo.js` drive the three-step photo import
   (`apps.processing`): upload the photo, read it into a proposal, review it (scaled preview drawn from the
@@ -2244,8 +2240,6 @@ and the email moved under the name (no Email column; email order stays in "Orden
   propia. Antes de commitear, revisar que no se suba ningún secreto (`.env`, bases, `backups/`).
 - Nunca modificar tests para que pasen: corregir la implementación.
 - Nunca usar URLs placeholder. La API real es `http://127.0.0.1:8000/api/v1/`.
-- No borrar archivos de Google/OAuth (`google.js`, `google_test.js`, `access.php`, `oauth-test/`,
-  `index_test.html`) aunque parezcan código muerto.
 - Antes de modificar: inspeccionar el código, identificar la causa exacta, cambio mínimo. Nada de
   refactors grandes para problemas chicos.
 - Si el problema es de backend no tocar el frontend, y viceversa.
