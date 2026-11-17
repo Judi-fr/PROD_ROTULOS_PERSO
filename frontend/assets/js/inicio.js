@@ -9,7 +9,7 @@
   document.body.classList.add("js");
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // Con una sesión guardada (auth.js deja "user" en localStorage), "Entrar"
+  // Con una sesión guardada (auth.js deja "user" en localStorage), "Iniciar sesión"
   // lleva directo al panel.
   try {
     if (localStorage.getItem("user")) {
@@ -18,7 +18,7 @@
       signin.href = "dashboard.html";
     }
   } catch (error) {
-    /* sin almacenamiento: queda "Entrar" */
+    /* sin almacenamiento: queda "Iniciar sesión" */
   }
 
   // --- Entradas ------------------------------------------------------------
