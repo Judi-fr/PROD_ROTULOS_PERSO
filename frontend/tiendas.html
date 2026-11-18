@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
-    <title>Tiendas conectadas</title>
+    <title>Tiendas</title>
     <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
     <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
     <meta name="theme-color" content="#308028" />
@@ -29,8 +29,8 @@
       <main class="main">
         <div class="main-heading main-heading-row">
           <div>
-            <h1>Tiendas conectadas</h1>
-            <p>Conectá tu tienda online para que sus pedidos entren solos y puedas generar sus rótulos.</p>
+            <h1>Tiendas</h1>
+            <p>Conectá una tienda nueva o elegí una para ver cómo trabaja con Rótulos.</p>
           </div>
           <!-- Claves de API y webhooks (integraciones.html). Esa página es solo
                de integrations.manage: tiendas.js muestra el botón solo a quien
@@ -47,6 +47,17 @@
         <!-- Desplegable: con tiendas ya conectadas arranca cerrado, para llegar
              a "Mis tiendas" sin bajar por todos los formularios (ver tiendas.js,
              setConnectCardOpen). -->
+        <!-- Dos columnas (2026-11-18, boceto aprobado): a la izquierda "Nueva
+             tienda" y las tiendas conectadas; a la derecha, los pasos para
+             conectar o el menú de la tienda elegida (tiendas.js, renderStorePicker). -->
+        <div class="stores-layout">
+        <nav class="stores-picker" id="storesPicker" aria-label="Tus tiendas">
+          <button type="button" class="stores-pick stores-pick-new" data-pick="new" aria-pressed="false">
+            <span class="stores-pick-mark" aria-hidden="true"><i class="ph ph-plus"></i></span>
+            <span class="stores-pick-text"><strong>Nueva tienda</strong></span>
+          </button>
+        </nav>
+        <div class="stores-panel">
         <details class="card connect-card" id="connectCard" open>
           <summary class="card-title connect-card-title">Conectar una tienda</summary>
           <div class="card-body connect-picker">
@@ -295,8 +306,8 @@
           <p id="connectMessage" class="page-message connect-message" role="status" aria-live="polite" hidden></p>
         </details>
 
-        <!-- Tiendas del usuario: las arma tiendas.js (renderStoreCard). -->
-        <section class="card">
+        <!-- Tiendas del usuario: las arma tiendas.js (renderStoreCard); se ve la elegida. -->
+        <section class="card" id="storesSection">
           <div class="card-title card-title-row">
             <span>Mis tiendas</span>
             <button type="button" class="btn btn-outline btn-small" id="refreshStoresBtn">
@@ -307,6 +318,8 @@
             <p class="muted-text"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
           </div>
         </section>
+        </div>
+        </div>
       </main>
     </div>
 

@@ -39,7 +39,7 @@
         <form id="register-form" class="access-form" novalidate>
           <div class="access-field">
             <label for="fullName">Nombre y apellido</label>
-            <input type="text" name="fullName" id="fullName" autocomplete="name" placeholder="Como querés que te vean tus compañeros">
+            <input type="text" name="fullName" id="fullName" autocomplete="name" placeholder="Como querés que te vean tus compañeros" required>
           </div>
           <div class="access-field">
             <label for="email">Email</label>
@@ -155,6 +155,13 @@
       // registrado, etc.) lo valida el backend.
       if (!email || !password) {
         showMessage('Completá el email y la contraseña.');
+        return;
+      }
+      // Nombre y apellido: al menos dos palabras (el backend rechaza un
+      // nombre sin apellido).
+      if (fullName.split(/\s+/).filter(Boolean).length < 2) {
+        showMessage('Escribí tu nombre y apellido.');
+        document.getElementById('fullName').focus();
         return;
       }
       if (!EMAIL_REGEX.test(email)) {

@@ -73,6 +73,26 @@
     // GOOGLE_CLIENT_ID (backend/.env).
     const GOOGLE_CLIENT_ID = '639018151961-c7mc5vsqfhpv3i208ok7a93647tlh1mf.apps.googleusercontent.com';
 
+    // A dónde entra después de loguearse. Primero lo que quedó a medio hacer
+    // (instalar la app, imprimir desde Tiendanube, sumarse a un comercio);
+    // después ?next=, la página que pidió sin sesión (por ejemplo Ayuda desde
+    // Términos), solo si es una página de esta misma carpeta: un ?next= con
+    // otro sitio no puede usarse para mandar a alguien afuera tras el login.
+    function landingPage(isAdmin) {
+      if (localStorage.getItem('pendingTiendanubePrint')) {
+        return localStorage.getItem('pendingTiendanubePage') || 'imprimir_tiendanube.html';
+      }
+      if (localStorage.getItem('pendingStoreClaim')) return 'tiendas.html';
+      if (localStorage.getItem('pendingJoinCode')) {
+        return 'unirse.html?code=' + encodeURIComponent(localStorage.getItem('pendingJoinCode'));
+      }
+      const next = new URLSearchParams(window.location.search).get('next') || '';
+      if (/^[a-z0-9_-]+\.html(#[a-z0-9_-]*)?$/i.test(next) && !/^(index|register|logoutpage)\.html/i.test(next)) {
+        return next;
+      }
+      return isAdmin ? 'gestionuser.html' : 'dashboard.html';
+    }
+
     // Mismo shape de respuesta que login/register manual (auth_response del
     // backend), así que guardar quién es y la redirección por rol son
     // idénticos a los del form de usuario/contraseña. Los tokens no pasan por
@@ -89,7 +109,7 @@
       // el enlace de vinculación), vuelve a terminar ese paso.
       // Lo mismo si venía de "Imprimir rótulos" en las acciones masivas de
         // Tiendanube (assets/js/tiendanube/imprimir_tiendanube.js guardó los pedidos elegidos).
-        window.location.replace(localStorage.getItem('pendingTiendanubePrint') ? (localStorage.getItem('pendingTiendanubePage') || 'imprimir_tiendanube.html') : localStorage.getItem('pendingStoreClaim') ? 'tiendas.html' : localStorage.getItem('pendingJoinCode') ? 'unirse.html?code=' + encodeURIComponent(localStorage.getItem('pendingJoinCode')) : (isAdmin ? 'gestionuser.html' : 'dashboard.html'));
+        window.location.replace(landingPage(isAdmin));
     }
 
     // Callback de Google Identity Services: response.credential es el ID
@@ -174,7 +194,7 @@
         // el enlace de vinculación), vuelve a terminar ese paso.
         // Lo mismo si venía de "Imprimir rótulos" en las acciones masivas de
         // Tiendanube (assets/js/tiendanube/imprimir_tiendanube.js guardó los pedidos elegidos).
-        window.location.replace(localStorage.getItem('pendingTiendanubePrint') ? (localStorage.getItem('pendingTiendanubePage') || 'imprimir_tiendanube.html') : localStorage.getItem('pendingStoreClaim') ? 'tiendas.html' : localStorage.getItem('pendingJoinCode') ? 'unirse.html?code=' + encodeURIComponent(localStorage.getItem('pendingJoinCode')) : (isAdmin ? 'gestionuser.html' : 'dashboard.html'));
+        window.location.replace(landingPage(isAdmin));
       } catch (error) {
         showMessage(error.message || 'El email o la contraseña no son correctos.');
       }

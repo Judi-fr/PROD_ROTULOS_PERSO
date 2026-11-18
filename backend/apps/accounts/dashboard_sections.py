@@ -113,6 +113,108 @@ def build_sections(user):
     return sections
 
 
+def build_sidebar(user):
+    """La barra lateral del comerciante (2026-11-18, boceto aprobado por el
+    usuario): la misma en todas sus páginas, en vez de las tarjetas del panel.
+
+    Cada ítem: ``key``, ``label``, ``icon`` (nombre de Phosphor), ``url`` (su
+    pantalla principal), ``links`` (las funciones secundarias, que se
+    despliegan cuando la sección está activa), ``match`` (otras páginas que
+    pertenecen a la sección, para marcarla activa), ``badge`` (qué número del
+    resumen de pedidos lleva: ``orders``/``print`` o ``None``) y ``place``
+    (``main`` arriba, ``bottom`` al pie). Como las secciones, todo filtrado por
+    permiso acá: el frontend solo lo dibuja.
+    """
+    can = lambda permission: user_has_permission(user, permission)  # noqa: E731
+    items = []
+
+    def add(key, label, icon, url, links, match=(), badge=None, place="main"):
+        items.append({
+            "key": key, "label": label, "icon": icon, "url": url, "links": _links(user, links),
+            "match": list(match), "badge": badge, "place": place,
+        })
+
+    add("home", "Inicio", "house-simple", "dashboard.html", [])
+    if can("orders.view"):
+        add(
+            "orders", "Pedidos", "package", "pedidos.html",
+            [
+                ("Mis pedidos", "pedidos.html", None),
+                ("Escanear", "escanear.html", None),
+                ("Importar planilla", "importar.html", "orders.import"),
+                ("Cambiar estado", "estado_pedidos.html", "orders.dispatch"),
+                ("Exportar", "exportar_pedidos.html", "orders.export"),
+            ],
+            match=("despachar.html", "direcciones.html", "cargar_seguimientos.html", "planilla_retiro.html",
+                   "envios_andreani.html", "importar_empretienda.html"),
+            badge="orders",
+        )
+    if can("labels.batch") or can("documents.view"):
+        add(
+            "print", "Imprimir", "printer", "imprimir_rotulos.html" if can("labels.batch") else "documentos.html",
+            [
+                ("Imprimir rótulos", "imprimir_rotulos.html", "labels.batch"),
+                ("Documentos", "documentos.html", "documents.view"),
+                ("Cola de impresión", "cola_impresion.html", "labels.batch"),
+                ("Impresoras", "impresoras.html", "printers.manage"),
+            ],
+            badge="print" if can("labels.batch") else None,
+        )
+    if can("labels.view"):
+        add(
+            "design", "Diseño de rótulos", "squares-four", "mis_plantillas.html",
+            [
+                ("Mis plantillas", "mis_plantillas.html", None),
+                ("Nueva plantilla", "galeria_plantillas.html", "labels.template_create"),
+                ("Desde una foto", "importar_rotulo.html", "processing.import"),
+            ],
+            match=("editor_rotulos.html", "versiones_plantilla.html"),
+        )
+    if can("stores.manage"):
+        add(
+            "stores", "Tiendas", "storefront", "tiendas.html",
+            [("Rótulos pedidos por la tienda", "rotulos_tienda.html", "orders.view")],
+            match=("integraciones.html",),
+        )
+    if can("carriers.manage"):
+        from apps.carriers.providers import all_providers
+
+        carriers = [(provider.name, f"transportista.html?carrier={provider.code}", None) for provider in all_providers()]
+        add(
+            "carriers", "Transportistas y tarifas", "truck", carriers[0][1] if carriers else "tarifas_envio.html",
+            carriers + [
+                ("Tarifas", "tarifas_envio.html", None),
+                ("Precio en el checkout", "checkout_transportistas.html", None),
+            ],
+            match=("andreani.html", "checkout_andreani.html"),
+        )
+    business = [
+        ("Datos del comercio", "equipo.html#datos", None),
+        ("Estadísticas", "equipo.html#estadisticas", None),
+        ("Miembros y perfiles", "equipo.html#miembros", None),
+        ("Actividad", "equipo.html#actividad", None),
+    ]
+    stats = any(can(key) for key in ("stats.dispatch", "stats.carriers", "stats.buyers"))
+    business = [row for row in business if row[0] == "Datos del comercio"
+                or (row[0] == "Estadísticas" and stats)
+                or (row[0] in ("Miembros y perfiles", "Actividad") and can("team.manage"))]
+    add("business", "Mi comercio", "users-three", "equipo.html", business,
+        match=("perfiles_equipo.html", "actividad_equipo.html", "comercio_inicio.html", "invitaciones.html"))
+    add(
+        "help", "Ayuda", "lifebuoy", "ayuda.html",
+        [
+            ("Preguntas frecuentes", "ayuda.html#preguntas", None),
+            ("Escribir a soporte", "ayuda.html#nuevo-mensaje", "support.create"),
+            ("Avisos", "notificaciones.html", None),
+        ],
+        match=("notificaciones.html",),
+        place="bottom",
+    )
+    if get_effective_role(user) == "admin":
+        add("admin", "Administración", "shield-check", "gestionuser.html", [], place="bottom")
+    return items
+
+
 def onboarding(user):
     """``{"steps": [...]}`` para el dueño del comercio actual; ``None`` para
     un empleado, el admin o quien no tiene comercio (la guía es de quien arma

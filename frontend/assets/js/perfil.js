@@ -43,9 +43,25 @@ let photoChange;
 function showPhoto(user) {
   const preview = document.getElementById("photoPreview");
   if (!preview) return;
+  const person = { ...(getCurrentUser() || {}), ...user };
+  // Si la foto guardada no carga (el servidor no la sirve), las iniciales en
+  // vez de una imagen rota con el texto "Tu foto".
+  preview.onerror = () => {
+    preview.onerror = null;
+    preview.src = initialsAvatarUrl(person.display_name || person.email, person.email);
+  };
   // personAvatarUrl (utils.js): la foto propia, la de Google o el dibujo.
-  preview.src = personAvatarUrl({ ...(getCurrentUser() || {}), ...user });
+  preview.src = personAvatarUrl(person);
   document.getElementById("photoRemove").hidden = !user.photo;
+}
+
+// Aviso junto a la foto (tone: "error" | "success" | "info"); sin texto, lo esconde.
+function showPhotoMessage(text, tone = "info") {
+  const el = document.getElementById("photoMsg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = `page-message ${tone}`;
+  el.hidden = !text;
 }
 
 function readPhoto(file) {
@@ -122,6 +138,10 @@ async function saveProfile() {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      // Un rechazo de la foto (formato, tamaño) se muestra junto a ella.
+      if (data && data.photo) {
+        showPhotoMessage([].concat(data.photo).join(" "), "error");
+      }
       throw new Error(getErrorMessage(data, "No se pudo actualizar tu perfil."));
     }
     // La sesión guardada también, para que las otras páginas muestren ya la
@@ -131,6 +151,7 @@ async function saveProfile() {
     window.AppTopbar.render(merged);
     renderProfile(data);
     renderVerificationNotice(data);
+    showPhotoMessage("");
     showFieldMessage("profileMsg", "Perfil actualizado correctamente.", true);
   } catch (err) {
     if (err.isSessionExpired) return;
@@ -190,7 +211,7 @@ document.getElementById("photoInput")?.addEventListener("change", async (event) 
   const file = event.target.files[0];
   if (!file) return;
   if (file.size > 2 * 1024 * 1024) {
-    showFieldMessage("profileMsg", "La foto no puede pesar más de 2 MB.", false);
+    showPhotoMessage("La foto no puede pesar más de 2 MB. Elegí una más liviana.", "error");
     event.target.value = "";
     return;
   }
@@ -198,9 +219,9 @@ document.getElementById("photoInput")?.addEventListener("change", async (event) 
     photoChange = await readPhoto(file);
     document.getElementById("photoPreview").src = photoChange;
     document.getElementById("photoRemove").hidden = false;
-    showFieldMessage("profileMsg", "Tocá «Guardar cambios» para usar esta foto.", true);
+    showPhotoMessage("Tocá «Guardar cambios» para usar esta foto.", "info");
   } catch (err) {
-    showFieldMessage("profileMsg", err.message, false);
+    showPhotoMessage(err.message, "error");
   }
 });
 
@@ -210,7 +231,7 @@ document.getElementById("photoRemove")?.addEventListener("click", () => {
   const user = getCurrentUser() || {};
   document.getElementById("photoPreview").src = personAvatarUrl({ ...user, photo: null });
   document.getElementById("photoRemove").hidden = true;
-  showFieldMessage("profileMsg", "Tocá «Guardar cambios» para quitar la foto.", true);
+  showPhotoMessage("Tocá «Guardar cambios» para quitar la foto.", "info");
 });
 document.getElementById("savePasswordBtn")?.addEventListener("click", savePassword);
 

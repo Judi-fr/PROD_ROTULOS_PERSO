@@ -137,7 +137,9 @@ if (logoutBtn) {
 }
 
 if (!hasSession()) {
-  window.location.replace("index.html");
+  // Vuelve acá después de entrar (los enlaces "Ayuda" de Términos y
+  // Privacidad llegan sin sesión).
+  window.location.replace("index.html?next=ayuda.html");
 } else {
   window.AppTopbar.render();
   loadMyMessages();

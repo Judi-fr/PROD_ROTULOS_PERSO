@@ -38,9 +38,11 @@ test("imprimir genera un lote con los pedidos sin rótulo", async ({ page }) => 
 test("conectar una tienda muestra solo la plataforma elegida", async ({ page }) => {
   await page.goto("/tiendas.html");
   const card = page.locator("#connectCard");
-  // Con una tienda ya conectada la tarjeta se cierra sola al cargar la lista.
-  await expect(card).not.toHaveAttribute("open", "");
-  await card.locator("> summary").click();
+  // Con una tienda ya conectada se ve esa tienda; "Nueva tienda" muestra los
+  // pasos para conectar (2026-11-18, tiendas en dos columnas).
+  await expect(card).toBeHidden();
+  await page.click('#storesPicker [data-pick="new"]');
+  await expect(card).toBeVisible();
   await expect(page.locator("#connectShopifyBtn")).toBeHidden();
   await page.click('[data-platform-pick="shopify"]');
   await expect(page.locator("#connectShopifyBtn")).toBeVisible();

@@ -1961,6 +1961,19 @@ and the email moved under the name (no Email column; email order stays in "Orden
 - **Page without access (2026-11-06)**: `<body data-requires="key,key">` (any one is enough) + `applyPageAccess` in
   `utils.js` show "No tenés acceso a esta pantalla" instead of an empty page or forms that later fail (reached by
   a saved address); the backend still decides. A new merchant page needs the attribute.
+- **Sidebar navigation (2026-11-18, mockup approved by the user)**: every merchant page navigates with a left
+  sidebar, not the dashboard cards. `topbar.js` loads `assets/js/app_sidebar.js` (same `?v=`), so no page declares it:
+  fixed on the left (`body.has-app-sidebar` pads the content, `--sidebar-w`), an off-canvas drawer under 960px opened
+  by the topbar's menu button. Its items come from the backend (`dashboard_sections.build_sidebar`, `sidebar` in
+  `GET users/me/dashboard/`, filtered by permission; each has `match` pages to mark it active, `badge`
+  orders|print and `place` main|bottom), cached per business in sessionStorage (5 min); badges from
+  `/orders/summary/` and the topbar bell's dot from `/notices/` (1 min, only with a business). Brand, business
+  switcher and search moved from the topbar to the sidebar. The dashboard (`dashboard.html`, "Inicio") lost the
+  section cards and its function search (Ctrl+K stays): KPI cards with a 7-day line from `summary.week`, La
+  semana + Qué hacer ahora side by side, and the period stats from `/orders/stats/` (dispatch gauge, carriers
+  table, provinces bars; only allowed blocks). `tiendas.html` is two columns: "Nueva tienda" + the stores on the
+  left (`renderStorePicker`, `?tienda=<id>`), the connect steps or the chosen store's card on the right. Floating
+  docks are offset by the sidebar in `ui.css`. Tests: `apps/accounts/tests/test_sidebar.py`.
 - `assets/js/topbar.js` — the shared top bar for the non-admin pages. Since 2026-10-26: "Panel" (home) and the
   business switcher on the left, the page's `data-links` in the middle as light links, and an account menu on the
   right (avatar → Mi cuenta, Mi actividad, Ayuda, Cerrar sesión). A link to `dashboard.html` or to something in the
