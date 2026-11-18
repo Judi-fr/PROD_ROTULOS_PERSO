@@ -1,18 +1,27 @@
 """``python manage.py run_integrations_worker`` — procesa la cola de eventos
-de tiendas conectadas (``IntegrationEvent``, ver ``apps.integrations.events``).
+de tiendas conectadas (``IntegrationEvent``, ver ``apps.integrations.events``),
+consulta el seguimiento de los envíos de transportistas (``apps.carriers``) y
+genera los lotes de rótulos grandes (``apps.labels.batch_jobs``).
 
 Corre en un proceso aparte del servidor web (en Docker, un servicio más con
 el mismo código). ``--once`` procesa un solo lote y termina (útil para cron
 o para probar a mano).
 """
 
+import logging
 import time
 
 from django.core.management.base import BaseCommand
 from django.db import connections
 
+from apps.carriers.tracking import sync_due_shipments
 from apps.integrations.events import process_due_events
-from apps.integrations.store_labels import expire_stale_requests
+from apps.integrations.providers.tiendanube.labels import expire_stale_requests
+from apps.integrations.stores import enqueue_due_reconciliations
+from apps.labels.batch_jobs import run_pending_batches
+from apps.monitoring.heartbeats import worker_tick
+
+logger = logging.getLogger(__name__)
 
 
 def close_stale_connections():
@@ -49,14 +58,34 @@ class Command(BaseCommand):
                 # Un worker de larga duración no puede quedarse con una
                 # conexión a la base que el servidor ya cerró.
                 close_stale_connections()
+                # El latido que mira el monitoreo (apps.monitoring); si el
+                # proceso de alertas está caído, el worker las hace él.
+                try:
+                    worker_tick()
+                except Exception:  # noqa: BLE001 - el monitoreo no frena la cola
+                    logger.exception("Falló el latido/monitoreo del worker.")
                 # Antes del lote: los rótulos que la tienda pidió y quedaron
                 # pendientes demasiado tiempo se dan por fallidos con motivo,
                 # en vez de dejar que la plataforma los venza en silencio.
                 expired = expire_stale_requests()
                 if expired:
                     self.stdout.write(f"Rótulos vencidos informados como fallidos: {expired}")
+                # Tiendas cuyos webhooks no alcanzan (WooCommerce): cada tanto
+                # se repasan sus pedidos modificados.
+                reconciling = enqueue_due_reconciliations()
+                if reconciling:
+                    self.stdout.write(f"Tiendas a repasar: {reconciling}")
+                # Seguimiento de los envíos creados en un transportista
+                # (Andreani): los abiertos que hace rato no se consultan.
+                moved = sync_due_shipments(limit=options["limit"])
+                if moved:
+                    self.stdout.write(f"Envíos que cambiaron de estado: {moved}")
+                # Lotes de rótulos grandes, que no se generan en el request.
+                batches = run_pending_batches()
+                if batches:
+                    self.stdout.write(f"Lotes de rótulos generados: {batches}")
                 counts = process_due_events(limit=options["limit"])
-                processed = sum(counts.values())
+                processed = sum(counts.values()) + batches
                 if processed:
                     self.stdout.write(
                         f"Eventos procesados: {processed} "

@@ -6,28 +6,35 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
     <title>Ayuda / Soporte</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <link
-      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
 
     <!-- Reusa el mismo estilo de tarjeta que perfil.html (.profile-card). -->
     <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
     <link rel="stylesheet" href="assets/css/perfil.css" />
+    <link rel="stylesheet" href="assets/css/ayuda.css" />
   </head>
   <body>
     <div class="layout">
       <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
-      <header class="topbar" id="appTopbar" data-links='[{"href": "dashboard.html", "label": "Volver al panel"}]'></header>
+      <header class="topbar" id="appTopbar" data-links='[{"href": "notificaciones.html", "label": "Avisos"}, {"href": "dashboard.html", "label": "Volver al panel"}]'></header>
 
       <main class="main">
         <div class="main-heading">
           <h1>Ayuda / Soporte</h1>
-          <p>¿Tenés un problema o una consulta? Escribinos y te respondemos a la brevedad.</p>
+          <p>Escribinos y te respondemos a la brevedad. Las dudas más comunes están en las <a href="#preguntas">preguntas frecuentes</a>, al final de la página.</p>
         </div>
 
-        <section class="profile-card">
+        <section class="profile-card" id="nuevo-mensaje">
           <div class="profile-card-title">Nuevo mensaje</div>
           <div class="profile-card-body">
             <div class="field">
@@ -36,7 +43,7 @@
             </div>
             <div class="field">
               <label for="messageInput">Mensaje</label>
-              <textarea id="messageInput" rows="6" placeholder="Contanos qué necesitás..." style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:8px; font-family:inherit; font-size:14px; resize:vertical;"></textarea>
+              <textarea id="messageInput" rows="6" placeholder="Contanos qué necesitás..." style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius-md); font-family:inherit; font-size:var(--text-base); resize:vertical;"></textarea>
             </div>
             <p id="supportMsg" class="form-message" style="display:none;"></p>
             <div class="profile-card-actions">
@@ -47,14 +54,114 @@
           </div>
         </section>
 
-        <section class="profile-card">
+        <section class="profile-card" id="mis-mensajes">
           <div class="profile-card-title">Mis mensajes</div>
           <div class="profile-card-body">
             <div id="myMessagesList">
-              <p class="loading-text">Cargando...</p>
+              <p class="loading-text"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
             </div>
           </div>
         </section>
+        <!-- Preguntas frecuentes, al final de la página: el bloque entero se
+             pliega (<details> de afuera) y cada pregunta también. "Abrir
+             todas"/"Cerrar todas" están en ayuda.js. Los nombres de botones y
+             secciones son los que se ven en la app; si cambian, cambiarlos
+             acá también. -->
+        <details class="profile-card faq" id="preguntas" open>
+          <summary class="profile-card-title faq-head">
+            <span>Preguntas frecuentes</span>
+            <span class="faq-head-hint" aria-hidden="true"></span>
+          </summary>
+          <div class="faq-tools">
+            <button type="button" class="faq-toggle-all" id="faqToggleAll">Abrir todas</button>
+          </div>
+          <div class="faq-list">
+            <details>
+              <summary>¿Cómo conecto mi tienda?</summary>
+              <p>
+                En el panel, <strong>Tiendas y envíos → Abrir → Conectar una tienda</strong>. Tiendanube y
+                Shopify se conectan con un clic; WooCommerce, con un clic o pegando sus claves; VTEX y Magento,
+                con las claves que generás en su administrador. Desde ahí los pedidos entran solos.
+                Empretienda no tiene conexión automática: sus ventas se cargan con la planilla que exporta.
+              </p>
+            </details>
+            <details>
+              <summary>No me aparece un pedido, ¿qué hago?</summary>
+              <p>
+                Si la tienda está conectada, el pedido entra solo en unos minutos. Si no aparece, fijate si hay
+                un aviso de la tienda arriba del panel (por ejemplo, la conexión venció). También podés cargarlo
+                a mano en <strong>Pedidos → Nuevo pedido</strong> o subir una planilla con
+                <strong>Importar planilla</strong>.
+              </p>
+            </details>
+            <details>
+              <summary>¿Cómo imprimo los rótulos de varios pedidos?</summary>
+              <p>
+                En <strong>Imprimir</strong> elegís los pedidos, la plantilla y el formato: PDF para una
+                impresora común (uno por hoja o varios en una A4) o térmica Zebra. El archivo queda en
+                <strong>Documentos</strong>. Si conectaste una impresora en <strong>Impresoras</strong>, sale
+                directo, sin descargar nada.
+              </p>
+            </details>
+            <details>
+              <summary>¿Cómo despacho con Andreani, Correo Argentino u OCA?</summary>
+              <p>
+                Cargá tu cuenta del transportista desde la franja de transportistas de <strong>Mis
+                pedidos</strong>. Después elegís los pedidos, tocás <strong>Despachar</strong>, ves el precio y
+                se crean los envíos. El número de seguimiento sale en el rótulo y se le informa solo a tu
+                tienda. Con otro transportista, cargás el seguimiento a mano.
+              </p>
+            </details>
+            <details>
+              <summary>¿Puedo cambiar cómo sale el rótulo?</summary>
+              <p>
+                Sí, en <strong>Diseño de rótulos</strong>: elegís una plantilla o creás la tuya, movés los
+                datos, agregás el logo y con <strong>Ver cómo sale impreso</strong> ves el PDF real antes de
+                guardar. Tocando un dato podés ponerle una etiqueta delante («CP:»), invertirlo (blanco sobre
+                negro), enmarcarlo o ponerlo vertical. Cada tienda puede tener su propia plantilla, remitente y logo.
+              </p>
+            </details>
+            <details>
+              <summary>¿Cómo sumo a alguien de mi equipo?</summary>
+              <p>
+                En <strong>Mi cuenta → Equipo</strong>, de dos formas. Lo invitás con su mail y elegís qué
+                puede hacer y qué tiendas ve: le llega un mail y tiene que aceptar con su propia cuenta. O le
+                pasás el <strong>Código para sumarse</strong> (o su link): lo pide con su cuenta y te aparece
+                en <strong>Pedidos para sumarse</strong>, donde lo aprobás eligiendo qué puede hacer. Hasta
+                entonces no ve nada de tu comercio.
+              </p>
+            </details>
+            <details>
+              <summary>¿Puedo trabajar en más de un comercio?</summary>
+              <p>
+                Sí. Podés crear los comercios que quieras y sumarte a otros, con un rol distinto en cada uno.
+                El de arriba de cada pantalla es el comercio en el que estás trabajando: elegí otro para
+                cambiar, o <strong>Crear o sumarme a otro comercio…</strong>. Cada pestaña del navegador puede
+                estar en un comercio distinto. Para irte de un comercio en el que sos empleado, usá
+                <strong>Mi cuenta → Salir de este comercio</strong>; si sos el dueño, primero pasale la
+                titularidad a otra persona o dalo de baja.
+              </p>
+            </details>
+            <details>
+              <summary>¿Qué son los avisos de arriba del panel?</summary>
+              <p>
+                Cosas de tu comercio que se rompieron y no se arreglan solas: una tienda desconectada, una
+                cuenta de transportista rechazada, un lote o una impresión que fallaron. Al dueño también le
+                llega un mail. Cuando se resuelve el problema, el aviso desaparece solo.
+              </p>
+            </details>
+            <details>
+              <summary>Me olvidé la contraseña</summary>
+              <p>
+                En la pantalla de ingreso tocá <strong>Olvidaste tu clave?</strong> y te mandamos un mail para
+                elegir una nueva. Si ya estás adentro, la cambiás en <strong>Mi cuenta → Cambiar
+                contraseña</strong>.
+              </p>
+            </details>
+          </div>
+        </details>
+
+        <p class="legal-links">Qué datos guardamos y cómo pedir que se borren: <a href="privacidad.html">política de privacidad</a> · <a href="terminos.html">términos y condiciones</a>.</p>
       </main>
     </div>
 

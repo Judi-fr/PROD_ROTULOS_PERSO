@@ -1,0 +1,132 @@
+/* Piezas de pantalla de las páginas del comerciante: barra, botones, la
+   columna principal, tarjetas (.profile-card), campos de formulario y
+   mensajes. Antes vivían en pedidos.css y casi 20 páginas que no muestran
+   pedidos lo cargaban solo por esto (cambiar algo de pedidos rompía, por
+   ejemplo, Equipo o Mi cuenta). Los colores salen de ui.css (:root).
+   Va después de base.css y antes del CSS propio de cada página. */
+
+/* TOPBAR (igual que perfil.html/dashboard.html) */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 28px;
+  gap: 16px;
+}
+
+.btn-danger-text {
+  background: transparent;
+  border: none;
+  color: var(--red);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 8px;
+}
+
+.btn-danger-text:hover {
+  text-decoration: underline;
+}
+
+/* MAIN */
+.main {
+  flex: 1;
+  padding: 32px 28px 48px;
+  max-width: var(--page-form);
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* CARDS (mismo shell que perfil.html) */
+.profile-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 22px;
+  overflow: hidden;
+}
+
+.profile-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-weight: 700;
+  font-size: var(--text-md);
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  font-family: inherit;
+  color: var(--text-dark);
+  background: var(--n-0);
+}
+
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--blue);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.field-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.field-checkbox input {
+  width: auto;
+}
+
+.form-message {
+  font-size: var(--text-sm);
+  margin: 4px 0 0;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.empty-state {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  padding: 8px 0;
+}
+
+@media (max-width: 640px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}

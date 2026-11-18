@@ -3,13 +3,21 @@ desconexión.
 
 Un comerciante llega a la instalación por dos caminos:
 
-1. Desde nuestra web ("Conectar Tiendanube"): ya está logueado, así que la
-   URL de autorización lleva un ``state`` firmado con su usuario
-   (``make_oauth_state``) y al volver la tienda queda vinculada a él.
-2. Desde la tienda de apps de la plataforma: vuelve SIN ``state``, no
-   sabemos quién es. La tienda se guarda sin ``owner`` y se lo manda a
-   nuestra web con un token de reclamo firmado y de vida corta
-   (``make_claim_token``); al iniciar sesión, ``claim_store`` la vincula.
+1. Desde nuestra web ("Conectar Tiendanube" / "Conectar Shopify"): ya está
+   logueado, así que la URL de autorización lleva un ``state`` firmado con
+   su usuario (``make_oauth_state``) y al volver la tienda queda vinculada
+   a él.
+   Variante: el comerciante genera un link para compartir
+   (``make_share_token``) y se lo pasa a quien administra la tienda, que lo
+   abre sin cuenta nuestra. El link pide un ``state`` nuevo con el usuario
+   que lo generó, marcado como compartido para que el callback lo devuelva
+   a una página pública en vez de a la del comerciante.
+2. Desde la tienda de apps de la plataforma: no sabemos quién es. En
+   Tiendanube vuelve SIN ``state``; en Shopify pasa antes por
+   ``ShopifyLaunchView``, que firma un ``state`` sin usuario. La tienda se
+   guarda sin ``owner`` y se lo manda a nuestra web con un token de reclamo
+   firmado y de vida corta (``make_claim_token``); al iniciar sesión,
+   ``claim_store`` la vincula.
 
 Identidad siempre desde el usuario autenticado o un dato firmado por el
 backend, nunca desde un id que mande el cliente.
@@ -25,13 +33,17 @@ from django.contrib.auth import get_user_model
 from django.core import signing
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+
+from apps.accounts.teams import live_data_owner_q
 
 from .events import enqueue_event
 from .models import StoreConnection
-from .providers.base import ProviderError
+from .providers.base import OWN_APP_CLIENT_ID_PREF, ProviderError
 
 STATE_SALT = "apps.integrations.store-oauth-state"
 CLAIM_SALT = "apps.integrations.store-claim"
+SHARE_SALT = "apps.integrations.store-install-share"
 
 # Eventos INTERNOS de la cola (no los manda la plataforma: el receptor de
 # webhooks descarta cualquier aviso con este prefijo). Sus handlers están en
@@ -41,6 +53,8 @@ STORE_SETUP_EVENT = "internal/store_setup"
 IMPORT_ORDERS_EVENT = "internal/import_orders"
 PUSH_FULFILLMENT_EVENT = "internal/push_fulfillment"
 GENERATE_LABEL_EVENT = "internal/generate_label"
+RECONCILE_ORDERS_EVENT = "internal/reconcile_orders"
+PUSH_SHIPPING_RATES_EVENT = "internal/push_shipping_rates"
 
 
 def enqueue_store_setup(connection):
@@ -84,24 +98,105 @@ class ConnectResult:
     owner_conflict: bool
 
 
-def make_oauth_state(user, platform):
-    return signing.dumps({"u": user.pk, "p": platform}, salt=STATE_SALT)
+def make_oauth_state(user, platform, shop_domain="", shared=False, actor=None):
+    """``state`` firmado para la URL de autorización. ``user`` puede ser
+    ``None``: una instalación que arrancó desde el admin de la tienda
+    (Shopify) todavía no sabe de quién es y termina en el reclamo. En las
+    plataformas con dominio por tienda el state queda atado a ESA tienda.
+    ``shared``: la autorización la abrió otra persona con un link para
+    compartir (ver ``make_share_token``). ``actor``: la persona que pidió la
+    autorización (``user`` es el usuario de datos de su comercio, que no es
+    una persona): queda como autora en la auditoría del callback."""
+    data = {"u": user.pk if user is not None else None, "p": platform}
+    if actor is not None:
+        data["a"] = actor.pk
+    if shop_domain:
+        data["s"] = shop_domain
+    if shared:
+        data["x"] = 1
+    return signing.dumps(data, salt=STATE_SALT)
 
 
-def read_oauth_state(state, platform):
-    """Usuario del ``state`` del callback, o ``None`` si no vino (instalación
-    desde la tienda de apps). ``signing.BadSignature`` si fue alterado, venció
-    o no corresponde: el callback lo trata como un intento inválido."""
+def oauth_state_is_shared(state):
+    """Si el ``state`` viene de un link para compartir. Solo decide a qué
+    página vuelve el navegador: no valida nada (eso es ``read_oauth_state``),
+    así que un state inválido o vencido simplemente no es compartido."""
+    max_age = getattr(settings, "INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS", 900)
+    try:
+        data = signing.loads(state or "", salt=STATE_SALT, max_age=max_age)
+    except signing.BadSignature:
+        return False
+    return isinstance(data, dict) and bool(data.get("x"))
+
+
+def oauth_state_actor(state):
+    """La persona que pidió la autorización, si el ``state`` la trae y sigue
+    activa; si no, ``None``. No valida el ``state``: eso es ``read_oauth_state``."""
+    try:
+        data = signing.loads(state or "", salt=STATE_SALT)
+    except signing.BadSignature:
+        return None
+    actor_id = data.get("a") if isinstance(data, dict) else None
+    if actor_id is None:
+        return None
+    return get_user_model().objects.filter(pk=actor_id, is_active=True).first()
+
+
+def make_share_token(user, platform):
+    """Token del link de instalación para compartir: quién lo generó y para
+    qué plataforma. Vive más que un ``state`` (``INTEGRATIONS_INSTALL_SHARE_MAX_AGE_SECONDS``)
+    porque lo abre otra persona, cuando pueda; al abrirlo se firma un
+    ``state`` nuevo con la vida corta de siempre."""
+    return signing.dumps({"u": user.pk, "p": platform}, salt=SHARE_SALT)
+
+
+def read_share_token(token, platform):
+    """Usuario que generó el link. ``signing.BadSignature`` si fue alterado,
+    venció, es de otra plataforma o su usuario ya no está activo."""
+    max_age = getattr(settings, "INTEGRATIONS_INSTALL_SHARE_MAX_AGE_SECONDS", 259200)
+    data = signing.loads(token or "", salt=SHARE_SALT, max_age=max_age)
+    if not isinstance(data, dict) or data.get("p") != platform:
+        raise signing.BadSignature("El link no corresponde a esta plataforma.")
+    # ``u`` es el usuario de datos del comercio (inactivo, sin login): vale
+    # mientras el comercio siga abierto.
+    user = get_user_model().objects.filter(live_data_owner_q(), pk=data.get("u")).first()
+    if user is None:
+        raise signing.BadSignature("El usuario del link no existe o está inactivo.")
+    return user
+
+
+def read_oauth_state(state, platform, shop_domain=""):
+    """Usuario del ``state`` del callback, o ``None`` si no vino o no nombra
+    a nadie (instalación desde la tienda de apps). ``signing.BadSignature``
+    si fue alterado, venció o no corresponde (a la plataforma o a la
+    tienda): el callback lo trata como un intento inválido."""
     if not state:
         return None
     max_age = getattr(settings, "INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS", 900)
     data = signing.loads(state, salt=STATE_SALT, max_age=max_age)
     if not isinstance(data, dict) or data.get("p") != platform:
         raise signing.BadSignature("El state no corresponde a esta plataforma.")
-    user = get_user_model().objects.filter(pk=data.get("u"), is_active=True).first()
+    if data.get("s", "") != shop_domain:
+        raise signing.BadSignature("El state no corresponde a esta tienda.")
+    if data.get("u") is None:
+        return None
+    user = get_user_model().objects.filter(live_data_owner_q(), pk=data.get("u")).first()
     if user is None:
         raise signing.BadSignature("El usuario del state no existe o está inactivo.")
     return user
+
+
+def read_oauth_state_site(state, platform):
+    """``(usuario, sitio)`` de un ``state`` atado a un sitio, cuando quien
+    vuelve no dice de qué sitio viene (WooCommerce: el POST de las claves y la
+    vuelta del navegador solo traen el ``state``). El sitio es el que se firmó
+    al generar la URL de autorización. ``signing.BadSignature`` si no sirve."""
+    max_age = getattr(settings, "INTEGRATIONS_OAUTH_STATE_MAX_AGE_SECONDS", 900)
+    data = signing.loads(state or "", salt=STATE_SALT, max_age=max_age)
+    site = data.get("s", "") if isinstance(data, dict) else ""
+    if not site:
+        raise signing.BadSignature("El state no está atado a ningún sitio.")
+    return read_oauth_state(state, platform, site), site
 
 
 def make_claim_token(connection):
@@ -111,7 +206,7 @@ def make_claim_token(connection):
     )
 
 
-def connect_store(provider, code, user=None):
+def connect_store(provider, code, user=None, shop_domain=""):
     """Canjea ``code`` y crea o actualiza la ``StoreConnection``.
 
     Reinstalar una tienda ya conocida actualiza su token (nunca crea otra
@@ -120,36 +215,37 @@ def connect_store(provider, code, user=None):
     se reasigna. Los errores del canje (``ProviderError``) se propagan; no
     poder leer el nombre de la tienda después no impide conectarla.
     """
-    oauth = provider.exchange_code(code)
-    owner_conflict = False
+    # Solo las plataformas con dominio por tienda lo necesitan para el canje.
+    oauth = provider.exchange_code(code, shop_domain=shop_domain) if shop_domain else provider.exchange_code(code)
 
-    with transaction.atomic():
-        connection = (
-            StoreConnection.objects.select_for_update()
-            .filter(platform=provider.platform, external_store_id=oauth.external_store_id)
-            .first()
-        )
-        created = connection is None
-        if created:
-            connection = StoreConnection(
-                platform=provider.platform,
-                external_store_id=oauth.external_store_id,
-                owner=user,
-            )
-        elif user is not None:
-            if connection.owner_id is None:
-                connection.owner = user
-            elif connection.owner_id != user.pk:
-                owner_conflict = True
-
-        connection.access_token = oauth.access_token
+    def apply(connection):
+        connection.set_tokens(oauth)
         connection.scopes = oauth.scopes[:500]
-        connection.status = StoreConnection.Status.ACTIVE
-        connection.last_error = ""
-        connection.connected_at = timezone.now()
-        connection.disconnected_at = None
-        connection.save()
+        # Instalada con NUESTRA app: si antes estaba conectada con la app del
+        # comerciante (connect_with_own_app), sus credenciales ya no se usan.
+        preferences = dict(connection.preferences or {})
+        if preferences.pop(OWN_APP_CLIENT_ID_PREF, None):
+            connection.preferences = preferences
+            connection.webhook_secret = ""
 
+    connection, created, owner_conflict = _upsert_connection(provider.platform, oauth.external_store_id, user, apply)
+    _load_store_info(provider, connection)
+
+    # Registrar webhooks e importar pedidos lleva varias llamadas a la API:
+    # lo hace el worker, el callback solo vuelve rápido al frontend.
+    enqueue_store_setup(connection)
+
+    return ConnectResult(
+        connection=connection,
+        created=created,
+        needs_claim=connection.owner_id is None,
+        owner_conflict=owner_conflict,
+    )
+
+
+def _load_store_info(provider, connection):
+    """Nombre, URL y plan de la tienda recién conectada. No poder leerlos no
+    impide conectarla: queda el aviso en ``last_error``."""
     try:
         info = provider.get_store_info(connection)
     except ProviderError as exc:
@@ -164,16 +260,149 @@ def connect_store(provider, code, user=None):
         connection.preferences = dict(connection.preferences or {}, features=list(info.features))
         connection.save(update_fields=["name", "store_url", "preferences", "updated_at"])
 
-    # Registrar webhooks e importar pedidos lleva varias llamadas a la API:
-    # lo hace el worker, el callback solo vuelve rápido al frontend.
-    enqueue_store_setup(connection)
 
+def connect_with_own_app(provider, user, shop_domain, client_id, client_secret):
+    """Conexión manual de Shopify: con la app que el comerciante creó en su
+    propio Dev Dashboard e instaló en su tienda, no con la nuestra. Sirve
+    cuando no puede o no quiere instalar nuestra app. Pide el token en el
+    momento (si las credenciales no sirven, ``ProviderError`` y no se guarda
+    nada) y guarda el client ID en ``preferences`` y el secreto, cifrado, en
+    ``webhook_secret``: con él se renueva el token cada 24 horas y se
+    verifican los webhooks de esa app."""
+    oauth = provider.own_app_token(shop_domain, client_id, client_secret)
+
+    def apply(connection):
+        connection.set_tokens(oauth)
+        connection.scopes = oauth.scopes[:500]
+        connection.webhook_secret = client_secret
+        connection.preferences = dict(connection.preferences or {}, **{OWN_APP_CLIENT_ID_PREF: client_id})
+
+    connection, created, owner_conflict = _upsert_connection(provider.platform, oauth.external_store_id, user, apply)
+    _load_store_info(provider, connection)
+    enqueue_store_setup(connection)
     return ConnectResult(
         connection=connection,
         created=created,
         needs_claim=connection.owner_id is None,
         owner_conflict=owner_conflict,
     )
+
+
+def _upsert_connection(platform, external_store_id, user, apply_credentials):
+    """Crea o reactiva la conexión de esa tienda con credenciales nuevas
+    (``apply_credentials(connection)``). Devuelve ``(connection, created,
+    owner_conflict)``: una tienda que ya es de OTRA cuenta conserva su dueño
+    (las credenciales se actualizan igual: quien las dio administra la
+    tienda)."""
+    owner_conflict = False
+    with transaction.atomic():
+        connection = (
+            StoreConnection.objects.select_for_update()
+            .filter(platform=platform, external_store_id=external_store_id)
+            .first()
+        )
+        created = connection is None
+        if created:
+            connection = StoreConnection(platform=platform, external_store_id=external_store_id, owner=user)
+        elif user is not None:
+            if connection.owner_id is None:
+                connection.owner = user
+            elif connection.owner_id != user.pk:
+                owner_conflict = True
+
+        apply_credentials(connection)
+        connection.status = StoreConnection.Status.ACTIVE
+        connection.last_error = ""
+        connection.connected_at = timezone.now()
+        connection.disconnected_at = None
+        connection.save()
+    return connection, created, owner_conflict
+
+
+def connect_with_credentials(provider, user, site_url, key, secret, auth_mode="basic"):
+    """Conecta una tienda cuyas credenciales son claves de API y no un código
+    OAuth (WooCommerce, por los dos caminos: las que POSTea su autorización y
+    las que pega el comerciante). No llama a la tienda: con la autorización
+    automática, la tienda está esperando que le contestemos, y en un hosting
+    chico pedirle algo en ese momento puede trabar las dos puntas. Los datos
+    de la tienda, los webhooks y la importación los hace el worker
+    (``enqueue_store_setup``)."""
+    from .providers.woocommerce.provider import credentials_token, external_store_id_for
+
+    return connect_with_api_credentials(
+        provider,
+        user,
+        external_store_id=external_store_id_for(site_url),
+        store_url=site_url,
+        token=credentials_token(key, secret),
+        scopes="read_write",
+        preferences={"woo_auth": auth_mode},
+    )
+
+
+def connect_with_api_credentials(provider, user, *, external_store_id, store_url, token, scopes="", preferences=None):
+    """Guarda las credenciales permanentes de una tienda (claves de API que
+    no vencen: WooCommerce, VTEX) y lanza su configuración en el worker.
+    ``token`` es lo que el proveedor sabe leer de ``access_token``."""
+
+    def apply(connection):
+        connection.access_token = token
+        connection.refresh_token = ""
+        connection.token_expires_at = None
+        connection.refresh_token_expires_at = None
+        connection.store_url = store_url[:200]
+        connection.scopes = scopes[:500]
+        connection.preferences = dict(connection.preferences or {}, **(preferences or {}))
+
+    connection, created, owner_conflict = _upsert_connection(provider.platform, external_store_id, user, apply)
+    enqueue_store_setup(connection)
+    return ConnectResult(
+        connection=connection,
+        created=created,
+        needs_claim=connection.owner_id is None,
+        owner_conflict=owner_conflict,
+    )
+
+
+def enqueue_due_reconciliations(now=None):
+    """Encola el repaso de las tiendas cuyos webhooks no alcanzan
+    (``StoreProvider.supports_reconciliation``) y no se repasaron hace
+    ``StoreProvider.reconcile_minutes``. Lo llama el worker en cada vuelta. El
+    repaso trae los pedidos modificados desde el anterior (con 10 minutos de
+    margen: un pedido modificado mientras corría el anterior no se pierde) y
+    vuelve a activar los webhooks. Devuelve cuántas tiendas encoló."""
+    from .providers import all_providers
+
+    now = now or timezone.now()
+    # Cada plataforma con su intervalo: VTEX lee su feed seguido, WooCommerce
+    # repasa pedidos cada media hora (``StoreProvider.reconcile_minutes``).
+    intervals = {
+        provider.platform: timedelta(minutes=provider.reconcile_minutes)
+        for provider in all_providers()
+        if provider.supports_reconciliation
+    }
+    count = 0
+    connections = StoreConnection.objects.filter(
+        platform__in=list(intervals), status=StoreConnection.Status.ACTIVE, owner__isnull=False
+    )
+    for connection in connections:
+        interval = intervals[connection.platform]
+        preferences = connection.preferences or {}
+        last = parse_datetime(str(preferences.get("reconciled_at") or ""))
+        if last is not None and now - last < interval:
+            continue
+        since = (last or connection.connected_at) - timedelta(minutes=10)
+        enqueue_event(
+            platform=connection.platform,
+            event_type=RECONCILE_ORDERS_EVENT,
+            connection=connection,
+            resource_id="1",
+            payload={"updated_after": since.replace(microsecond=0).isoformat(), "started_at": now.isoformat()},
+        )
+        connection.preferences = dict(preferences, reconciled_at=now.isoformat())
+        connection.save(update_fields=["preferences", "updated_at"])
+        count += 1
+    return count
 
 
 def claim_store(token, user):
@@ -215,7 +444,7 @@ def disconnect_store(connection):
     """Desconecta sin borrar: descarta el token y deja de procesar la tienda.
     Desinstalar la app en sí se hace desde el panel de la plataforma."""
     connection.status = StoreConnection.Status.REVOKED
-    connection.access_token = ""
+    connection.clear_tokens()
     connection.disconnected_at = timezone.now()
-    connection.save(update_fields=["status", "access_token_encrypted", "disconnected_at", "updated_at"])
+    connection.save(update_fields=["status", *StoreConnection.TOKEN_FIELDS, "disconnected_at", "updated_at"])
     return connection

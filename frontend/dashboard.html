@@ -6,66 +6,117 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
     <title>Mi Panel</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <link
-      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
-    />
-    <link
-      rel="stylesheet"
-      href="https://cdn.materialdesignicons.com/4.8.95/css/materialdesignicons.min.css"
     />
 
-    <link rel="stylesheet" href="assets/css/dashboard.css" />
+    <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+    <link rel="stylesheet" href="assets/css/dashboard.css?v=2026-11-11" />
   </head>
   <body>
     <div class="layout">
-      <header class="topbar">
-        <div class="topbar-user">
-          <img
-            class="avatar"
-            id="userAvatar"
-            src="https://api.dicebear.com/7.x/avataaars/svg?seed=user"
-            alt=""
-          />
-          <div class="topbar-user-info">
-            <span class="topbar-user-name" id="userName">—</span>
-            <span class="topbar-user-email" id="userEmail">—</span>
-          </div>
-        </div>
-        <div class="topbar-actions">
-          <a
-            class="btn btn-outline"
-            id="backToAdminLink"
-            href="gestionuser.html"
-            style="display:none;"
-            >Volver al panel de administración</a
-          >
-          <button class="btn btn-outline" id="logoutBtn" type="button">
-            Cerrar sesión
-          </button>
-        </div>
-      </header>
+      <!-- La barra compartida (assets/js/topbar.js): panel, comercio, cuenta.
+           "Administración" solo para quien puede ver usuarios (el admin). -->
+      <header class="topbar" id="appTopbar" data-links='[{"href": "gestionuser.html", "label": "Administración", "perm": "users.view"}]'></header>
 
       <main class="main">
-        <div class="main-heading">
-          <h1>Mi panel</h1>
-          <p>Elegí una sección para continuar.</p>
+        <!-- Cabecera: la fecha y el título a la izquierda, el buscador de
+             funciones a la derecha (dashboard.js, setupToolSearch: busca en
+             todas las herramientas a las que el usuario tiene acceso, también
+             las que no entran en las tarjetas). -->
+        <div class="dash-head">
+          <div class="main-heading">
+            <span class="dash-date" id="dashboardDate"></span>
+            <h1 id="dashboardTitle">Hoy</h1>
+            <p>Lo que tu comercio tiene pendiente y por dónde seguir.</p>
+          </div>
+
+          <div class="tool-search" id="toolSearch" role="search">
+            <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+            <input
+              type="search"
+              id="toolSearchInput"
+              placeholder="Buscar una función…"
+              autocomplete="off"
+              role="combobox"
+              aria-expanded="false"
+              aria-controls="toolSearchResults"
+              aria-label="Buscar una función: planilla, impresora, tarifas"
+            />
+            <kbd class="tool-search-key" aria-hidden="true">/</kbd>
+            <ul id="toolSearchResults" class="tool-search-results" role="listbox" hidden></ul>
+          </div>
         </div>
 
         <p id="dashboardMessage" class="dashboard-message" role="status" aria-live="polite" style="display:none;"></p>
+        <!-- El admin sin comercio: puede crear uno o sumarse (dashboard.js). -->
+        <p id="noTeamNotice" class="dashboard-message info" hidden>
+          No estás trabajando en ningún comercio.
+          <a href="comercio_inicio.html">Crear uno o sumarte a uno</a>
+        </p>
+        <!-- Invitaciones a un comercio (dashboard.js / loadInvitationNotice). -->
+        <p id="invitationNotice" class="dashboard-message info" hidden></p>
+        <!-- Pedidos de ejemplo cargados (utils.js, renderSampleOrdersNotice). -->
+        <div id="sampleNotice" class="sample-notice" role="status" hidden></div>
 
-        <div class="summary-grid" id="summaryGrid" style="display:none;"></div>
+        <!-- Bandeja de trabajo (dashboard.js / loadToday): los números del día
+             (GET /orders/summary/) y "Qué hacer ahora", que junta lo pendiente
+             con los avisos del comercio (GET /notices/). -->
+        <section id="onboardingBox" class="onboarding" aria-label="Primeros pasos" hidden></section>
+        <section id="todayStats" class="today-stats" aria-label="Números de hoy" hidden></section>
+        <section id="todoBox" class="todo" aria-labelledby="todoTitle" hidden>
+          <div class="todo-head">
+            <h2 class="todo-title" id="todoTitle">Qué hacer ahora</h2>
+            <span class="today-updated" id="todayUpdated" aria-live="off"></span>
+          </div>
+          <ul class="todo-list" id="todoList"></ul>
+        </section>
 
+        <!-- La semana: entraron vs. despachados por día (dashboard_week.js). -->
+        <section id="weekBox" class="week" aria-labelledby="weekTitle" hidden>
+          <div class="week-head">
+            <div>
+              <h2 class="todo-title" id="weekTitle">La semana</h2>
+              <p class="week-summary" id="weekSummary"></p>
+            </div>
+            <ul class="week-legend" aria-label="Referencias">
+              <li><i class="week-key week-entered" aria-hidden="true"></i>Entraron</li>
+              <li><i class="week-key week-dispatched" aria-hidden="true"></i>Despachados</li>
+            </ul>
+          </div>
+          <div class="week-chart-wrap">
+            <div class="week-chart" id="weekChart"></div>
+            <div class="week-tooltip" id="weekTooltip" role="status" hidden></div>
+          </div>
+          <details class="week-table">
+            <summary>Ver como tabla</summary>
+            <table>
+              <thead><tr><th scope="col">Día</th><th scope="col">Entraron</th><th scope="col">Despachados</th></tr></thead>
+              <tbody id="weekTableBody"></tbody>
+            </table>
+          </details>
+        </section>
+
+        <h2 class="tools-title" id="toolsTitle">Todas las herramientas</h2>
         <div id="menuGroups">
-          <p class="menu-loading">Cargando...</p>
+          <p class="menu-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
         </div>
       </main>
     </div>
 
     <script src="assets/js/config.js"></script>
     <script src="assets/js/auth.js"></script>
-    <script src="assets/js/utils.js"></script>
-    <script src="assets/js/dashboard.js"></script>
+    <script src="assets/js/utils.js?v=2026-10-29"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/dashboard_week.js"></script>
+    <script src="assets/js/dashboard.js?v=2026-11-11"></script>
   </body>
 </html>

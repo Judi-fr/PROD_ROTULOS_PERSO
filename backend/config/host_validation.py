@@ -24,7 +24,9 @@ from django.http.request import split_domain_port, validate_host
 class AllowedCIDRMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-        self.allowed_hosts = list(settings.ALLOWED_HOSTS_ORIGINAL)
+        # La variable de entorno se escribe a mano: "a, b" deja " b" con el
+        # espacio, y ese host nunca matchearía.
+        self.allowed_hosts = [h.strip() for h in settings.ALLOWED_HOSTS_ORIGINAL if h.strip()]
         self.networks = [
             ipaddress.ip_network(net, strict=False) for net in settings.ALLOWED_CIDR_NETS
         ]

@@ -5,11 +5,11 @@
 const ROLES_URL = `${window.APP_CONFIG.API_BASE}/auth/roles/`;
 const PERMISSIONS_URL = `${window.APP_CONFIG.API_BASE}/auth/permissions/`;
 
+// Los dos roles fijos (2026-10-21; antes también Diseñador y Operador, que
+// pasaron a Comerciante). Todo otro rol es personal de la plataforma.
 const ROLE_DEFINITIONS = [
   { key: "admin", label: "Administrador" },
-  { key: "designer", label: "Diseñador" },
-  { key: "operator", label: "Operador" },
-  { key: "subscriber", label: "Suscriptor" },
+  { key: "subscriber", label: "Comerciante" },
 ];
 // La pantalla NO tiene lista de permisos: los muestra TODOS los que devuelve
 // /auth/permissions/, agrupados por la categoría que trae cada uno y con el
@@ -29,13 +29,17 @@ const CATEGORY_LABELS = {
   perfil: "PERFIL PROPIO",
   users: "USUARIOS",
   orders: "PEDIDOS Y ENVÍOS",
+  stats: "ESTADÍSTICAS DEL COMERCIO",
   labels: "RÓTULOS",
   plantillas: "PLANTILLAS Y VARIABLES",
   documents: "DOCUMENTOS",
   processing: "IMPORTACIÓN POR FOTO",
   support: "SOPORTE",
   integrations: "INTEGRACIONES",
+  catalogs: "CATÁLOGOS",
+  monitoring: "MONITOREO",
   audit: "AUDITORÍA",
+  reports: "REPORTES",
 };
 
 // Orden de las secciones: de lo más cotidiano a lo más administrativo. Lo que
@@ -43,6 +47,7 @@ const CATEGORY_LABELS = {
 const CATEGORY_ORDER = [
   "perfil",
   "orders",
+  "stats",
   "labels",
   "plantillas",
   "documents",
@@ -50,18 +55,19 @@ const CATEGORY_ORDER = [
   "support",
   "users",
   "integrations",
+  "catalogs",
+  "monitoring",
+  "reports",
   "audit",
 ];
 
 // Algunos permisos comparten categoría en el backend pero son otra cosa para
-// quien los asigna: el perfil propio no es administrar usuarios, y las
-// plantillas no son los rótulos. Se reagrupan por prefijo de la clave, que es
+// quien los asigna: el perfil propio no es administrar usuarios. Se reagrupan por prefijo de la clave, que es
 // un dato y no una lista de permisos, así que sigue sin haber nada que
 // actualizar cuando se agrega uno.
 const CATEGORY_BY_PREFIX = [
   ["users.me.", "perfil"],
-  ["plantillas.", "plantillas"],
-  ["variables.", "plantillas"],
+  ["stats.", "stats"],
 ];
 
 const MANAGEABLE_ROLE_KEYS = new Set(ROLE_DEFINITIONS.map((role) => role.key));
@@ -94,6 +100,8 @@ let permissionCatalog = [];
 let selectedRole = null;
 let rolesLoaded = false;
 let permissionsLoaded = false;
+// Lo guardado del rol elegido, para saber si hay cambios sin guardar.
+let savedPermissionCodes = new Set();
 
 function showRolesMessage(text, type = "error") {
   const message = document.getElementById("rolesMessage");
@@ -132,26 +140,47 @@ function renderRoles() {
   if (!list) return;
 
   list.innerHTML = "";
+  const heading = (text) => {
+    const el = document.createElement("p");
+    el.className = "roles-list-heading";
+    el.textContent = text;
+    list.appendChild(el);
+  };
+  heading("Fijos");
+  let staffHeadingShown = false;
   roles.forEach((role) => {
     const isBasic = MANAGEABLE_ROLE_KEYS.has(role.key);
+    if (!isBasic && !staffHeadingShown) {
+      heading("Personal de la plataforma");
+      staffHeadingShown = true;
+    }
     const row = document.createElement("div");
     row.className = "role-selector-wrap";
 
     const button = document.createElement("button");
     button.type = "button";
     button.className = "role-selector";
-    button.textContent = role.label;
     button.dataset.roleId = getRoleId(role);
     button.classList.toggle("active", getRoleId(selectedRole) === getRoleId(role));
-    button.addEventListener("click", () => loadRolePermissions(getRoleId(role)));
+    const name = document.createElement("span");
+    name.textContent = role.label;
+    if (role.locked) name.insertAdjacentHTML("beforeend", ' <i class="ph ph-lock-simple" aria-label="Bloqueado"></i>');
+    if (role.locked) button.title = role.locked_reason || "";
+    const kind = document.createElement("small");
+    kind.textContent =
+      role.key === "admin" ? "Todo el sistema" : role.key === "subscriber" ? "Dueño de un comercio" : "Una parte del admin";
+    button.append(name, kind);
+    button.addEventListener("click", () => selectRole(getRoleId(role)));
     row.appendChild(button);
 
-    // Botón "Eliminar" solo para roles personalizados (no básicos).
+    // Eliminar solo para roles personalizados (no básicos).
     if (!isBasic) {
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "role-delete-btn";
-      deleteBtn.textContent = "Eliminar";
+      deleteBtn.title = `Eliminar el rol ${role.label}`;
+      deleteBtn.setAttribute("aria-label", deleteBtn.title);
+      deleteBtn.innerHTML = '<i class="ph ph-trash" aria-hidden="true"></i>';
       deleteBtn.dataset.roleId = getRoleId(role);
       deleteBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -192,9 +221,24 @@ function renderRolePermissions(permissionCodes = []) {
   categorias.forEach((categoria) => {
     const groupEl = document.createElement("section");
     groupEl.className = "permission-group";
+    const head = document.createElement("div");
+    head.className = "permission-group-head";
     const title = document.createElement("h3");
     title.textContent = CATEGORY_LABELS[categoria] || categoria.toUpperCase();
-    groupEl.appendChild(title);
+    const count = document.createElement("span");
+    count.className = "permission-group-count";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "link-btn permission-group-toggle";
+    // Marca o desmarca todos los visibles del grupo (respeta la búsqueda).
+    toggle.addEventListener("click", () => {
+      const boxes = [...groupEl.querySelectorAll(".permission-option:not([hidden]) input")];
+      const check = !boxes.every((box) => box.checked);
+      boxes.forEach((box) => (box.checked = check));
+      refreshPermissionsState();
+    });
+    head.append(title, count, toggle);
+    groupEl.appendChild(head);
 
     const items = porCategoria
       .get(categoria)
@@ -212,6 +256,7 @@ function renderRolePermissions(permissionCodes = []) {
       checkbox.type = "checkbox";
       checkbox.value = code;
       checkbox.checked = assigned.has(code);
+      checkbox.addEventListener("change", refreshPermissionsState);
       const text = document.createElement("span");
       text.textContent = permissionLabel(permission);
       option.append(checkbox, text);
@@ -220,7 +265,82 @@ function renderRolePermissions(permissionCodes = []) {
     content.appendChild(groupEl);
   });
 
-  if (saveButton) saveButton.disabled = !selectedRole;
+  savedPermissionCodes = assigned;
+  const heading = document.getElementById("selectedRoleName");
+  if (heading) heading.textContent = selectedRole ? `Permisos de «${selectedRole.label}»` : "Permisos";
+
+  // Rol bloqueado (el admin, que tiene todo siempre, o el propio): se ve,
+  // no se toca. El backend lo rechaza igual (RolePermissionsView).
+  const locked = Boolean(selectedRole && selectedRole.locked);
+  content.classList.toggle("is-locked", locked);
+  content.querySelectorAll("input").forEach((box) => (box.disabled = locked));
+  content.querySelectorAll(".permission-group-toggle").forEach((toggle) => (toggle.hidden = locked));
+  const note = document.getElementById("rolesLockedNote");
+  if (note) {
+    note.hidden = !locked;
+    note.textContent = locked ? selectedRole.locked_reason || "" : "";
+  }
+  document.querySelector(".roles-permissions-card .roles-card-actions")?.toggleAttribute("hidden", locked);
+
+  applyPermissionSearch();
+  if (saveButton) saveButton.disabled = true;
+}
+
+// Contadores ("12 de 49", "3/5" por grupo), el texto de "Marcar todos" y si
+// hay cambios sin guardar: Guardar y Descartar solo se habilitan entonces.
+function refreshPermissionsState() {
+  const boxes = [...document.querySelectorAll('#rolePermissionsContent input[type="checkbox"]')];
+  const checked = boxes.filter((box) => box.checked);
+  const counter = document.getElementById("permissionsCount");
+  if (counter) counter.textContent = boxes.length ? `${checked.length} de ${boxes.length} permisos` : "";
+
+  document.querySelectorAll("#rolePermissionsContent .permission-group").forEach((group) => {
+    const all = [...group.querySelectorAll("input")];
+    const visible = [...group.querySelectorAll(".permission-option:not([hidden]) input")];
+    group.querySelector(".permission-group-count").textContent = `${all.filter((b) => b.checked).length}/${all.length}`;
+    group.querySelector(".permission-group-toggle").textContent =
+      visible.length && visible.every((b) => b.checked) ? "Desmarcar todos" : "Marcar todos";
+  });
+
+  const current = new Set(checked.map((box) => box.value));
+  const dirty =
+    current.size !== savedPermissionCodes.size || [...current].some((code) => !savedPermissionCodes.has(code));
+  const saveButton = document.getElementById("saveRolePermissions");
+  const discardButton = document.getElementById("discardRolePermissions");
+  const dirtyNote = document.getElementById("rolesDirty");
+  if (saveButton) saveButton.disabled = !selectedRole || !dirty;
+  if (discardButton) discardButton.disabled = !dirty;
+  if (dirtyNote) dirtyNote.hidden = !dirty;
+  return dirty;
+}
+
+function hasUnsavedPermissions() {
+  return Boolean(document.querySelector("#rolePermissionsContent input")) && refreshPermissionsState();
+}
+
+// Filtra por nombre o clave; un grupo sin coincidencias se oculta entero.
+function applyPermissionSearch() {
+  const term = (document.getElementById("permissionSearch")?.value || "").trim().toLowerCase();
+  document.querySelectorAll("#rolePermissionsContent .permission-group").forEach((group) => {
+    let anyVisible = false;
+    group.querySelectorAll(".permission-option").forEach((option) => {
+      const match = !term || option.textContent.toLowerCase().includes(term) || option.title.toLowerCase().includes(term);
+      option.hidden = !match;
+      anyVisible = anyVisible || match;
+    });
+    group.hidden = !anyVisible;
+  });
+  refreshPermissionsState();
+}
+
+// Cambiar de rol con cambios sin guardar pregunta antes: se perderían.
+async function selectRole(roleId) {
+  if (selectedRole && String(getRoleId(selectedRole)) === String(roleId)) return;
+  if (hasUnsavedPermissions()) {
+    const leave = await appConfirm("¿Descartar los cambios sin guardar de este rol?", { confirmLabel: "Descartar" });
+    if (!leave) return;
+  }
+  await loadRolePermissions(roleId);
 }
 
 async function loadPermissionCatalog() {
@@ -321,8 +441,8 @@ async function saveRolePermissions() {
     console.error("Error al guardar permisos del rol:", err);
     showRolesMessage(err.message || "No se pudieron guardar los permisos.");
   } finally {
-    button.disabled = false;
     button.textContent = originalText;
+    refreshPermissionsState();
   }
 }
 
@@ -385,8 +505,8 @@ async function deleteRole(roleId) {
     return;
   }
 
-  const confirmed = window.confirm(
-    `¿Eliminar el rol "${role.label}"?\n\nLos usuarios que pertenecían a este rol pasarán a "Suscriptor". Esta acción no se puede deshacer.`
+  const confirmed = await appConfirm(
+    `¿Eliminar el rol "${role.label}"?\n\nLos usuarios que pertenecían a este rol pasarán a "Comerciante". Esta acción no se puede deshacer.`
   );
   if (!confirmed) return;
 
@@ -427,11 +547,44 @@ document.getElementById("saveRolePermissions")
     event.preventDefault();
     saveRolePermissions();
   });
-document.getElementById("createRoleBtn")
-  ?.addEventListener("click", (event) => {
+document.getElementById("createRoleForm")
+  ?.addEventListener("submit", (event) => {
     event.preventDefault();
     createRole();
   });
+document.getElementById("discardRolePermissions")
+  ?.addEventListener("click", () => renderRolePermissions([...savedPermissionCodes]));
+document.getElementById("permissionSearch")?.addEventListener("input", applyPermissionSearch);
+window.addEventListener("beforeunload", (event) => {
+  if (hasUnsavedPermissions()) event.preventDefault();
+});
+
+// Pestañas: Roles de la plataforma / Perfiles de los comercios. La segunda la
+// carga roles_perfiles.js (window.TeamProfilesTab) la primera vez que se abre.
+function showRolesTab(name) {
+  // El aviso de una acción no sigue visible al pasar a otra pestaña.
+  const message = document.getElementById("pageMessage");
+  if (message) {
+    message.hidden = true;
+    message.style.display = "none";
+  }
+  document.querySelectorAll(".reports-tab").forEach((tab) => {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".roles-panel").forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== name;
+  });
+  if (name === "perfiles") window.TeamProfilesTab?.open();
+}
+
+document.querySelectorAll(".reports-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    history.replaceState(null, "", `#${tab.dataset.tab}`);
+    showRolesTab(tab.dataset.tab);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Esta pantalla es exclusiva de ADMIN. Sin ese modo, se redirige al
@@ -457,3 +610,4 @@ async function bootstrap() {
 }
 
 bootstrap();
+showRolesTab(window.location.hash === "#perfiles" ? "perfiles" : "roles");

@@ -50,6 +50,14 @@ class AllowedCIDRMiddlewareTests(SimpleTestCase):
         with self.assertRaises(DisallowedHost):
             self._call("3.135.46.69")
 
+    @override_settings(ALLOWED_HOSTS_ORIGINAL=["rotulos.example.com", " 3.140.15.131 ", ""])
+    def test_ignora_espacios_alrededor_de_cada_host(self):
+        # La variable de entorno se escribe a mano ("a, b"): django-environ
+        # separa por coma sin recortar, y " 3.140.15.131" nunca matcheaba.
+        middleware = AllowedCIDRMiddleware(lambda request: HttpResponse("ok"))
+        request = RequestFactory().get("/", HTTP_HOST="3.140.15.131")
+        self.assertEqual(middleware(request).status_code, 200)
+
     @override_settings(ALLOWED_CIDR_NETS=[])
     def test_sin_rangos_solo_valen_los_hosts(self):
         middleware = AllowedCIDRMiddleware(lambda request: HttpResponse("ok"))

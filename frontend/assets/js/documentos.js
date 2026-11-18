@@ -13,7 +13,7 @@ const POLL_INTERVAL_MS = 4000;
 const SEARCH_DEBOUNCE_MS = 300;
 
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
-const getAccessToken = () => window.Auth.getAccessToken();
+const hasSession = () => window.Auth.hasSession();
 const getCurrentUser = () => window.Auth.getCurrentUser();
 
 let searchTerm = "";
@@ -76,7 +76,7 @@ async function downloadDocument(doc) {
 }
 
 async function deleteDocument(doc) {
-  const confirmed = window.confirm(`¿Eliminar "${doc.name}"?`);
+  const confirmed = await appConfirm(`¿Eliminar "${doc.name}"?`);
   if (!confirmed) return;
   try {
     const response = await apiFetch(`${DOCUMENTS_URL}${doc.id}/`, { method: "DELETE" });
@@ -100,12 +100,16 @@ const listEl = document.getElementById("documentList");
 
 function renderEmptyState() {
   if (searchTerm || statusFilter) {
-    listEl.innerHTML =
-      '<p class="empty-state">No hay documentos que coincidan con la búsqueda/filtro.</p>';
+    listEl.innerHTML = appEmptyState({ icon: "doc", title: "No hay documentos que coincidan con la búsqueda o el filtro" });
     return;
   }
-  listEl.innerHTML =
-    '<p class="empty-state">Todavía no generaste ningún documento. Probá "Generar por lote" desde Mis rótulos.</p>';
+  listEl.innerHTML = appEmptyState({
+    icon: "doc",
+    title: "Todavía no generaste rótulos",
+    text: "Cuando imprimas los rótulos de tus pedidos, el archivo queda acá para descargarlo cuando quieras.",
+    actionLabel: "Imprimir rótulos",
+    actionHref: "imprimir_rotulos.html",
+  });
 }
 
 function statusBadge(doc) {
@@ -122,7 +126,7 @@ function buildItem(doc) {
   info.className = "document-item-info";
   info.innerHTML = `
     <p class="document-item-title">${escapeHtml(doc.name)}</p>
-    <p class="document-item-meta">${escapeHtml(doc.kind_label || doc.kind)} · ${doc.item_count} rótulo(s) · ${formatSize(doc.size_bytes)}</p>
+    <p class="document-item-meta">${escapeHtml(doc.kind_label || doc.kind)} · ${doc.item_count} ${doc.item_count === 1 ? "rótulo" : "rótulos"} · ${formatSize(doc.size_bytes)}</p>
     <p class="document-item-meta">Creado: ${formatDate(doc.created_at)}</p>
     ${doc.status === "failed" && doc.error_message ? `<p class="document-item-error">${escapeHtml(doc.error_message)}</p>` : ""}
     ${doc.status === "ready" && doc.error_message ? `<p class="document-item-meta">${escapeHtml(doc.error_message)}</p>` : ""}
@@ -223,14 +227,34 @@ document.getElementById("statusFilter")?.addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Logout: misma lógica que pedidos.js/saved_labels.js (window.Auth.logout).
+// Logout: misma lógica que pedidos.js (window.Auth.logout).
 // ---------------------------------------------------------------------------
 const logoutBtn = document.getElementById("logoutBtn");
 if (logoutBtn) {
   logoutBtn.addEventListener("click", () => window.Auth.logout());
 }
 
+// Vuelta de imprimir_rotulos.html: ?labels=<pedidos>[&dispatched=<n>][&generating=1]. Se
+// confirma lo que se hizo y se limpia la URL, para que recargar no lo repita.
+function showBatchResult() {
+  const params = new URLSearchParams(window.location.search);
+  const labels = Number(params.get("labels"));
+  if (!labels) return;
+  window.history.replaceState(null, "", window.location.pathname);
+  const dispatched = Number(params.get("dispatched"));
+  // Un lote grande se genera en segundo plano (apps.labels.batch_jobs): queda
+  // "Procesando" en la lista, que se actualiza sola hasta que está listo.
+  let text = params.get("generating")
+    ? `Estamos generando los rótulos de ${labels} pedidos: el archivo aparece abajo como "Procesando" y se puede descargar apenas esté listo (no hace falta quedarse en esta página).`
+    : `Listo: generamos los rótulos de ${labels} ${labels === 1 ? "pedido" : "pedidos"}. Descargalos desde la lista de abajo.`;
+  if (dispatched) {
+    text += ` Además se ${dispatched === 1 ? "marcó 1 pedido" : `marcaron ${dispatched} pedidos`} como despachado${dispatched === 1 ? "" : "s"}.`;
+  }
+  showMessage(text, "success");
+}
+
 async function init() {
+  showBatchResult();
   try {
     const response = await apiFetch(ME_URL);
     if (response.ok) {
@@ -242,7 +266,7 @@ async function init() {
   await loadDocuments();
 }
 
-if (!getAccessToken()) {
+if (!hasSession()) {
   window.location.replace("index.html");
 } else {
   init();

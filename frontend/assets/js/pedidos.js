@@ -1,4 +1,6 @@
-// Direcciones y pedidos propios (self-service) para usuarios no administradores.
+// Mis pedidos: la lista de pedidos (de las tiendas y cargados a mano) y el
+// diálogo para cargar uno a mano. Las direcciones propias tienen su página
+// (direcciones.html, assets/js/direcciones.js); acá solo se leen para el diálogo.
 // Sesión y apiFetch salen de assets/js/auth.js (window.Auth), compartido con
 // el resto del frontend (ver dashboard.js / perfil.js / usuarios.js).
 
@@ -18,6 +20,8 @@ const STATUS_LABELS = {
   cancelled: "Cancelado",
 };
 
+const PLATFORM_LABELS = { tiendanube: "Tiendanube", shopify: "Shopify" };
+
 let addresses = [];
 // Paginación del historial: el backend pagina (PageNumberPagination) y antes
 // se mostraba solo la primera página, así que un pedido viejo no aparecía por
@@ -25,20 +29,56 @@ let addresses = [];
 let ordersPage = 1;
 let ordersHasNext = false;
 
-const getAccessToken = () => window.Auth.getAccessToken();
+// Vista que llega desde un número del panel (pedidos.html?vista=...): recorta
+// la lista con los mismos filtros que usa el resumen del día
+// (orders/summary_views.py), así lo que se ve es lo que se contó. Se quita
+// con "Ver todos" del aviso de arriba de la lista.
+const ORDER_VIEWS = {
+  para_despachar: {
+    label: "Pedidos con rótulo, listos para despachar",
+    params: { status: "created,preparing", labels_printed: "1" },
+    empty: "No hay pedidos con rótulo esperando el despacho.",
+  },
+  demorados: {
+    label: "Pedidos pendientes que esperan hace más de 2 días",
+    params: { status: "created,preparing", older_than_days: "2" },
+    empty: "No hay pedidos demorados.",
+  },
+  en_camino: {
+    label: "Pedidos en camino",
+    params: { status: "dispatched,in_transit" },
+    empty: "No hay pedidos en camino.",
+  },
+};
+const requestedView = new URLSearchParams(location.search).get("vista");
+let orderView = ORDER_VIEWS[requestedView] ? requestedView : "";
+
+// Filtro por tienda: "" = todas, "manual" = cargados a mano, o el id de una
+// tienda (el backend acepta ?store=<id>|manual). Puede llegar elegido desde el
+// panel (pedidos.html?tienda=...).
+let selectedStore = new URLSearchParams(location.search).get("tienda") || "";
+// id de tienda -> número de color (store-color-N en pedidos.css). Se asigna
+// por orden de alta (id), así cada tienda conserva su color aunque se sumen
+// otras: las tiendas nunca se borran, solo se desconectan.
+let storeColors = new Map();
+// Ids de las tiendas en el orden de la columna: el mismo orden para los grupos.
+let storeOrder = [];
+const STORE_COLOR_COUNT = 6;
+// Firma de la lista de tiendas ya dibujada, para no rearmar los botones si
+// no cambió nada al volver a la pestaña.
+let storesSignature = "";
+// Lo que se escribió en el buscador (?search= del backend) y el número del
+// último pedido a la API: escribiendo rápido, una respuesta vieja que llega
+// tarde no pisa la lista nueva.
+let orderSearch = (new URLSearchParams(location.search).get("buscar") || "").trim();
+let ordersRequest = 0;
+
+const hasSession = () => window.Auth.hasSession();
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
 
 // showMessage, getErrorMessage y extractResults salen de assets/js/utils.js.
 // formatDate queda propia acá abajo: esta página no muestra la hora, solo
 // la fecha (a diferencia de la versión de utils.js).
-
-function showFieldMessage(id, text, ok) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = text;
-  el.style.color = ok ? "#16a34a" : "#dc2626";
-  el.style.display = "block";
-}
 
 function formatDate(iso) {
   if (!iso) return "-";
@@ -59,62 +99,27 @@ const getCurrentUser = () => window.Auth.getCurrentUser();
 // DIRECCIONES
 // ---------------------------------------------------------------------------
 
-function addressSummary(address) {
-  const parts = [address.street, address.number].filter(Boolean).join(" ");
-  const cityLine = [address.city, address.state].filter(Boolean).join(", ");
-  return [parts, cityLine].filter(Boolean).join(" — ");
-}
+const NEW_ADDRESS = "__new__";
 
-function renderAddressList() {
-  const container = document.getElementById("addressList");
-  if (!container) return;
-
-  if (addresses.length === 0) {
-    container.innerHTML = '<p class="empty-state">Todavía no agregaste ninguna dirección.</p>';
-    return;
-  }
-
-  container.innerHTML = "";
-  addresses.forEach((address) => {
-    const item = document.createElement("div");
-    item.className = "address-item";
-    item.innerHTML = `
-      <div class="address-item-info">
-        <strong>${escapeHtml(address.label || "Dirección")}${address.is_default ? '<span class="badge-default">Predeterminada</span>' : ""}</strong>
-        <p>${escapeHtml(addressSummary(address))}</p>
-        ${address.reference ? `<p>${escapeHtml(address.reference)}</p>` : ""}
-      </div>
-      <div class="address-item-actions">
-        ${address.is_default ? "" : `<button type="button" class="btn btn-outline btn-small" data-set-default="${escapeHtml(address.id)}">Predeterminada</button>`}
-        <button type="button" class="btn-danger-text" data-delete-address="${escapeHtml(address.id)}">Eliminar</button>
-      </div>
-    `;
-    container.appendChild(item);
-  });
-}
-
+// "Enviar a": las direcciones guardadas y, al final, una nueva que se carga
+// ahí mismo. Sin ninguna guardada, el formulario de la nueva directamente.
 function renderAddressSelect() {
   const select = document.getElementById("orderAddressSelect");
-  const noAddressMsg = document.getElementById("noAddressMsg");
-  const newOrderForm = document.getElementById("newOrderForm");
   if (!select) return;
+  const options = addresses.map((address) => {
+    const who = address.recipient_name || address.label || "Sin nombre de quien recibe";
+    return `<option value="${escapeHtml(address.id)}">${escapeHtml(who)} — ${escapeHtml(addressSummary(address))}</option>`;
+  });
+  options.push(`<option value="${NEW_ADDRESS}">+ Una dirección nueva…</option>`);
+  select.innerHTML = options.join("");
+  document.getElementById("orderAddressPick").hidden = addresses.length === 0;
+  if (addresses.length === 0) select.value = NEW_ADDRESS;
+  syncNewAddressBox();
+}
 
-  if (addresses.length === 0) {
-    select.innerHTML = "";
-    if (noAddressMsg) noAddressMsg.style.display = "block";
-    if (newOrderForm) newOrderForm.style.display = "none";
-    return;
-  }
-
-  if (noAddressMsg) noAddressMsg.style.display = "none";
-  if (newOrderForm) newOrderForm.style.display = "block";
-
-  select.innerHTML = addresses
-    .map(
-      (address) =>
-        `<option value="${escapeHtml(address.id)}">${escapeHtml(address.label || "Dirección")} — ${escapeHtml(addressSummary(address))}</option>`
-    )
-    .join("");
+function syncNewAddressBox() {
+  const isNew = document.getElementById("orderAddressSelect").value === NEW_ADDRESS;
+  document.getElementById("newAddressBox").hidden = !isNew;
 }
 
 async function loadAddresses() {
@@ -123,104 +128,11 @@ async function loadAddresses() {
     if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
     const data = await response.json();
     addresses = extractResults(data);
-    renderAddressList();
     renderAddressSelect();
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error("Error al cargar direcciones:", err);
-    document.getElementById("addressList").innerHTML =
-      '<p class="empty-state">No se pudieron cargar tus direcciones.</p>';
-  }
-}
-
-function resetAddressForm() {
-  ["addrLabel", "addrStreet", "addrNumber", "addrCity", "addrState", "addrPostalCode", "addrReference"].forEach(
-    (id) => {
-      const el = document.getElementById(id);
-      if (el) el.value = "";
-    }
-  );
-  const checkbox = document.getElementById("addrIsDefault");
-  if (checkbox) checkbox.checked = false;
-  const msg = document.getElementById("addressMsg");
-  if (msg) msg.style.display = "none";
-}
-
-async function saveNewAddress() {
-  const payload = {
-    label: document.getElementById("addrLabel").value.trim(),
-    street: document.getElementById("addrStreet").value.trim(),
-    number: document.getElementById("addrNumber").value.trim(),
-    city: document.getElementById("addrCity").value.trim(),
-    state: document.getElementById("addrState").value.trim(),
-    postal_code: document.getElementById("addrPostalCode").value.trim(),
-    reference: document.getElementById("addrReference").value.trim(),
-    is_default: document.getElementById("addrIsDefault").checked,
-  };
-
-  if (!payload.street || !payload.city) {
-    showFieldMessage("addressMsg", "Completá al menos la calle y la ciudad.", false);
-    return;
-  }
-
-  const button = document.getElementById("saveAddressBtn");
-  const originalText = button.textContent;
-  button.disabled = true;
-  button.textContent = "Guardando...";
-
-  try {
-    const response = await apiFetch(ADDRESSES_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(getErrorMessage(data, "No se pudo guardar la dirección."));
-    }
-    resetAddressForm();
-    document.getElementById("addressForm").style.display = "none";
-    await loadAddresses();
-    showMessage("Dirección guardada correctamente.", "success");
-  } catch (err) {
-    if (err.isSessionExpired) return;
-    showFieldMessage("addressMsg", err.message || "No se pudo guardar la dirección.", false);
-  } finally {
-    button.disabled = false;
-    button.textContent = originalText;
-  }
-}
-
-async function setDefaultAddress(id) {
-  try {
-    const response = await apiFetch(`${ADDRESSES_URL}${id}/`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_default: true }),
-    });
-    if (!response.ok) throw new Error("No se pudo actualizar la dirección predeterminada.");
-    await loadAddresses();
-  } catch (err) {
-    if (err.isSessionExpired) return;
-    showMessage(err.message || "No se pudo actualizar la dirección predeterminada.");
-  }
-}
-
-async function deleteAddress(id) {
-  const confirmed = window.confirm("¿Eliminar esta dirección?");
-  if (!confirmed) return;
-
-  try {
-    const response = await apiFetch(`${ADDRESSES_URL}${id}/`, { method: "DELETE" });
-    if (response.status === 204) {
-      await loadAddresses();
-      return;
-    }
-    const data = await response.json().catch(() => ({}));
-    throw new Error(getErrorMessage(data, "No se pudo eliminar la dirección."));
-  } catch (err) {
-    if (err.isSessionExpired) return;
-    showMessage(err.message || "No se pudo eliminar la dirección.");
+    showFieldMessage("orderFormMsg", "No se pudieron cargar tus direcciones.", false);
   }
 }
 
@@ -237,56 +149,145 @@ function renderOrderList(orders) {
   if (!container) return;
 
   if (orders.length === 0) {
-    const filtered = document.getElementById("orderStoreFilter")?.value;
-    container.innerHTML = filtered
-      ? '<p class="empty-state">No hay pedidos para esta tienda.</p>'
-      : '<p class="empty-state">Todavía no hiciste ningún pedido.</p>';
+    // Con una tienda ya conectada no tiene sentido pedir que conecte una.
+    const hasStores = storesSignature !== "" && storesSignature !== "[]";
+    let empty = hasStores
+      ? {
+          icon: "box",
+          title: "Todavía no hay pedidos",
+          text: "Los de tus tiendas aparecen acá apenas entran. Para un envío por fuera, usá «Nuevo pedido», arriba.",
+        }
+      : {
+          icon: "box",
+          title: "Todavía no hay pedidos",
+          text: "Conectá tu tienda y los pedidos entran solos, o cargá uno a mano con «Nuevo pedido», arriba.",
+          actionLabel: "Conectar una tienda",
+          actionHref: "tiendas.html",
+        };
+    if (selectedStore === "manual") empty = { icon: "box", title: "No hay pedidos cargados a mano" };
+    else if (selectedStore) empty = { icon: "box", title: "No hay pedidos de esta tienda" };
+    if (orderView) empty = { icon: "check-circle", title: ORDER_VIEWS[orderView].empty };
+    if (orderSearch) {
+      empty = { icon: "search", title: `Ningún pedido coincide con «${orderSearch}»`, text: "Probá con el número del pedido, el nombre de quien lo recibe o el número de seguimiento." };
+    }
+    container.innerHTML = appEmptyState(empty);
     return;
   }
 
   container.innerHTML = "";
-  orders.forEach((order) => {
-    const statusKey = order.status;
-    const statusLabel = order.status_label || STATUS_LABELS[statusKey] || statusKey;
-    const timeline = (order.status_events || [])
-      .map((event) => `<span class="order-timeline-step">${escapeHtml(event.status_label || STATUS_LABELS[event.status] || event.status)}</span>`)
-      .join("");
-
-    // Acciones: despacho/seguimiento en su propia página (despachar.html).
-    const actions = [];
-    if (order.is_shippable) {
-      actions.push(
-        `<a class="btn btn-outline btn-small" href="despachar.html?pedido=${encodeURIComponent(order.id)}">Despachar / seguimiento</a>`
-      );
+  // En "Todas" los pedidos de la página se agrupan por tienda (en el orden de
+  // la columna de tiendas, los cargados a mano al final), cada grupo con su
+  // encabezado; dentro de cada grupo siguen del más nuevo al más viejo.
+  // Filtrando una tienda no hace falta agrupar.
+  const groups = selectedStore ? [{ storeId: null, orders }] : groupOrdersByStore(orders);
+  groups.forEach((group) => {
+    let target = container;
+    if (!selectedStore) {
+      const section = document.createElement("section");
+      section.className = `order-group ${storeColorClass(group.storeId)}`;
+      section.setAttribute("aria-label", group.label);
+      section.appendChild(orderGroupHead(group));
+      container.appendChild(section);
+      target = section;
     }
-    if (order.is_cancellable) {
-      actions.push(
-        `<button type="button" class="btn btn-outline btn-small" data-cancel-order="${escapeHtml(order.id)}">Cancelar pedido</button>`
-      );
-    }
-
-    // Pedido de tienda: se muestra el número que ve el comerciante en su
-    // tienda (#1001) y de qué tienda viene; los manuales, su id propio.
-    const number = order.external_number || order.id;
-    const storeTag = order.store_connection
-      ? `<span class="store-tag">${escapeHtml(order.store_name || "Tienda")}</span>`
-      : "";
-
-    const item = document.createElement("div");
-    item.className = "order-item";
-    item.innerHTML = `
-      <div class="order-item-header">
-        <div>
-          <div class="order-item-title">Pedido #${escapeHtml(number)}${order.description ? ` — ${escapeHtml(order.description)}` : ""}${storeTag}</div>
-          <p class="order-item-address">${order.address ? escapeHtml(addressSummary(order.address)) : "-"} · ${escapeHtml(formatDate(order.created_at))}</p>
-        </div>
-        <span class="status-badge ${escapeHtml(statusKey)}"><span class="dot"></span>${escapeHtml(statusLabel)}</span>
-      </div>
-      ${timeline ? `<div class="order-timeline">${timeline}</div>` : ""}
-      ${actions.length ? `<div class="order-item-footer">${actions.join("")}</div>` : ""}
-    `;
-    container.appendChild(item);
+    group.orders.forEach((order) => target.appendChild(orderItem(order)));
   });
+}
+
+function groupOrdersByStore(orders) {
+  const byStore = new Map();
+  orders.forEach((order) => {
+    const key = order.store_connection || "manual";
+    if (!byStore.has(key)) {
+      byStore.set(key, {
+        storeId: order.store_connection || null,
+        label: order.store_connection ? order.store_name || "Tienda" : "Cargados a mano",
+        platform: order.store_connection ? PLATFORM_LABELS[order.store_platform] || "" : "",
+        orders: [],
+      });
+    }
+    byStore.get(key).orders.push(order);
+  });
+  const rank = (group) => (group.storeId && storeColors.has(group.storeId) ? storeOrder.indexOf(group.storeId) : Infinity);
+  return [...byStore.values()].sort((a, b) => rank(a) - rank(b));
+}
+
+function orderGroupHead(group) {
+  const head = document.createElement("header");
+  head.className = "order-group-head";
+  const count = group.orders.length;
+  head.innerHTML = `
+    ${storeMonogram(group.storeId ? group.label : "", group.storeId ? "" : "manual")}
+    <div class="order-group-name">
+      <strong>${escapeHtml(group.label)}</strong>
+      ${group.platform ? `<span>${escapeHtml(group.platform)}</span>` : ""}
+    </div>
+    <span class="order-group-count">${count} pedido${count === 1 ? "" : "s"}</span>
+  `;
+  return head;
+}
+
+// Iniciales de la tienda en un cuadrado de su color: es lo que la identifica
+// de un vistazo en la columna de tiendas y en los grupos de pedidos.
+function storeMonogram(name, kind = "") {
+  if (kind === "all" || kind === "manual") {
+    const icon = kind === "all" ? "squares-four" : "pencil-simple-line";
+    return `<span class="store-mono store-mono-${kind}" aria-hidden="true"><i class="ph ph-${icon}"></i></span>`;
+  }
+  const words = String(name || "").split(/[\s\-_.]+/).filter(Boolean);
+  const initials = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || "T").slice(0, 2)).toUpperCase();
+  return `<span class="store-mono" aria-hidden="true">${escapeHtml(initials)}</span>`;
+}
+
+function orderItem(order) {
+  const statusKey = order.status;
+  const statusLabel = order.status_label || STATUS_LABELS[statusKey] || statusKey;
+  // El historial de estados va plegado: el estado actual ya está en la
+  // pastilla, y repetirlo como fila de chips en cada pedido solo hacía ruido.
+  const events = order.status_events || [];
+  const timeline = events
+    .map((event) => `<li><span>${escapeHtml(event.status_label || STATUS_LABELS[event.status] || event.status)}</span>${event.created_at ? `<time>${escapeHtml(formatDate(event.created_at))}</time>` : ""}</li>`)
+    .join("");
+
+  // Despachar, seguimiento y etiqueta los agrega pedidos/envios.js (decorate).
+  // "⋯" al final del pie: el link de seguimiento para el comprador y
+  // cancelar el pedido, que al lado de "Cancelar envío" eran dos botones rojos
+  // pegados y fáciles de confundir.
+  const more = [];
+  if (order.public_tracking_url) {
+    more.push(`<button type="button" class="order-more-item" data-copy-tracking="${escapeHtml(order.public_tracking_url)}"><i class="ph ph-link" aria-hidden="true"></i>Copiar link de seguimiento</button>`);
+  }
+  if (order.is_cancellable) {
+    more.push(`<button type="button" class="btn-danger-text order-cancel" data-cancel-order="${escapeHtml(order.id)}">Cancelar pedido</button>`);
+  }
+  const actions = more.length
+    ? [`<details class="order-more"><summary title="Más acciones" aria-label="Más acciones"><i class="ph ph-dots-three" aria-hidden="true"></i></summary><div class="order-more-menu">${more.join("")}</div></details>`]
+    : [];
+
+  // Pedido de tienda: se muestra el número que ve el comerciante en su
+  // tienda (#1001); los manuales, su id propio. De qué tienda viene lo dicen
+  // el encabezado de su grupo, la columna de tiendas y el borde de su color.
+  const number = order.external_number || order.id;
+  const colorClass = storeColorClass(order.store_connection);
+
+  const item = document.createElement("div");
+  item.className = order.store_connection ? `order-item from-store ${colorClass}` : "order-item";
+  item.innerHTML = `
+    <div class="order-item-header">
+      <div class="order-item-main">
+        <div class="order-item-title"><span class="order-number">#${escapeHtml(number)}</span>${order.is_sample ? '<span class="order-sample-tag" title="Pedido de ejemplo: se borra desde el aviso de arriba">Ejemplo</span>' : ""}${order.description ? `<span class="order-desc" title="${escapeHtml(order.description)}">${escapeHtml(order.description)}</span>` : ""}</div>
+        <p class="order-item-address">${order.address ? escapeHtml([order.address.recipient_name, addressSummary(order.address)].filter(Boolean).join(" · ")) : "Sin dirección"} · ${escapeHtml(formatDate(order.created_at))}</p>
+      </div>
+      <span class="status-badge ${escapeHtml(statusKey)}"><span class="dot"></span>${escapeHtml(statusLabel)}</span>
+    </div>
+    <div class="order-item-bottom">
+      ${order.labels_printed_at ? `<span class="order-printed" title="Primera vez que salió su rótulo"><i class="ph ph-printer" aria-hidden="true"></i>Rótulo impreso ${escapeHtml(formatDate(order.labels_printed_at))}</span>` : ""}
+      ${events.length > 1 ? `<details class="order-history"><summary>Historial (${events.length})</summary><ol>${timeline}</ol></details>` : ""}
+      <div class="order-item-footer">${actions.join("")}</div>
+    </div>
+  `;
+  window.OrderShipping.decorate(order, item);
+  return item;
 }
 
 function renderOrdersPager(data) {
@@ -300,14 +301,21 @@ function renderOrdersPager(data) {
 }
 
 async function loadOrders() {
+  const request = ++ordersRequest;
   try {
-    const store = document.getElementById("orderStoreFilter")?.value;
     const params = new URLSearchParams({ page: String(ordersPage) });
-    if (store) params.set("store", store);
+    if (selectedStore) params.set("store", selectedStore);
+    if (orderSearch) params.set("search", orderSearch);
+    if (orderView) Object.entries(ORDER_VIEWS[orderView].params).forEach(([key, value]) => params.set(key, value));
+    renderOrderViewNotice();
     const response = await apiFetch(`${ORDERS_URL}?${params.toString()}`);
     if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
     const data = await response.json();
-    renderOrderList(extractResults(data));
+    const orders = extractResults(data);
+    // El envío de cada pedido (Andreani) se pide antes de dibujar la lista.
+    await window.OrderShipping.prepare(orders);
+    if (request !== ordersRequest) return;
+    renderOrderList(orders);
     renderOrdersPager(data);
   } catch (err) {
     if (err.isSessionExpired) return;
@@ -317,56 +325,149 @@ async function loadOrders() {
   }
 }
 
-// Filtro por tienda: se arma con las tiendas conectadas del usuario (incluye
-// desconectadas, porque sus pedidos siguen en el historial). Sin tiendas, o
-// si el usuario no puede verlas, el filtro queda oculto.
-async function loadStoreFilter() {
+function renderOrderViewNotice() {
+  const notice = document.getElementById("orderViewNotice");
+  if (!notice) return;
+  notice.hidden = !orderView;
+  if (!orderView) return;
+  document.getElementById("orderViewLabel").textContent = ORDER_VIEWS[orderView].label;
+}
+
+function clearOrderView() {
+  orderView = "";
+  ordersPage = 1;
+  const url = new URL(location.href);
+  url.searchParams.delete("vista");
+  history.replaceState(null, "", url);
+  loadOrders();
+}
+
+// Filtro por tienda: un botón por cada tienda del usuario (incluye las
+// desconectadas, porque sus pedidos siguen en el historial) + "Todas" +
+// "Cargados a mano". Se arma con la API, así una tienda que se conecta
+// aparece sola: al cargar la página y cada vez que se vuelve a esta pestaña.
+// Sin tiendas, o si el usuario no puede verlas, el filtro queda oculto.
+function storeColorClass(storeId) {
+  if (!storeId || !storeColors.has(storeId)) return "";
+  return `store-color-${storeColors.get(storeId)}`;
+}
+
+function storeChip(value, label, { colorClass = "", hint = "", muted = false, kind = "" } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `store-chip ${colorClass}${muted ? " muted" : ""}`;
+  button.dataset.store = value;
+  button.title = hint ? `${label} · ${hint}` : label;
+  button.setAttribute("aria-pressed", String(value === selectedStore));
+  button.innerHTML = `
+    ${storeMonogram(label, kind)}
+    <span class="store-chip-text">
+      <span class="store-chip-name">${escapeHtml(label)}</span>
+      ${hint ? `<span class="store-chip-hint">${escapeHtml(hint)}</span>` : ""}
+    </span>
+  `;
+  return button;
+}
+
+function renderStoreFilter(stores) {
   const field = document.getElementById("orderStoreFilterField");
-  const select = document.getElementById("orderStoreFilter");
-  if (!field || !select) return;
+  const group = document.getElementById("orderStoreFilter");
+  if (!field || !group) return;
+
+  const sorted = [...stores].sort((a, b) => a.id - b.id);
+  storeColors = new Map(sorted.map((store, index) => [store.id, index % STORE_COLOR_COUNT]));
+  storeOrder = sorted.map((store) => store.id);
+
+  // La tienda elegida ya no está (otra cuenta, o se borró): volver a todas.
+  if (selectedStore && selectedStore !== "manual" && !storeColors.has(Number(selectedStore))) {
+    selectedStore = "";
+  }
+
+  group.replaceChildren(
+    storeChip("", "Todas", { hint: "Todas las tiendas", kind: "all" }),
+    ...sorted.map((store) =>
+      storeChip(String(store.id), store.name || `Tienda ${store.external_store_id}`, {
+        colorClass: storeColorClass(store.id),
+        hint: store.status === "revoked" ? "desconectada" : PLATFORM_LABELS[store.platform] || store.platform_label || "",
+        muted: store.status === "revoked",
+      })
+    ),
+    storeChip("manual", "Cargados a mano", { kind: "manual" })
+  );
+  field.hidden = sorted.length === 0;
+}
+
+async function loadStoreFilter() {
   try {
     const response = await apiFetch(STORES_URL);
-    if (!response.ok) return;
+    if (!response.ok) return false;
     const stores = extractResults(await response.json());
-    if (stores.length === 0) return;
-
-    stores.forEach((store) => {
-      const option = document.createElement("option");
-      option.value = store.id;
-      option.textContent = store.status === "revoked" ? `${store.name} (desconectada)` : store.name;
-      select.appendChild(option);
-    });
-    const manual = document.createElement("option");
-    manual.value = "manual";
-    manual.textContent = "Pedidos cargados a mano";
-    select.appendChild(manual);
-
-    select.addEventListener("change", () => {
-      ordersPage = 1;
-      loadOrders();
-    });
-    field.style.display = "";
+    const signature = JSON.stringify(stores.map((store) => [store.id, store.name, store.status]));
+    if (signature === storesSignature) return false;
+    storesSignature = signature;
+    renderStoreFilter(stores);
+    return true;
   } catch (err) {
-    if (err.isSessionExpired) return;
+    if (err.isSessionExpired) return false;
     console.error("Error al cargar tiendas:", err);
+    return false;
   }
 }
 
-async function createOrder() {
-  const addressId = document.getElementById("orderAddressSelect").value;
-  const description = document.getElementById("orderDescription").value.trim();
+document.getElementById("orderStoreFilter")?.addEventListener("click", (event) => {
+  const chip = event.target.closest(".store-chip");
+  if (!chip || chip.dataset.store === selectedStore) return;
+  selectedStore = chip.dataset.store;
+  document.querySelectorAll("#orderStoreFilter .store-chip").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.store === selectedStore));
+  });
+  ordersPage = 1;
+  loadOrders();
+});
 
-  if (!addressId) {
-    showFieldMessage("orderFormMsg", "Elegí una dirección de envío.", false);
-    return;
+// Volver a esta pestaña (por ejemplo después de conectar una tienda en
+// tiendas.html) actualiza los botones; si cambiaron, también la lista, para
+// que los colores de los pedidos coincidan.
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !hasSession()) return;
+  if (await loadStoreFilter()) loadOrders();
+});
+
+// Crea la dirección nueva (si la eligió) y devuelve su id, o el de la
+// guardada. Una guardada sin nombre de quien recibe no sirve: el rótulo
+// saldría dirigido al propio comercio.
+async function orderAddressId() {
+  const selected = document.getElementById("orderAddressSelect").value;
+  if (selected !== NEW_ADDRESS) {
+    const address = addresses.find((item) => String(item.id) === selected);
+    if (address && !address.recipient_name) {
+      throw new Error("Esa dirección no tiene el nombre de quien recibe: agregalo en Mis direcciones (Editar) o cargá una nueva.");
+    }
+    return selected;
   }
+  const payload = readAddressFields("newAddr");
+  const missing = missingAddressFields(payload);
+  if (missing) throw new Error(missing);
+  const response = await apiFetch(ADDRESSES_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(getErrorMessage(data, "No se pudo guardar la dirección."));
+  fillAddressFields("newAddr", null);
+  return data.id;
+}
 
+async function createOrder() {
+  const description = document.getElementById("orderDescription").value.trim();
   const button = document.getElementById("createOrderBtn");
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = "Creando...";
 
   try {
+    const addressId = await orderAddressId();
     const response = await apiFetch(ORDERS_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -377,7 +478,9 @@ async function createOrder() {
       throw new Error(getErrorMessage(data, "No se pudo crear el pedido."));
     }
     document.getElementById("orderDescription").value = "";
-    showFieldMessage("orderFormMsg", "Pedido creado correctamente.", true);
+    document.getElementById("newOrderDialog")?.close();
+    showMessage("Pedido creado. Ya está en la lista.", "success");
+    ordersPage = 1;
     await loadOrders();
   } catch (err) {
     if (err.isSessionExpired) return;
@@ -389,7 +492,7 @@ async function createOrder() {
 }
 
 async function cancelOrder(id) {
-  const confirmed = window.confirm("¿Cancelar este pedido?");
+  const confirmed = await appConfirm("¿Cancelar este pedido?");
   if (!confirmed) return;
 
   try {
@@ -399,9 +502,21 @@ async function cancelOrder(id) {
       throw new Error(getErrorMessage(data, "No se pudo cancelar el pedido."));
     }
     await loadOrders();
+    showMessage("Pedido cancelado.", "success");
   } catch (err) {
     if (err.isSessionExpired) return;
     showMessage(err.message || "No se pudo cancelar el pedido.");
+  }
+}
+
+// El link público (seguimiento.html) para mandarle al comprador. Sin permiso
+// del navegador para el portapapeles, se muestra para copiarlo a mano.
+async function copyTrackingLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    showMessage("Link de seguimiento copiado: pegáselo al comprador. Ve el estado del pedido, no sus datos.", "success");
+  } catch (err) {
+    await appPrompt("Copiá el link de seguimiento para el comprador:", url, { confirmLabel: "Listo" });
   }
 }
 
@@ -409,34 +524,55 @@ async function cancelOrder(id) {
 // Delegación de clicks (los items se re-crean al pintar las listas).
 // ---------------------------------------------------------------------------
 document.addEventListener("click", (e) => {
-  const setDefaultBtn = e.target.closest("[data-set-default]");
-  if (setDefaultBtn) {
-    setDefaultAddress(setDefaultBtn.dataset.setDefault);
-    return;
-  }
-
-  const deleteBtn = e.target.closest("[data-delete-address]");
-  if (deleteBtn) {
-    deleteAddress(deleteBtn.dataset.deleteAddress);
-    return;
-  }
-
   const cancelBtn = e.target.closest("[data-cancel-order]");
   if (cancelBtn) {
     cancelOrder(cancelBtn.dataset.cancelOrder);
   }
+  const copyBtn = e.target.closest("[data-copy-tracking]");
+  if (copyBtn) copyTrackingLink(copyBtn.dataset.copyTracking);
+  // Un menú "⋯" abierto se cierra al tocar cualquier otra cosa (o su opción).
+  document.querySelectorAll(".order-more[open]").forEach((menu) => {
+    if (cancelBtn || copyBtn || !menu.contains(e.target)) menu.open = false;
+  });
 });
 
-document.getElementById("toggleAddressFormBtn")?.addEventListener("click", () => {
-  const form = document.getElementById("addressForm");
-  form.style.display = form.style.display === "none" ? "block" : "none";
-});
-document.getElementById("cancelAddressFormBtn")?.addEventListener("click", () => {
-  resetAddressForm();
-  document.getElementById("addressForm").style.display = "none";
-});
-document.getElementById("saveAddressBtn")?.addEventListener("click", saveNewAddress);
+// Nuevo pedido a mano: las direcciones se leen al abrir el diálogo (pueden
+// haberse agregado en direcciones.html en otra pestaña).
+async function openNewOrder() {
+  const dialog = document.getElementById("newOrderDialog");
+  if (!dialog) return;
+  const msg = document.getElementById("orderFormMsg");
+  if (msg) msg.style.display = "none";
+  dialog.showModal();
+  await loadAddresses();
+  if (addresses.length) document.getElementById("orderAddressSelect")?.focus();
+  else document.getElementById("newAddrRecipient")?.focus();
+}
+
+document.getElementById("openNewOrderBtn")?.addEventListener("click", openNewOrder);
+document.getElementById("closeNewOrderBtn")?.addEventListener("click", () => document.getElementById("newOrderDialog")?.close());
 document.getElementById("createOrderBtn")?.addEventListener("click", createOrder);
+document.getElementById("orderAddressSelect")?.addEventListener("change", () => {
+  syncNewAddressBox();
+  if (document.getElementById("orderAddressSelect").value === NEW_ADDRESS) {
+    document.getElementById("newAddrRecipient")?.focus();
+  }
+});
+renderAddressFields(document.getElementById("newAddressFields"), "newAddr");
+document.getElementById("clearOrderViewBtn")?.addEventListener("click", clearOrderView);
+let orderSearchTimer = null;
+// pedidos.html?buscar=501 (desde escanear.html) llega con la búsqueda hecha.
+if (orderSearch && document.getElementById("orderSearch")) document.getElementById("orderSearch").value = orderSearch;
+document.getElementById("orderSearch")?.addEventListener("input", (event) => {
+  clearTimeout(orderSearchTimer);
+  orderSearchTimer = setTimeout(() => {
+    const value = event.target.value.trim();
+    if (value === orderSearch) return;
+    orderSearch = value;
+    ordersPage = 1;
+    loadOrders();
+  }, 300);
+});
 document.getElementById("ordersPrevBtn")?.addEventListener("click", () => {
   if (ordersPage > 1) {
     ordersPage -= 1;
@@ -467,12 +603,15 @@ async function init() {
   } catch (err) {
     if (err.isSessionExpired) return;
   }
-  await loadAddresses();
   await loadStoreFilter();
+  window.OrderShipping.init({ reloadOrders: loadOrders });
+  // pedidos.html#nuevo (el buscador del panel) abre el diálogo de entrada.
+  if (location.hash === "#nuevo") openNewOrder();
   await loadOrders();
+  renderSampleOrdersNotice(document.getElementById("sampleNotice"), { onChange: loadOrders });
 }
 
-if (!getAccessToken()) {
+if (!hasSession()) {
   window.location.replace("index.html");
 } else {
   init();

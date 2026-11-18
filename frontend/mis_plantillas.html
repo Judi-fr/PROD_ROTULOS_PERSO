@@ -6,29 +6,31 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
     <title>Mis Plantillas</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <link
-      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
 
     <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
     <link rel="stylesheet" href="assets/css/labels_shared.css" />
     <link rel="stylesheet" href="assets/css/templates.css" />
   </head>
-  <body>
+  <body data-requires="labels.template_create">
     <div class="layout">
       <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
-      <header class="topbar" id="appTopbar" data-links='[{"href": "dashboard.html", "label": "Volver al panel"}]'></header>
+      <header class="topbar" id="appTopbar" data-links='[{"href": "importar_rotulo.html", "label": "Desde una foto", "perm": "processing.import"}, {"href": "dashboard.html", "label": "Volver al panel"}]'></header>
 
       <main class="main">
         <div class="main-heading">
           <h1>Mis plantillas</h1>
-          <p>
-            Diseños base reutilizables: usalas para crear un rótulo nuevo o
-            para la generación por lote, en vez de armar el diseño de cero
-            cada vez.
-          </p>
+          <p>Cómo salen tus rótulos. Elegí una al imprimir y cada pedido sale con sus datos.</p>
         </div>
 
         <p
@@ -49,13 +51,13 @@
                 class="search-input"
                 placeholder="Buscar por nombre..."
               />
-              <a class="btn btn-primary" href="editor_rotulos.html">
+              <a class="btn btn-primary" href="galeria_plantillas.html">
                 + Nueva plantilla
               </a>
             </div>
 
             <div id="templatesGrid" class="templates-grid">
-              <p class="empty-state">Cargando plantillas...</p>
+              <p class="empty-state"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
             </div>
           </div>
         </section>

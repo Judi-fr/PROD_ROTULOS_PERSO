@@ -13,7 +13,7 @@ para la app (formulario del Portal de Partners).
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.integrations import store_labels
+from apps.integrations.providers.tiendanube import labels as store_labels
 from apps.integrations.models import StoreConnection
 from apps.integrations.providers.base import ProviderError
 
@@ -63,6 +63,29 @@ class Command(BaseCommand):
             )
         )
         self.stdout.write(f"Callback de rótulos: {store_labels.callback_base_url(connection)}")
+        self._report_options(connection)
+
+    def _report_options(self, connection):
+        from apps.integrations.providers.tiendanube import carrier_options
+
+        connection.refresh_from_db(fields=["preferences"])
+        result = carrier_options.state(connection)
+        if result.get("status") != "synced":
+            self.stdout.write(
+                self.style.WARNING(
+                    "No se pudieron crear las opciones del carrier (sin ellas Tiendanube descarta "
+                    f"las tarifas): {result.get('error') or 'sin detalle'}. Quedó encolado un reintento."
+                )
+            )
+            return
+        self.stdout.write(f"Opciones del carrier: {', '.join(result.get('codes') or []) or '-'}")
+        if result.get("inactive"):
+            self.stdout.write(
+                self.style.WARNING(
+                    "Apagadas por el comerciante en su panel (esas tarifas no se muestran): "
+                    + ", ".join(result["inactive"])
+                )
+            )
 
     def _list_stores(self):
         stores = StoreConnection.objects.filter(status=StoreConnection.Status.ACTIVE)

@@ -1,9 +1,8 @@
 # Despliegue de ROTULOS_PERSO en un servidor.
 #
-# Se levanta A MANO, con `docker compose -f docker-compose.prod.yml up -d`.
-# No hay pipeline y no hace falta: desplegar y automatizar el despliegue son
-# dos cosas distintas, y la segunda recién tiene sentido cuando la primera se
-# hizo unas cuantas veces.
+# A mano: `docker compose -f docker-compose.prod.yml up -d`.
+# Automático: azure-pipelines-deploy.yml + scripts/deploy.sh (preparado el
+# 2026-11-04, sin servidor todavía; ver docs/despliegue.md).
 #
 # Diferencias con backend/docker-compose.yml (que es el de desarrollo):
 #   - settings de prod (DEBUG=False, hosts explícitos, cookies seguras)
@@ -36,11 +35,19 @@ services:
 
   api:
     build: ./backend
+    # Etiqueta por versión: el despliegue automático (scripts/deploy.sh) la
+    # fija con el commit y así un rollback tiene la imagen anterior a mano. A
+    # mano queda "local".
+    image: rotulos-api:${RELEASE_TAG:-local}
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
       DATABASE_URL: postgres://${POSTGRES_USER:-rotulos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-rotulos}
-    # Migraciones y estáticos antes de atender: si la imagen es nueva pero la
+      # Un objeto JSON por línea (config/log_format.py), para un recolector de
+      # logs. `LOG_FORMAT=text` en el .env vuelve al formato legible a ojo.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    # Migraciones, estáticos y las miniaturas que falten (idempotente: si ya
+    # están todas no hace nada) antes de atender: si la imagen es nueva pero la
     # base quedó en la versión anterior, la app arranca rota. Esto vale con UN
     # solo contenedor de API; con varias réplicas, las migraciones pasan a ser
     # un paso aparte para que no corran en paralelo.
@@ -48,7 +55,8 @@ services:
       sh -c "python manage.py migrate --noinput &&
              python manage.py createcachetable &&
              python manage.py collectstatic --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile -"
+             python manage.py generate_template_thumbnails &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 150 --access-logfile -"
     volumes:
       - media:/app/media
       - static:/app/staticfiles
@@ -76,10 +84,14 @@ services:
   # IntegrationEvent y es el worker quien los procesa (ver CLAUDE.md).
   worker:
     build: ./backend
+    image: rotulos-api:${RELEASE_TAG:-local}
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
       DATABASE_URL: postgres://${POSTGRES_USER:-rotulos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-rotulos}
+      # Un objeto JSON por línea (config/log_format.py), para un recolector de
+      # logs. `LOG_FORMAT=text` en el .env vuelve al formato legible a ojo.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     command: python manage.py run_integrations_worker
     volumes:
       - media:/app/media
@@ -88,8 +100,32 @@ services:
       db:
         condition: service_healthy
 
+  # Las alertas de disponibilidad por mail (apps.monitoring): chequea cada
+  # minuto y avisa a los admins cuando algo pasa a "falla". Va aparte del
+  # worker porque lo primero que tiene que poder avisar es que el worker se
+  # cayó; si el que se cae es este, el worker toma su lugar.
+  # Para que los mails salgan hace falta EMAIL_HOST (y usuario/clave) en el
+  # .env; MONITORING_ALERT_EMAILS para avisar a otras direcciones.
+  monitor:
+    build: ./backend
+    image: rotulos-api:${RELEASE_TAG:-local}
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      DATABASE_URL: postgres://${POSTGRES_USER:-rotulos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-rotulos}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    command: python manage.py run_monitor
+    volumes:
+      # Solo para medir el espacio libre del disco de los PDF generados.
+      - media:/app/media:ro
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+
   web:
     build: ./frontend
+    image: rotulos-web:${RELEASE_TAG:-local}
     environment:
       # Lo que termina dentro de config.js al arrancar el contenedor.
       API_BASE: https://${DOMINIO:?definir DOMINIO en .env}/api/v1

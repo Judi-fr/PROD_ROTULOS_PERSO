@@ -11,7 +11,6 @@
 const API_BASE = window.APP_CONFIG.API_BASE;
 const ME_URL = `${API_BASE}/auth/me/`;
 const ORDERS_URL = `${API_BASE}/orders/`;
-const STORES_URL = `${API_BASE}/integrations/stores/`;
 const TEMPLATES_URL = `${API_BASE}/labels/templates/`;
 const BATCH_URL = `${API_BASE}/labels/batch/`;
 
@@ -35,7 +34,7 @@ let hasNextPage = false;
 function showPrintMsg(text, ok) {
   const el = document.getElementById("printMsg");
   el.textContent = text;
-  el.style.color = ok ? "#16a34a" : "#dc2626";
+  el.style.color = ok ? "var(--success-500)" : "var(--danger-500)";
   el.style.display = "block";
 }
 
@@ -43,13 +42,45 @@ function updateSelectionCount() {
   const count = selectedIds.size;
   document.getElementById("selectionCount").textContent =
     count === 1 ? "1 seleccionado" : `${count} seleccionados`;
+  // El mismo número en el panel "Cómo imprimir", junto al botón.
+  const sideCount = document.getElementById("printSideCount");
+  if (sideCount) {
+    sideCount.textContent = String(count);
+    document.getElementById("printSideCountLabel").textContent = count === 1 ? "pedido tildado" : "pedidos tildados";
+  }
+  syncSelectAll();
+  updatePrintDock();
 }
 
-function addressSummary(address) {
-  if (!address) return "";
-  const street = [address.street, address.number].filter(Boolean).join(" ");
-  const city = [address.city, address.state].filter(Boolean).join(", ");
-  return [street, city].filter(Boolean).join(" — ");
+// "Seleccionar todos los de esta página" refleja lo tildado: marcado si están
+// todos, a medias si hay algunos.
+function syncSelectAll() {
+  const boxes = [...document.querySelectorAll("#orderList input[type=checkbox]")];
+  const checked = boxes.filter((box) => box.checked).length;
+  const selectAll = document.getElementById("selectAll");
+  selectAll.checked = boxes.length > 0 && checked === boxes.length;
+  selectAll.indeterminate = checked > 0 && checked < boxes.length;
+}
+
+// Barra flotante abajo con lo tildado y "Generar rótulos": el botón de verdad
+// está al fondo de la página, debajo de los filtros y la lista. Se esconde
+// cuando ese botón ya se ve, para no tener dos iguales a la vista.
+let printActionsVisible = false;
+
+function selectedText(id) {
+  const select = document.getElementById(id);
+  return select?.selectedOptions[0]?.textContent.trim() || "";
+}
+
+function updatePrintDock() {
+  const dock = document.getElementById("printDock");
+  const count = selectedIds.size;
+  dock.hidden = count === 0 || printActionsVisible;
+  if (dock.hidden) return;
+  document.getElementById("printDockCount").textContent =
+    count === 1 ? "1 pedido" : `${count} pedidos`;
+  document.getElementById("printDockHint").textContent =
+    [selectedText("templateSelect"), selectedText("pageLayoutSelect")].filter(Boolean).join(" · ");
 }
 
 // Todo lo que viene de una tienda es texto de terceros: se escapa siempre.
@@ -74,7 +105,7 @@ function renderOrders(orders) {
       <span class="print-order-body">
         <span class="print-order-title">Pedido #${escapeHtml(number)}${store}</span>
         <span class="print-order-meta">${escapeHtml(recipient)}${recipient ? " · " : ""}${escapeHtml(addressSummary(order.address))}</span>
-        <span class="print-order-meta">${escapeHtml(formatDate(order.created_at))} · ${escapeHtml(order.status_label || STATUS_LABELS[order.status] || order.status)}</span>
+        <span class="print-order-meta">${escapeHtml(formatDate(order.created_at))} · ${escapeHtml(order.status_label || STATUS_LABELS[order.status] || order.status)}${order.labels_printed_at ? ` · Rótulo impreso ${escapeHtml(formatDate(order.labels_printed_at))}` : ""}</span>
       </span>
     `;
     row.querySelector("input").addEventListener("change", (event) => {
@@ -102,11 +133,13 @@ async function loadOrders() {
   const container = document.getElementById("orderList");
   const store = document.getElementById("storeFilter").value;
   const status = document.getElementById("statusFilter").value;
+  const printed = document.getElementById("printedFilter").value;
   const dateFrom = document.getElementById("dateFrom").value;
   const dateTo = document.getElementById("dateTo").value;
   const params = new URLSearchParams({ page: String(currentPage) });
   if (store) params.set("store", store);
   if (status) params.set("status", status);
+  if (printed) params.set("labels_printed", printed);
   // El rango acota la LISTA; lo que se manda al lote siguen siendo los
   // pedidos tildados (order_ids). Así el filtro por tienda sigue valiendo,
   // que es algo que el selector "filters" del backend no contempla.
@@ -121,7 +154,7 @@ async function loadOrders() {
     }
     renderOrders(extractResults(data));
     renderPager(data);
-    document.getElementById("selectAll").checked = false;
+    syncSelectAll();
   } catch (err) {
     if (err.isSessionExpired) return;
     container.innerHTML = `<p class="empty-state">${escapeHtml(err.message)}</p>`;
@@ -129,28 +162,7 @@ async function loadOrders() {
 }
 
 async function loadStoreFilter() {
-  const field = document.getElementById("storeFilterField");
-  const select = document.getElementById("storeFilter");
-  try {
-    const response = await apiFetch(STORES_URL);
-    if (!response.ok) return;
-    const stores = extractResults(await response.json());
-    if (!stores.length) return;
-    stores.forEach((store) => {
-      const option = document.createElement("option");
-      option.value = store.id;
-      option.textContent = store.name || `Tienda ${store.external_store_id}`;
-      select.appendChild(option);
-    });
-    const manual = document.createElement("option");
-    manual.value = "manual";
-    manual.textContent = "Pedidos cargados a mano";
-    select.appendChild(manual);
-    field.style.display = "";
-  } catch (err) {
-    if (err.isSessionExpired) return;
-    console.error("Error al cargar tiendas:", err);
-  }
+  await fillStoreFilter(document.getElementById("storeFilter"), document.getElementById("storeFilterField"));
 }
 
 async function loadTemplates() {
@@ -211,7 +223,41 @@ const OUTPUT_OPTIONS = {
 };
 
 function outputOptions(value) {
+  // Una impresora configurada: el formato y la densidad salen de ella
+  // (LabelBatchView con printer_id) y el lote va directo a su cola.
+  if (value.startsWith("printer:")) return { printer_id: Number(value.slice("printer:".length)) };
   return OUTPUT_OPTIONS[value] || OUTPUT_OPTIONS.label;
+}
+
+// Las impresoras para "Mandar directo" (apps.printing); la predeterminada
+// queda elegida. Sin impresoras el grupo no aparece.
+async function loadPrinters() {
+  try {
+    const response = await apiFetch(`${API_BASE}/printing/printers/`);
+    if (!response.ok) return;
+    const printers = extractResults(await response.json());
+    const group = document.getElementById("printerOptions");
+    group.innerHTML = printers
+      .map((printer) => {
+        const where = printer.location ? ` · ${printer.location}` : "";
+        return `<option value="printer:${printer.id}">${escapeHtml(printer.name + where)}</option>`;
+      })
+      .join("");
+    group.hidden = !printers.length;
+    const preferred = printers.find((printer) => printer.is_default);
+    if (preferred) document.getElementById("pageLayoutSelect").value = `printer:${preferred.id}`;
+  } catch (err) {
+    if (err.isSessionExpired) throw err;
+  }
+}
+
+// Sin impresora predeterminada, el formato preferido de la cuenta
+// (organizacion.html) queda elegido.
+async function applyPreferredFormat() {
+  const select = document.getElementById("pageLayoutSelect");
+  if (select.value.startsWith("printer:")) return;
+  const preferred = (await loadAccountSettings()).default_print_format;
+  if (preferred && OUTPUT_OPTIONS[preferred]) select.value = preferred;
 }
 
 async function printLabels() {
@@ -230,7 +276,7 @@ async function printLabels() {
   if (templateId) payload.template_id = Number(templateId);
 
   const button = document.getElementById("printBtn");
-  const originalText = button.textContent;
+  const originalHtml = button.innerHTML; // con el ícono: textContent lo perdía
   button.disabled = true;
   button.textContent = "Generando...";
   showPrintMsg("Generando los rótulos...", true);
@@ -245,10 +291,18 @@ async function printLabels() {
     if (!response.ok) {
       throw new Error(getErrorMessage(data, "No se pudieron generar los rótulos."));
     }
+    // Mandado a una impresora pero no encolado (el lote falló, o la
+    // impresora no tiene agente): se avisa y no se despacha nada. Un lote
+    // grande (queued) todavía no tiene trabajo: lo crea el worker al terminar.
+    if (payload.printer_id && !data.print_job && !data.queued) {
+      throw new Error(data.print_error || "No se pudo mandar a la impresora.");
+    }
 
+    let dispatched = 0;
     if (document.getElementById("markDispatched").checked) {
       button.textContent = "Despachando...";
       const { done, failed } = await markDispatched(orderIds);
+      dispatched = done;
       if (failed.length) {
         showPrintMsg(
           `Rótulos generados. Se despacharon ${done} de ${orderIds.length} pedidos: ` +
@@ -262,14 +316,29 @@ async function printLabels() {
       }
     }
 
-    // El archivo se arma en "Mis documentos": ahí se descarga.
-    window.location.href = "documentos.html";
+    // El archivo se arma en "Mis documentos": ahí se descarga, y esa página
+    // confirma lo que se hizo (ver documentos.js, showBatchResult). Mandado
+    // a una impresora, se sigue en la cola (cola_impresion.js).
+    const result = new URLSearchParams({ labels: String(orderIds.length) });
+    if (dispatched) result.set("dispatched", String(dispatched));
+    if (data.print_job) {
+      result.set("sent", String(data.print_job.id));
+      window.location.href = `cola_impresion.html?${result}`;
+      return;
+    }
+    if (data.queued && payload.printer_id) {
+      result.set("generating", "1");
+      window.location.href = `cola_impresion.html?${result}`;
+      return;
+    }
+    if (data.queued) result.set("generating", "1");
+    window.location.href = `documentos.html?${result}`;
   } catch (err) {
     if (err.isSessionExpired) return;
     showPrintMsg(err.message || "No se pudieron generar los rótulos.", false);
   } finally {
     button.disabled = false;
-    button.textContent = originalText;
+    button.innerHTML = originalHtml;
   }
 }
 
@@ -284,10 +353,57 @@ document.getElementById("storeFilter").addEventListener("change", () => {
   });
 });
 
-document.getElementById("statusFilter").addEventListener("change", () => {
-  currentPage = 1;
-  loadOrders();
+["statusFilter", "printedFilter"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", () => {
+    currentPage = 1;
+    loadOrders();
+  });
 });
+
+// "Para imprimir" del panel abre imprimir_rotulos.html?rotulo=sin_imprimir
+// (y &tienda= desde el desglose por tienda): los pendientes sin rótulo de esa
+// selección, ya tildados TODOS (no solo los de la primera
+// página), listos para "Generar rótulos". Sigue las páginas del backend hasta
+// el tope de un lote.
+const SELECT_ALL_MAX = 1000;
+
+async function selectAllPending() {
+  const params = new URLSearchParams({ status: "created,preparing", labels_printed: "0" });
+  const store = document.getElementById("storeFilter").value;
+  if (store) params.set("store", store);
+  let url = `${ORDERS_URL}?${params.toString()}`;
+  while (url && selectedIds.size < SELECT_ALL_MAX) {
+    const response = await apiFetch(url);
+    if (!response.ok) return;
+    const data = await response.json();
+    extractResults(data).forEach((order) => selectedIds.add(order.id));
+    url = data.next;
+  }
+  document.querySelectorAll("#orderList input[type=checkbox]").forEach((checkbox) => {
+    checkbox.checked = selectedIds.has(Number(checkbox.value));
+  });
+  updateSelectionCount();
+  if (selectedIds.size) {
+    const count = selectedIds.size;
+    showPrintMsg(
+      `${count === 1 ? "Quedó tildado el pedido" : `Quedaron tildados los ${count} pedidos`} sin rótulo. Revisá la plantilla y tocá «Generar rótulos».`,
+      true
+    );
+  }
+}
+document.getElementById("printDockBtn").addEventListener("click", () => {
+  document.getElementById("printBtn").click();
+});
+document.getElementById("printDockOptions").addEventListener("click", () => {
+  document.getElementById("templateSelect").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+["templateSelect", "pageLayoutSelect"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", updatePrintDock);
+});
+new IntersectionObserver(([entry]) => {
+  printActionsVisible = entry.isIntersecting;
+  updatePrintDock();
+}).observe(document.getElementById("printBtn"));
 document.getElementById("selectAll").addEventListener("change", (event) => {
   document.querySelectorAll("#orderList input[type=checkbox]").forEach((checkbox) => {
     checkbox.checked = event.target.checked;
@@ -321,11 +437,24 @@ async function init() {
   }
   await loadStoreFilter();
   await loadTemplates();
+  await loadPrinters();
+  await applyPreferredFormat();
+  const query = new URLSearchParams(location.search);
+  const fromDashboard = query.get("rotulo") === "sin_imprimir";
+  if (fromDashboard) {
+    document.getElementById("statusFilter").value = "created,preparing";
+    document.getElementById("printedFilter").value = "0";
+    // Una tienda del desglose del panel (&tienda=<id>|manual), si está en la lista.
+    const storeFilter = document.getElementById("storeFilter");
+    const store = query.get("tienda");
+    if (store && [...storeFilter.options].some((option) => option.value === store)) storeFilter.value = store;
+  }
   await loadOrders();
   updateSelectionCount();
+  if (fromDashboard) await selectAllPending();
 }
 
-if (!window.Auth.getAccessToken()) {
+if (!window.Auth.hasSession()) {
   window.location.replace("index.html");
 } else {
   init();

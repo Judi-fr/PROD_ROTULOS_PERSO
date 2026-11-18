@@ -1,0 +1,948 @@
+/* Mis pedidos (pedidos.html): columna de tiendas a la izquierda, pedidos
+   agrupados por tienda y la tarjeta compacta de cada pedido (assets/js/pedidos.js). Cada tienda tiene su color
+   (store-color-N, en pedidos.css) y un cuadrado con sus iniciales; es lo que
+   la identifica en la columna, en el encabezado de su grupo y en el borde de
+   cada pedido. Solo lo carga esta página: pedidos.css lo comparten otras. */
+
+.orders-main {
+  max-width: 1180px;
+}
+
+.orders-layout {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+/* Sin tiendas no hay columna: la lista ocupa todo el ancho. */
+.orders-layout:has(> .store-filter[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.orders-column {
+  min-width: 0;
+}
+
+/* La tarjeta recortaba con overflow: hidden, que apaga el sticky de la
+   columna de tiendas y de la barra de selección. clip recorta igual las
+   esquinas sin crear un contenedor con scroll. */
+.profile-card:has(.orders-layout) {
+  overflow: clip;
+}
+
+/* --- Columna de tiendas ------------------------------------------------- */
+
+.orders-layout > .store-filter {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin: 0;
+  padding-right: 20px;
+  border-right: 1px solid var(--border);
+}
+
+.orders-layout > .store-filter[hidden] {
+  display: none;
+}
+
+.orders-layout .store-filter-label {
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.orders-layout .store-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orders-layout .store-chip {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dark);
+  text-align: left;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.orders-layout .store-chip:hover {
+  background: var(--n-100);
+}
+
+.orders-layout .store-chip:active {
+  transform: translateY(1px);
+}
+
+.orders-layout .store-chip[aria-pressed="true"] {
+  background: var(--store-bg, var(--n-100));
+  color: var(--text-dark);
+}
+
+/* La elegida lleva una barra del color de su tienda pegada al borde. */
+.orders-layout .store-chip[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--store-fg, var(--text-dark));
+}
+
+.store-chip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.store-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.orders-layout .store-chip-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.orders-layout .store-chip[aria-pressed="true"] .store-chip-hint {
+  color: var(--store-fg, var(--text-muted));
+  opacity: 1;
+}
+
+.orders-layout .store-chip.muted .store-mono {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+/* Cuadrado con las iniciales de la tienda (o un ícono para "Todas" y
+   "Cargados a mano"). */
+.store-mono {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--store-fg, var(--n-700));
+  color: var(--n-0);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  box-shadow: inset 0 -1px 0 rgba(28, 26, 23, 0.18);
+}
+
+.store-mono svg, .store-mono .ph{
+  width: 17px;
+  height: 17px; font-size:17px; }
+
+.store-mono-all,
+.store-mono-manual {
+  background: var(--n-100);
+  color: var(--n-700);
+  box-shadow: none;
+}
+
+.store-chip[aria-pressed="true"] .store-mono-all,
+.store-chip[aria-pressed="true"] .store-mono-manual {
+  background: var(--text-dark);
+  color: var(--n-0);
+}
+
+/* --- Grupos de pedidos por tienda ("Todas") ------------------------------ */
+
+.order-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.order-group + .order-group {
+  margin-top: 22px;
+}
+
+.order-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--store-fg, var(--n-300));
+}
+
+.order-group-head .store-mono {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.order-group-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.order-group-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+}
+
+.order-group-name span {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.order-group-count {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: var(--store-bg, var(--n-100));
+  color: var(--store-fg, var(--n-700));
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Los cargados a mano también llevan borde, gris, así todas las tarjetas
+   quedan alineadas. */
+.order-list .order-item:not(.from-store) {
+  border-left: 4px solid var(--n-300);
+}
+
+.order-list .order-item {
+  animation: order-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.order-list .order-item:nth-child(2) { animation-delay: 30ms; }
+.order-list .order-item:nth-child(3) { animation-delay: 60ms; }
+.order-list .order-item:nth-child(4) { animation-delay: 90ms; }
+.order-list .order-item:nth-child(n + 5) { animation-delay: 120ms; }
+
+@keyframes order-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .order-list .order-item {
+    animation: none;
+  }
+}
+
+/* --- Tarjeta de pedido ------------------------------------------------------
+   Compacta: número + descripción en una línea, dirección y fecha abajo, el
+   estado a la derecha; abajo el historial plegado a la izquierda y las
+   acciones a la derecha, con la principal al final. */
+
+.orders-column .order-item {
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.orders-column .order-item:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.orders-column .order-item-header {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.order-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.orders-column .order-item-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--text-base);
+}
+
+.order-number {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  color: var(--n-700);
+}
+
+.orders-column .order-item-address {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.orders-column .status-badge {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: var(--text-xs);
+}
+
+.orders-column .shipping-line {
+  margin-top: 8px;
+}
+
+.order-item-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.order-item-bottom:has(> .order-item-footer:empty):not(:has(> .order-history, > .order-printed)) {
+  display: none;
+}
+
+.orders-column .order-item-footer {
+  margin: 0 0 0 auto;
+  justify-content: flex-end;
+}
+
+/* "⋯" al final del pie con "Cancelar pedido" adentro: la acción que no se
+   quiere tocar sin querer, lejos de "Cancelar envío". */
+.order-more {
+  position: relative;
+}
+
+.order-more > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: var(--text-lg);
+}
+
+.order-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.order-more[open] > summary,
+.order-more > summary:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.order-more-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+.order-more-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.order-more-menu .order-cancel,
+.order-more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.order-more-item {
+  color: var(--ink);
+}
+
+.order-more-item:hover {
+  background: var(--surface-2);
+}
+
+.order-history {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.order-history summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+
+.order-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.order-history summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.order-history[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.order-history summary:hover {
+  background: var(--n-100);
+  color: var(--text-dark);
+}
+
+.order-history ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0 0;
+  padding: 0 0 0 6px;
+  list-style: none;
+}
+
+.order-history li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.order-history li + li::before {
+  content: "→";
+  margin-right: 8px;
+  color: var(--n-300);
+}
+
+.order-history li span {
+  color: var(--text-dark);
+  font-weight: 600;
+}
+
+.order-history time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Abierto, el historial ocupa la fila entera y las acciones bajan. */
+.order-item-bottom:has(> .order-history[open]) {
+  flex-wrap: wrap;
+}
+
+.order-item-bottom:has(> .order-history[open]) > .order-history {
+  flex-basis: 100%;
+}
+
+/* --- Transportistas (pedidos/envios.js, renderStrip) ------------------------
+   Con todo en orden es una línea gris sin fondo: configuración, no trabajo.
+   El aviso ámbar de pedidos_envios.css queda para cuando falta algo. */
+
+.carrier-strip.carrier-strip-quiet {
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.carrier-quiet-label {
+  margin-right: 2px;
+}
+
+.carrier-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--n-0);
+  color: var(--text-dark);
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.carrier-strip-quiet .carrier-chip {
+  color: var(--text-dark);
+}
+
+.carrier-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: var(--ring);
+}
+
+.carrier-chip:hover {
+  border-color: var(--n-300);
+  background: var(--n-50);
+}
+
+.carrier-quiet-links {
+  display: inline-flex;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.carrier-strip-quiet .carrier-quiet-links a {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.carrier-strip-quiet .carrier-quiet-links a:hover {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+/* --- Título de la tarjeta y "Nuevo pedido" -------------------------------- */
+
+.profile-card-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.new-order-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+}
+
+.new-order-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 24px 20px;
+}
+
+.new-order-head h2 {
+  margin: 0 0 4px;
+  font-size: var(--text-lg);
+}
+
+.new-order-head p {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.new-order-fields [hidden] {
+  display: none;
+}
+
+/* La dirección nueva, cargada sin salir del diálogo. */
+.new-order-address {
+  margin: 0 0 12px;
+  padding: 14px 16px 2px;
+  border: 1px solid var(--border, var(--n-150));
+  border-radius: var(--radius-lg);
+  background: var(--n-0);
+}
+
+.new-order-address legend {
+  padding: 0 6px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.new-order-address legend span {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.new-order-address .field-row {
+  gap: 12px;
+}
+
+.new-order-fields .field {
+  margin-bottom: 12px;
+}
+
+.new-order-fields select {
+  width: 100%;
+}
+
+.field-help-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--blue);
+}
+
+.new-order-form .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+}
+
+/* --- Pantallas angostas: la columna pasa a ser una tira arriba ------------ */
+
+@media (max-width: 860px) {
+  .orders-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .orders-layout > .store-filter {
+    position: static;
+    padding: 0 0 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .orders-layout .store-chips {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .orders-layout .store-chip {
+    width: auto;
+    flex-shrink: 0;
+    max-width: 220px;
+    border: 1px solid var(--border);
+  }
+
+  .orders-layout .store-chip[aria-pressed="true"]::before {
+    left: 10px;
+    right: 10px;
+    top: auto;
+    bottom: -1px;
+    width: auto;
+    height: 3px;
+  }
+}
+
+/* En el celular el estado baja debajo del título en vez de apretarlo. */
+@media (max-width: 560px) {
+  .orders-column .order-item-header {
+    flex-wrap: wrap;
+  }
+
+  .orders-column .order-item-header > .order-select + .order-item-main {
+    flex-basis: calc(100% - 40px);
+  }
+
+  .orders-column .order-item-header > .order-select ~ .status-badge {
+    margin-left: 30px;
+  }
+
+  .order-item-bottom {
+    flex-wrap: wrap;
+  }
+
+  /* Que el primer pedido entre en la primera pantalla: "+ Nuevo pedido" al
+     lado del título, la planilla de seguimientos (tarea de escritorio) fuera,
+     y la tira de tiendas solo con los nombres. */
+  .profile-card-title:has(> .profile-card-tools) {
+    gap: 10px;
+  }
+
+  .profile-card-tools #trackingImportBtn {
+    display: none;
+  }
+
+  .orders-layout {
+    gap: 10px;
+  }
+
+  .orders-layout > .store-filter {
+    padding-bottom: 8px;
+  }
+
+  .orders-layout .store-filter-label,
+  .orders-layout .store-chip-hint {
+    display: none;
+  }
+
+  .orders-layout .store-chip {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
+/* Vista abierta desde un número del panel (pedidos.html?vista=...). */
+.order-view-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.order-view-notice .ph {
+  color: var(--muted);
+}
+
+.order-view-notice .btn-link {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* "Rótulo impreso 29/10" abajo de la tarjeta, junto al historial (Order.labels_printed_at). */
+.order-printed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--success-50);
+  color: var(--success-700);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/* Buscador de Mis pedidos, arriba de la lista. */
+.order-search {
+  position: relative;
+  margin-bottom: 14px;
+}
+
+.order-search .ph {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.order-search input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 12px 9px 36px;
+  border: 1px solid var(--field-border);
+  background: var(--surface);
+  font: inherit;
+}
+
+/* "Ejemplo" junto al número de un pedido de ejemplo (Order.is_sample). */
+.order-sample-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px dashed var(--accent-300);
+  border-radius: var(--radius-full);
+  background: var(--accent-50);
+  color: var(--accent-600);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+/* =========================================================================
+   Pulido 2026-11-11: más sobrio. Cada grupo es UNA caja con los pedidos como
+   filas separadas por una línea (antes, una tarjeta con borde grueso de color
+   por pedido), el título de la página lleva las acciones y la columna de
+   tiendas pierde la etiqueta en mayúsculas. El color de cada tienda queda en
+   su cuadrado con iniciales, en la columna y en el encabezado de su grupo.
+   ========================================================================= */
+
+.orders-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px 24px;
+  margin: 0 0 22px;
+}
+
+.orders-head .main-heading p {
+  margin-bottom: 0;
+}
+
+.orders-head-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.orders-card {
+  padding-top: 0;
+}
+
+.orders-card > .profile-card-body {
+  padding-top: 20px;
+}
+
+.orders-layout .store-filter-label {
+  padding: 0 10px 2px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+/* Grupo = caja con encabezado gris claro y filas. */
+.order-group {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: clip;
+}
+
+.order-group + .order-group {
+  margin-top: 16px;
+}
+
+.order-group-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--n-50);
+}
+
+.order-group-name strong {
+  font-weight: 600;
+}
+
+.order-group-count {
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Filtrando una tienda no hay grupos: la lista misma es la caja. */
+.order-list:has(> .order-item) {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: clip;
+}
+
+.orders-column .order-item,
+.order-list .order-item:not(.from-store),
+.order-item.from-store {
+  border: 0;
+  border-radius: 0;
+  padding: 14px 16px;
+  box-shadow: none;
+}
+
+.orders-column .order-item + .order-item {
+  border-top: 1px solid var(--line);
+}
+
+.orders-column .order-item:hover {
+  background: var(--n-50);
+  box-shadow: none;
+}
+
+.orders-column .order-item.selected {
+  background: var(--accent-50);
+}
+
+.orders-column .order-item-title {
+  font-weight: 600;
+}
+
+.orders-column .order-desc {
+  color: var(--ink-2);
+}
+
+.orders-column .order-item-address {
+  color: var(--muted);
+}
+
+/* Estado: texto con punto, sin pastilla de fondo (diez pastillas de color
+   por pantalla competían con las acciones). */
+.orders-column .status-badge {
+  padding: 0;
+  background: none;
+  font-weight: 600;
+}
+
+/* El pie de cada fila solo se ve con las acciones; el historial y "rótulo
+   impreso" quedan a la izquierda, en gris. */
+.orders-column .order-item-bottom {
+  margin-top: 8px;
+}
+
+/* Buscador y transportistas: mismos bordes suaves que la lista. */
+.order-search input {
+  border-color: var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 860px) {
+  .orders-head-tools {
+    width: 100%;
+  }
+}

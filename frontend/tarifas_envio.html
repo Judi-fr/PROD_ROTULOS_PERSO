@@ -6,16 +6,22 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
     <title>Tarifas de envío</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <link
-      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
 
     <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
     <link rel="stylesheet" href="assets/css/tarifas_envio.css" />
   </head>
-  <body>
+  <body data-requires="carriers.manage">
     <div class="layout">
       <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
       <header
@@ -54,6 +60,33 @@
               Cada tienda tiene su propia tabla: se despacha desde otro lugar y
               con otras tarifas.
             </p>
+          </div>
+        </section>
+
+        <!-- Solo para plataformas que cotizan con una tabla propia (VTEX): ahí
+             el checkout no nos pregunta el precio, así que la tabla se publica
+             en la tienda (POST stores/<id>/publish-rates/). Lo arma
+             assets/js/vtex/tarifas_vtex.js (renderPublishCard). -->
+        <section class="profile-card" id="publishCard" style="display: none">
+          <div class="profile-card-title">
+            <span>Publicar en el checkout de VTEX</span>
+          </div>
+          <div class="profile-card-body">
+            <p class="field-hint">
+              VTEX no nos consulta el precio en cada compra: cotiza con su propia tabla de fletes. Al
+              publicar, subimos esta tabla como una pol&iacute;tica de env&iacute;o por modalidad
+              (<code>rotulos-standard</code>, etc.) y la mantenemos al d&iacute;a con cada cambio. Las
+              tarifas sin plazo de entrega se publican con 5 d&iacute;as, porque VTEX exige uno.
+            </p>
+            <p class="publish-status" id="publishStatus"></p>
+            <ol class="field-hint publish-steps" id="publishDockSteps" hidden>
+              <li>En el admin de VTEX and&aacute; a <strong>Env&iacute;o &rarr; Muelles</strong> (Loading docks) y abr&iacute; el muelle desde el que despach&aacute;s.</li>
+              <li>En <strong>Pol&iacute;ticas de env&iacute;o</strong> asoci&aacute; las que se muestran arriba y guard&aacute;.</li>
+            </ol>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary btn-small" id="publishBtn">Publicar tabla</button>
+              <button type="button" class="btn btn-outline btn-small" id="publishRefreshBtn">Actualizar estado</button>
+            </div>
           </div>
         </section>
 
@@ -131,7 +164,7 @@
           </div>
           <div class="profile-card-body">
             <div id="rateList" class="rate-list">
-              <p class="empty-state">Cargando tarifas...</p>
+              <p class="empty-state"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
             </div>
           </div>
         </section>
@@ -143,5 +176,6 @@
     <script src="assets/js/utils.js"></script>
     <script src="assets/js/topbar.js"></script>
     <script src="assets/js/tarifas_envio.js"></script>
+    <script src="assets/js/vtex/tarifas_vtex.js"></script>
   </body>
 </html>

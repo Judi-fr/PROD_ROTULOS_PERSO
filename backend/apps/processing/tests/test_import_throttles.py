@@ -14,6 +14,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework.throttling import SimpleRateThrottle
 
+from apps.accounts.tests.team_helpers import new_business
 from apps.documents.models import UploadedLabelFile
 
 from .test_processing import respuesta_del_modelo
@@ -31,6 +32,7 @@ class TopeDiarioDeLecturasTests(APITestCase):
         cache.clear()
         self.url = reverse("label-import-list")
         self.usuario = User.objects.create_user(username="ana", email="ana@test.com", password="x")
+        new_business(self.usuario)
         self.documento = UploadedLabelFile.objects.create(
             file="rotulos/r.png", original_filename="r.png", mime_type="image/png",
             size_bytes=100, uploaded_by=self.usuario,
@@ -73,6 +75,7 @@ class TopeDiarioDeLecturasTests(APITestCase):
     def test_el_tope_es_por_usuario(self, pedir):
         pedir.return_value = (respuesta_del_modelo(), {"input": 1, "output": 1}, "req")
         otro = User.objects.create_user(username="beto", email="beto@test.com", password="x")
+        new_business(otro)
         suyo = UploadedLabelFile.objects.create(
             file="rotulos/b.png", original_filename="b.png", mime_type="image/png",
             size_bytes=100, uploaded_by=otro,

@@ -2,7 +2,11 @@
 
 from rest_framework import serializers
 
+from apps.accounts.teams import contact_email as owner_contact_email
+from apps.accounts.teams import data_owner
+
 from .models import Address, ImportMapping, Order, OrderImport, OrderStatusEvent
+from .public_tracking import public_tracking_url
 
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -54,6 +58,12 @@ class OrderSerializer(serializers.ModelSerializer):
     status_events = OrderStatusEventSerializer(many=True, read_only=True)
     store_platform = serializers.CharField(source="store_connection.platform", read_only=True, default=None)
     store_name = serializers.CharField(source="store_connection.name", read_only=True, default=None)
+    # El link de seguimiento para mandarle al comprador ("Copiar link de
+    # seguimiento" en Mis pedidos): el mismo que lleva el QR del rótulo.
+    public_tracking_url = serializers.SerializerMethodField()
+
+    def get_public_tracking_url(self, order):
+        return public_tracking_url(order) if order.pk else None
 
     class Meta:
         model = Order
@@ -82,11 +92,15 @@ class OrderSerializer(serializers.ModelSerializer):
             "total_weight_kg",
             "items",
             "status_events",
+            "labels_printed_at",
+            "is_sample",
+            "public_tracking_url",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "id",
+            "is_sample",
             "status",
             "carrier",
             "tracking_number",
@@ -101,6 +115,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "package_count",
             "total_weight_kg",
             "items",
+            "labels_printed_at",
             "created_at",
             "updated_at",
         ]
@@ -110,7 +125,7 @@ class OrderSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request is not None and request.user and request.user.is_authenticated:
             # Un usuario solo puede asignar a un pedido una dirección PROPIA.
-            self.fields["address_id"].queryset = Address.objects.filter(user=request.user)
+            self.fields["address_id"].queryset = Address.objects.filter(user=data_owner(request.user))
 
 
 class OrderShipSerializer(serializers.Serializer):
@@ -150,7 +165,9 @@ class AdminOrderSerializer(serializers.ModelSerializer):
     (``orders.view_all``). Solo lectura: el admin no crea ni cancela
     pedidos ajenos desde acá (ver ``AdminOrderListView``)."""
 
-    user_email = serializers.EmailField(source="user.email", read_only=True)
+    # El mail de la persona dueña del comercio (los datos cuelgan de su
+    # usuario de datos, que no es una persona).
+    user_email = serializers.SerializerMethodField()
     address = AddressSerializer(read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     last_event = serializers.SerializerMethodField()
@@ -187,6 +204,9 @@ class AdminOrderSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_user_email(self, obj):
+        return owner_contact_email(getattr(obj, "user", None)) or None
 
     def get_last_event(self, obj):
         # ``status_events`` viene prefetched y ordenado ascendente (Meta.ordering

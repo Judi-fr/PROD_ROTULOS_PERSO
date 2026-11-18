@@ -5,7 +5,7 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
-from .health import LivenessView, ReadinessView
+from .health import LivenessView, ReadinessView, SystemStatusView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -17,6 +17,11 @@ urlpatterns = [
     # que el balanceador cuenta como falla (y ECS reemplaza la tarea en loop).
     path("api/v1/health", LivenessView.as_view()),
     path("api/v1/health/ready/", ReadinessView.as_view(), name="health-ready"),
+    # Estado de todo el sistema (worker, cola, disco...) para un monitor externo.
+    path("api/v1/health/system/", SystemStatusView.as_view(), name="health-system"),
+    path("api/v1/monitoring/", include("apps.monitoring.urls")),
+    path("api/v1/notices/", include("apps.monitoring.notice_urls")),  # avisos al comerciante
+    path("api/v1/team/", include("apps.accounts.team_urls")),  # equipo del comercio (dueño y empleados)  # panel "Estado del sistema" (admin)
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/", include("apps.accounts.user_admin_urls")),  # CRUD de usuarios (admin)
     path("api/v1/", include("apps.accounts.support_admin_urls")),  # bandeja de soporte (admin)
@@ -26,10 +31,17 @@ urlpatterns = [
     path("api/v1/processing/", include("apps.processing.urls")),
     path("api/v1/labels/", include("apps.labels.urls")),
     path("api/v1/integrations/", include("apps.integrations.urls")),  # ABM de claves/webhooks (admin)
-    path("api/v1/integrations/", include("apps.integrations.label_urls")),  # rótulos pedidos por la tienda
-    path("api/v1/integrations/", include("apps.integrations.rate_urls")),  # cotización de envíos en el checkout
+    path("api/v1/integrations/", include("apps.integrations.providers.tiendanube.label_urls")),  # rótulos pedidos por la tienda
+    path("api/v1/integrations/", include("apps.integrations.providers.tiendanube.rate_urls")),  # cotización de envíos en el checkout
+    path("api/v1/carriers/", include("apps.carriers.urls")),  # transportistas (Andreani)
+    path("api/v1/printing/", include("apps.printing.urls")),  # impresoras, agente y cola de impresión
     path("api/v1/ingest/", include("apps.integrations.ingest_urls")),  # entradas automáticas (API key / webhook)
 ]
+
+# Para /api/ el 404 y el 500 salen en JSON (ver config/errors.py); el resto
+# sigue con las páginas de Django.
+handler404 = "config.errors.page_not_found"
+handler500 = "config.errors.server_error"
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

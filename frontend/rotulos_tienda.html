@@ -6,13 +6,19 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
     <title>Rótulos pedidos desde la tienda</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
 
     <link
-      href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
 
     <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
     <link rel="stylesheet" href="assets/css/rotulos_tienda.css" />
   </head>
   <body>
@@ -67,7 +73,7 @@
             <div id="planWarning" class="plan-warning" style="display: none"></div>
 
             <div id="labelList" class="label-list">
-              <p class="empty-state">Cargando rótulos...</p>
+              <p class="empty-state"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
             </div>
 
             <div id="pager" class="pager" style="display: none">

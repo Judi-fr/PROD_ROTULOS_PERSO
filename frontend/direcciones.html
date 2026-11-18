@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mis direcciones</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+    <link rel="stylesheet" href="assets/css/pedidos.css" />
+  </head>
+  <body data-requires="addresses.manage">
+    <div class="layout">
+      <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
+      <header class="topbar" id="appTopbar" data-links='[{"href": "pedidos.html", "label": "Mis pedidos"}]'></header>
+      <main class="main">
+        <div class="main-heading">
+          <h1>Mis direcciones</h1>
+          <p>Las direcciones de tu comercio para los pedidos que cargás a mano. Las de los compradores que entran por las tiendas no aparecen acá.</p>
+        </div>
+
+        <p id="pageMessage" class="page-message" role="status" aria-live="polite" style="display:none;"></p>
+
+        <section class="profile-card">
+          <div class="profile-card-title">
+            <span>Mis direcciones</span>
+            <button type="button" class="btn btn-outline btn-small" id="toggleAddressFormBtn">
+              + Nueva dirección
+            </button>
+          </div>
+          <div class="profile-card-body">
+            <div id="addressList" class="address-list">
+              <p class="empty-state"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
+            </div>
+
+            <form id="addressForm" style="display:none;">
+              <!-- Los campos los arma renderAddressFields (utils.js), los mismos del diálogo "Nuevo pedido". -->
+              <div id="addressFields"></div>
+              <div class="field-checkbox">
+                <input type="checkbox" id="addrIsDefault" />
+                <label for="addrIsDefault" style="margin:0;">Marcar como predeterminada</label>
+              </div>
+              <p id="addressMsg" class="form-message" style="display:none;"></p>
+              <div class="form-actions">
+                <button type="button" class="btn btn-outline" id="cancelAddressFormBtn">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="saveAddressBtn">Guardar dirección</button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/direcciones.js"></script>
+  </body>
+</html>

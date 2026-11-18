@@ -30,6 +30,10 @@ class AuditLog(models.Model):
         INTEGRATIONS = "integrations", "Integraciones"
         # apps.processing: lectura de rótulos desde una foto/PDF (Claude).
         PROCESSING = "processing", "Procesamiento"
+        # Catálogos globales del admin (transportistas manuales, tamaños).
+        CATALOGS = "catalogs", "Catálogos"
+        # Comercios con equipo (apps/accounts/teams.py).
+        TEAM = "team", "Equipo"
 
     class Action(models.TextChoices):
         # auth
@@ -71,6 +75,28 @@ class AuditLog(models.Model):
         TEMPLATE_CREATE = "template.create", "Plantilla de rótulo creada"
         TEMPLATE_UPDATE = "template.update", "Plantilla de rótulo actualizada"
         TEMPLATE_DELETE = "template.delete", "Plantilla de rótulo eliminada"
+        PRINTER_UPDATE = "printer.update", "Impresora o agente de impresión editado"
+        CATALOG_UPDATE = "catalog.update", "Catálogo editado"
+        # team
+        TEAM_INVITE = "team.invite", "Invitación al comercio enviada"
+        TEAM_INVITE_CANCEL = "team.invite_cancel", "Invitación al comercio cancelada"
+        TEAM_JOIN = "team.join", "Se sumó al comercio"
+        TEAM_LEAVE = "team.leave", "Dejó el comercio"
+        TEAM_DECLINE = "team.decline", "Invitación al comercio rechazada"
+        TEAM_MEMBER_UPDATE = "team.member_update", "Accesos de un miembro cambiados"
+        TEAM_MEMBER_REMOVE = "team.member_remove", "Miembro quitado del comercio"
+        TEAM_PROFILE_UPDATE = "team.profile_update", "Perfil del comercio editado"
+        TEAM_UPDATE = "team.update", "Datos del equipo editados"
+        TEAM_TRANSFER = "team.transfer", "Titularidad del comercio transferida"
+        TEAM_ADMIN_ASSIGN = "team.admin_assign", "Comercio asignado por el administrador"
+        TEAM_CLOSE = "team.close", "Comercio dado de baja"
+        TEAM_REOPEN = "team.reopen", "Comercio reactivado por el administrador"
+        TEAM_CREATE = "team.create", "Comercio creado"
+        TEAM_JOIN_REQUEST = "team.join_request", "Pidió sumarse al comercio con el código"
+        TEAM_JOIN_APPROVE = "team.join_approve", "Pedido para sumarse aprobado"
+        TEAM_JOIN_REJECT = "team.join_reject", "Pedido para sumarse rechazado"
+        TEAM_JOIN_CODE_UPDATE = "team.join_code_update", "Código para sumarse cambiado"
+        ACCOUNT_SETTINGS_UPDATE = "account.update", "Datos de la cuenta editados"
         # labels: ElementLayout/LayoutElement/LayoutVariable, plantillas por
         # elementos + catálogo de variables (distintas de LabelTemplate/
         # TEMPLATE_* de arriba: no son el mismo concepto, ver
@@ -141,6 +167,27 @@ class AuditLog(models.Model):
         Action.TEMPLATE_CREATE: Category.LABELS,
         Action.TEMPLATE_UPDATE: Category.LABELS,
         Action.TEMPLATE_DELETE: Category.LABELS,
+        Action.PRINTER_UPDATE: Category.LABELS,
+        Action.CATALOG_UPDATE: Category.CATALOGS,
+        Action.TEAM_INVITE: Category.TEAM,
+        Action.TEAM_INVITE_CANCEL: Category.TEAM,
+        Action.TEAM_JOIN: Category.TEAM,
+        Action.TEAM_LEAVE: Category.TEAM,
+        Action.TEAM_DECLINE: Category.TEAM,
+        Action.TEAM_MEMBER_UPDATE: Category.TEAM,
+        Action.TEAM_MEMBER_REMOVE: Category.TEAM,
+        Action.TEAM_PROFILE_UPDATE: Category.TEAM,
+        Action.TEAM_UPDATE: Category.TEAM,
+        Action.TEAM_TRANSFER: Category.TEAM,
+        Action.TEAM_ADMIN_ASSIGN: Category.TEAM,
+        Action.TEAM_CLOSE: Category.TEAM,
+        Action.TEAM_REOPEN: Category.TEAM,
+        Action.TEAM_CREATE: Category.TEAM,
+        Action.TEAM_JOIN_REQUEST: Category.TEAM,
+        Action.TEAM_JOIN_APPROVE: Category.TEAM,
+        Action.TEAM_JOIN_REJECT: Category.TEAM,
+        Action.TEAM_JOIN_CODE_UPDATE: Category.TEAM,
+        Action.ACCOUNT_SETTINGS_UPDATE: Category.USERS,
         Action.ELEMENT_LAYOUT_CREATE: Category.LABELS,
         Action.ELEMENT_LAYOUT_UPDATE: Category.LABELS,
         Action.ELEMENT_LAYOUT_DELETE: Category.LABELS,
@@ -187,6 +234,12 @@ class AuditLog(models.Model):
     # Diff {"campo": {"from": ..., "to": ...}}. Nunca contraseñas/hashes/
     # tokens: si el campo es sensible se registra el nombre con "***".
     changes = models.JSONField(default=dict, blank=True)
+
+    # El comercio en el que pasó (``teams.audit_team_id``): una persona puede
+    # estar en varios y la Actividad de uno no muestra lo que hizo en otro.
+    # Plano, sin FK, como el target. Null en filas de antes y en lo que no es
+    # de ningún comercio.
+    team_id = models.IntegerField(null=True, blank=True, db_index=True)
 
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=300, blank=True, default="")

@@ -12,7 +12,7 @@ from django.core.cache import cache
 from rest_framework.test import APITestCase
 from rest_framework.throttling import SimpleRateThrottle
 
-from ..models import ElementLayout
+from ..models import LabelTemplate
 
 User = get_user_model()
 
@@ -46,15 +46,13 @@ class LimiteDeRendersTests(APITestCase):
 
     def test_el_cupo_es_uno_solo_para_todos_los_renders(self):
         # Si cada endpoint tuviera su propio contador, alcanzaría con alternar.
-        layout = ElementLayout.objects.create(
-            name="Prueba", width_mm=100, height_mm=60, created_by=self.usuario
+        plantilla = LabelTemplate.objects.create(
+            name="Prueba", width_cm=10, height_cm=15, design=DESIGN, is_public=True
         )
         with tasas(labels_render="2/min"):
             self.preview()
             self.preview()
-            respuesta = self.client.post(
-                f"/api/v1/labels/element-layouts/{layout.pk}/render/", {"format": "png"}, format="json"
-            )
+            respuesta = self.client.get(f"/api/v1/labels/templates/{plantilla.pk}/preview/")
 
         self.assertEqual(respuesta.status_code, 429)
 

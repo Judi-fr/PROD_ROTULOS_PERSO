@@ -1,4 +1,5 @@
-// Perfil propio (self-service) para usuarios no administradores.
+// Perfil propio (self-service): la parte "Tu perfil" de Mi cuenta
+// (organizacion.html; los datos del comercio pasaron a Mi comercio, equipo.html#datos).
 // Carga y guarda siempre contra /api/v1/auth/me/ (nunca localStorage como
 // fuente de verdad). Sesión y apiFetch salen de assets/js/auth.js
 // (window.Auth), compartido con el resto del frontend (ver dashboard.js /
@@ -9,24 +10,14 @@ const ME_URL = `${API_BASE}/me/`;
 const CHANGE_PASSWORD_URL = `${API_BASE}/me/change-password/`;
 const VERIFY_EMAIL_RESEND_URL = `${API_BASE}/verify-email/resend/`;
 
-const getAccessToken = () => window.Auth.getAccessToken();
+const hasSession = () => window.Auth.hasSession();
 const apiFetch = (url, options) => window.Auth.apiFetch(url, options);
 
 // showMessage y getErrorMessage salen de assets/js/utils.js.
 
-function showFieldMessage(id, text, ok) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = text;
-  el.style.color = ok ? "#16a34a" : "#dc2626";
-  el.style.display = "block";
-}
-
 const ROLE_LABELS = {
   admin: "Administrador",
-  designer: "Diseñador",
-  operator: "Operador",
-  subscriber: "Suscriptor",
+  subscriber: "Comerciante",
 };
 
 function roleLabel(role) {
@@ -45,6 +36,27 @@ function renderVerificationNotice(user) {
   notice.style.display = user.email_verified === false ? "block" : "none";
 }
 
+// La foto que se va a mandar al guardar: undefined = no se tocó, un data URL =
+// la nueva, null = quitarla.
+let photoChange;
+
+function showPhoto(user) {
+  const preview = document.getElementById("photoPreview");
+  if (!preview) return;
+  // personAvatarUrl (utils.js): la foto propia, la de Google o el dibujo.
+  preview.src = personAvatarUrl({ ...(getCurrentUser() || {}), ...user });
+  document.getElementById("photoRemove").hidden = !user.photo;
+}
+
+function readPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("No se pudo leer la foto."));
+    reader.readAsDataURL(file);
+  });
+}
+
 function renderProfile(user) {
   const v = (id, val) => {
     const el = document.getElementById(id);
@@ -52,6 +64,13 @@ function renderProfile(user) {
   };
   v("firstNameInput", user.first_name);
   v("lastNameInput", user.last_name);
+  v("preferredNameInput", user.preferred_name);
+  v("jobTitleInput", user.job_title);
+  v("phoneInput", user.phone);
+  showPhoto(user);
+  photoChange = undefined;
+  const photoInput = document.getElementById("photoInput");
+  if (photoInput) photoInput.value = "";
 
   const emailValue = document.getElementById("emailValue");
   const roleValue = document.getElementById("roleValue");
@@ -81,6 +100,15 @@ async function loadProfile() {
 async function saveProfile() {
   const firstName = document.getElementById("firstNameInput")?.value?.trim() || "";
   const lastName = document.getElementById("lastNameInput")?.value?.trim() || "";
+  const value = (id) => document.getElementById(id)?.value?.trim() || "";
+  const payload = {
+    first_name: firstName,
+    last_name: lastName,
+    preferred_name: value("preferredNameInput"),
+    job_title: value("jobTitleInput"),
+    phone: value("phoneInput"),
+  };
+  if (photoChange !== undefined) payload.photo = photoChange;
   const button = document.getElementById("saveProfileBtn");
   const originalText = button.textContent;
   button.disabled = true;
@@ -90,13 +118,17 @@ async function saveProfile() {
     const response = await apiFetch(ME_URL, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ first_name: firstName, last_name: lastName }),
+      body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(getErrorMessage(data, "No se pudo actualizar tu perfil."));
     }
-    window.AppTopbar.render(data);
+    // La sesión guardada también, para que las otras páginas muestren ya la
+    // foto y el nombre nuevos (si no, tardaría hasta el próximo me/).
+    const merged = { ...(getCurrentUser() || {}), ...data };
+    window.Auth.saveSession(merged);
+    window.AppTopbar.render(merged);
     renderProfile(data);
     renderVerificationNotice(data);
     showFieldMessage("profileMsg", "Perfil actualizado correctamente.", true);
@@ -153,6 +185,33 @@ async function savePassword() {
 }
 
 document.getElementById("saveProfileBtn")?.addEventListener("click", saveProfile);
+
+document.getElementById("photoInput")?.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    showFieldMessage("profileMsg", "La foto no puede pesar más de 2 MB.", false);
+    event.target.value = "";
+    return;
+  }
+  try {
+    photoChange = await readPhoto(file);
+    document.getElementById("photoPreview").src = photoChange;
+    document.getElementById("photoRemove").hidden = false;
+    showFieldMessage("profileMsg", "Tocá «Guardar cambios» para usar esta foto.", true);
+  } catch (err) {
+    showFieldMessage("profileMsg", err.message, false);
+  }
+});
+
+document.getElementById("photoRemove")?.addEventListener("click", () => {
+  photoChange = null;
+  document.getElementById("photoInput").value = "";
+  const user = getCurrentUser() || {};
+  document.getElementById("photoPreview").src = personAvatarUrl({ ...user, photo: null });
+  document.getElementById("photoRemove").hidden = true;
+  showFieldMessage("profileMsg", "Tocá «Guardar cambios» para quitar la foto.", true);
+});
 document.getElementById("savePasswordBtn")?.addEventListener("click", savePassword);
 
 document.getElementById("resendVerificationBtn")?.addEventListener("click", async (event) => {
@@ -185,7 +244,7 @@ if (logoutBtn) {
   logoutBtn.addEventListener("click", () => window.Auth.logout());
 }
 
-if (!getAccessToken()) {
+if (!hasSession()) {
   window.location.replace("index.html");
 } else {
   loadProfile();

@@ -1,0 +1,565 @@
+/* Gestión de usuarios (gestionuser.html, body.users-page). Va aparte de
+   gestionuser.css porque ese lo comparten todas las páginas del admin:
+   acá solo cambia esta. Rediseño 2026-10-26: un buscador, el resumen como
+   una franja con atajos que filtran, el email debajo del nombre y los
+   números alineados. */
+
+.users-page .main {
+  max-width: 1400px;
+}
+
+.users-page .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- Encabezado ------------------------------------------------------------ */
+
+.users-page .topbar {
+  align-items: flex-end;
+  margin-bottom: 22px;
+}
+
+.users-page .topbar h1 {
+  font-size: var(--text-2xl);
+  letter-spacing: -0.02em;
+}
+
+.users-page .topbar p {
+  max-width: 60ch;
+}
+
+/* --- Resumen: total con su reparto + tres atajos ------------------------- */
+
+.users-pulse {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.7fr) repeat(3, minmax(0, 1fr));
+  margin-bottom: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.pulse-total,
+.pulse-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 22px;
+  min-width: 0;
+}
+
+.pulse-total {
+  background: linear-gradient(180deg, var(--accent-50) 0%, var(--n-0) 100%);
+}
+
+.pulse-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.pulse-value {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dark);
+}
+
+.pulse-total .pulse-value {
+  font-size: 40px;
+}
+
+.pulse-bar {
+  display: flex;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+  background: var(--n-100);
+  overflow: hidden;
+}
+
+.pulse-bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pulse-bar-active {
+  background: var(--green);
+}
+
+.pulse-bar-inactive {
+  background: var(--n-300);
+}
+
+.pulse-note,
+.pulse-hint {
+  font-size: var(--text-xs);
+  color: var(--n-400);
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pulse-dot.active { background: var(--green); }
+.pulse-dot.inactive { background: var(--n-300); }
+.pulse-dot.locked { background: var(--n-400); }
+
+.pulse-stat {
+  justify-content: space-between;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pulse-stat:hover {
+  background: var(--n-50);
+}
+
+.pulse-stat:active .pulse-value {
+  transform: translateY(1px);
+}
+
+.pulse-stat:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.pulse-stat .pulse-hint {
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.2s, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pulse-stat:hover .pulse-hint,
+.pulse-stat:focus-visible .pulse-hint,
+.pulse-stat[aria-pressed="true"] .pulse-hint {
+  opacity: 1;
+  transform: none;
+}
+
+/* El atajo puesto: fondo del acento y una raya abajo. */
+.pulse-stat[aria-pressed="true"] {
+  background: var(--blue-light);
+  box-shadow: inset 0 -3px 0 var(--blue);
+}
+
+.pulse-stat[aria-pressed="true"] .pulse-hint {
+  color: var(--accent-600);
+}
+
+/* Con algún bloqueado, el atajo se pinta de rojo para que se note. */
+.pulse-stat-locked.has-locked .pulse-dot.locked { background: var(--red); }
+.pulse-stat-locked.has-locked .pulse-value { color: var(--red); }
+
+/* --- Tabla ------------------------------------------------------------------ */
+
+.users-page .table-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.users-page .table-toolbar .search-box {
+  max-width: 460px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.users-page .table-toolbar .search-box:focus-within {
+  border-color: var(--blue);
+  box-shadow: var(--ring);
+}
+
+/* Exportar: un botón con un panel chico (qué usuarios y formato). */
+.export-control {
+  position: relative;
+}
+
+.export-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 300px;
+  padding: 14px;
+  background: var(--n-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: export-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.export-panel[hidden] {
+  display: none;
+}
+
+@keyframes export-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.export-group {
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+.export-group legend {
+  margin-bottom: 8px;
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--n-400);
+}
+
+.export-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.export-option + .export-option {
+  margin-top: 6px;
+}
+
+.export-option input {
+  margin: 3px 0 0;
+  accent-color: var(--blue);
+}
+
+.export-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: var(--text-sm);
+}
+
+.export-option small {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.export-option:has(input:checked) {
+  border-color: var(--blue);
+  background: var(--accent-50);
+}
+
+.export-option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Formato: un selector de dos partes. */
+.export-formats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--n-100);
+}
+
+.export-formats label {
+  position: relative;
+  cursor: pointer;
+}
+
+.export-formats input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  cursor: pointer;
+}
+
+.export-formats span {
+  display: block;
+  padding: 7px 0;
+  border-radius: var(--radius-md);
+  text-align: center;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.export-formats input:checked + span {
+  background: var(--n-0);
+  color: var(--text-dark);
+  box-shadow: var(--shadow-xs);
+}
+
+.export-formats input:focus-visible + span {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.export-go {
+  width: 100%;
+  justify-content: center;
+}
+
+@media (max-width: 640px) {
+  .export-panel {
+    position: fixed;
+    top: auto;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+  }
+}
+
+/* Cantidad de filtros puestos, dentro del botón "Filtros". */
+.filter-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--blue);
+  color: var(--n-0);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-count[hidden] {
+  display: none;
+}
+
+.users-page th.check-col { width: 44px; }
+
+/* La casilla entra justa: sin el "…" del recorte de las otras celdas. */
+.users-page th.check-col,
+.users-page tbody td:first-child {
+  padding-right: 0;
+  text-overflow: clip;
+}
+/* Con poco ancho los encabezados bajan de renglón en vez de encimarse
+   (table-layout fixed; un contenedor con scroll recortaría el menú de cada fila). */
+.users-page thead th { white-space: normal; overflow: visible; vertical-align: bottom; }
+.users-page thead .th-sort { max-width: 100%; white-space: normal; line-height: 1.2; text-align: left; }
+.users-page th.user-col { width: 27%; }
+.users-page th.role-col { width: 15%; }
+.users-page th.status-col { width: 14%; }
+.users-page th.date-col { width: 13%; }
+.users-page th.num-col { width: 10%; text-align: right; }
+/* relative: el "Acciones" oculto (sr-only, absoluto) queda dentro de la tabla;
+   si no, en el celular se escapa del scroll de la tabla y ensancha la página. */
+.users-page th.actions-col { width: 64px; position: relative; }
+
+.users-page td.num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.users-page th.num-col .th-sort {
+  flex-direction: row-reverse;
+}
+
+.users-page thead tr {
+  background: var(--n-50);
+}
+
+.users-page th {
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  padding: 11px 14px;
+}
+
+.users-page td {
+  padding: 12px 14px;
+}
+
+.users-page tbody tr {
+  transition: background 0.15s;
+  animation: user-row-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--row, 0) * 22ms);
+}
+
+@keyframes user-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.users-page .user-avatar {
+  width: 34px;
+  height: 34px;
+  background: var(--n-100);
+  box-shadow: 0 0 0 2px var(--n-0), 0 0 0 3px var(--border);
+}
+
+.user-ident {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.user-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* Roles: una pastilla con un punto del color, más tranquila que el fondo
+   lleno; el color sigue diciendo administrador / personal / comerciante. */
+.users-page .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 22%, transparent);
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.users-page .badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.users-page .status {
+  font-size: var(--text-sm);
+}
+
+.users-page .status.active .dot {
+  box-shadow: var(--ring);
+}
+
+.users-page .table-placeholder .app-empty {
+  padding: 28px 0;
+}
+
+.users-page .table-error {
+  color: var(--red);
+  text-align: center;
+}
+
+.users-page .pager button {
+  transition: background 0.15s, border-color 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .users-page tbody tr,
+  .pulse-bar span,
+  .pulse-stat .pulse-hint {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* --- Pantallas angostas ------------------------------------------------------ */
+
+/* Con el menú al lado no entran las siete columnas y se cortaba lo importante
+   ("Adminis…"): se sacan las fechas, por las que se puede seguir ordenando desde
+   Filtros, y lo demás respira. */
+@media (max-width: 1380px) {
+  .users-page th.date-col,
+  .users-page td.date-col {
+    display: none;
+  }
+
+  .users-page th.user-col { width: 38%; }
+  .users-page th.role-col { width: 26%; }
+  .users-page th.status-col { width: 16%; }
+}
+
+/* Lo más justo: el menú todavía va al costado. Debajo de 900px pasa arriba y vuelve a entrar. */
+@media (min-width: 901px) and (max-width: 980px) {
+  .users-page th.num-col,
+  .users-page td.num-col {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .users-pulse {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pulse-total {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pulse-stat:nth-child(2) {
+    border-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .users-page .topbar {
+    align-items: flex-start;
+  }
+
+  .users-pulse {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pulse-stat {
+    flex-direction: row;
+    align-items: center;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    padding: 14px 18px;
+  }
+
+  .pulse-stat .pulse-value {
+    font-size: var(--text-xl);
+    order: 2;
+  }
+
+  .pulse-stat .pulse-hint {
+    display: none;
+  }
+
+  .pulse-total {
+    border-bottom: 0;
+  }
+}

@@ -29,15 +29,19 @@ from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.token_blacklist.models import (
     BlacklistedToken,
     OutstandingToken,
 )
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.common.mail import branded_html
 from apps.audit.services import record
 
+from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_from_request, wants_cookies
 from .models import EmailVerification, LoginLockout, user_email_verified
 
 User = get_user_model()
@@ -130,14 +134,19 @@ def tokens_for_user(user):
     }
 
 
-def user_payload(user, picture=""):
+def user_payload(user, picture="", request=None):
     """Objeto ``user`` que acompaña a los tokens en cada respuesta de login.
 
     ``picture`` solo lo aporta Google (viene en el ID token y no se
-    persiste); en el login con email/contraseña queda vacío.
+    persiste); en el login con email/contraseña queda vacío. ``photo`` es la
+    foto que la persona subió (perfil personal) y gana sobre ``picture``.
     """
     from .authentication import user_must_change_password
+    from .models import personal_profile_for
     from .permissions_map import PERMISSIONS, get_effective_role, user_has_permission
+    from .personal_profiles import display_name, photo_url
+
+    profile = personal_profile_for(user)
 
     return {
         "id": user.id,
@@ -145,6 +154,8 @@ def user_payload(user, picture=""):
         "first_name": user.first_name,
         "last_name": user.last_name,
         "picture": picture,
+        "display_name": display_name(user, profile),
+        "photo": photo_url(profile, request),
         "is_staff": user.is_staff,
         "role": get_effective_role(user),
         "permissions": sorted(
@@ -155,12 +166,48 @@ def user_payload(user, picture=""):
         # loguea, sin esperar al primer 403 (ver authentication.py, que es
         # quien realmente lo hace cumplir del lado del servidor).
         "must_change_password": user_must_change_password(user),
+        # El comercio actual y lo que el usuario puede hacer en él (teams.py):
+        # el frontend lo usa para el menú y para no mostrar lo que no puede.
+        # ``None`` = todavía no está en ningún comercio.
+        "team": team_payload(user),
+        # Todos sus comercios, para el selector de arriba.
+        "teams": teams_payload(user),
     }
 
 
-def auth_response(user, picture=""):
-    """Respuesta estándar de login: tokens JWT + objeto user."""
-    return Response({**tokens_for_user(user), "user": user_payload(user, picture)})
+def team_payload(user):
+    from .teams import accesses_of, membership, team_display_name
+
+    member = membership(user)
+    if member is None:
+        return None
+    return {
+        "id": member.team_id,
+        "name": member.team.name,
+        "display_name": team_display_name(member.team),
+        "role": member.role,
+        "accesses": sorted(accesses_of(member)),
+        "all_stores": member.role == member.Role.OWNER or member.all_stores,
+        "store_ids": sorted(member.stores.values_list("id", flat=True)),
+    }
+
+
+def teams_payload(user):
+    from .teams import memberships, team_display_name
+
+    members = sorted(memberships(user), key=lambda m: (team_display_name(m.team).lower(), m.team_id))
+    return [
+        {"id": m.team_id, "name": m.team.name, "display_name": team_display_name(m.team), "role": m.role}
+        for m in members
+    ]
+
+
+def auth_response(user, picture="", request=None):
+    """Respuesta estándar de login: tokens JWT + objeto user. Con
+    ``X-Auth-Mode: cookie`` los tokens van en cookies HttpOnly y no en el
+    cuerpo (``auth_cookies.deliver_tokens``)."""
+    response = Response({**tokens_for_user(user), "user": user_payload(user, picture, request)})
+    return deliver_tokens(request, response) if request is not None else response
 
 
 # Formato de email: algo@algo.dominio (sin espacios ni un segundo @).
@@ -175,13 +222,14 @@ def validate_email_format(email):
 
 
 def validate_password_strength(password):
-    """Reglas de contraseña: mínimo 6 caracteres, una mayúscula y un número.
+    """Reglas de contraseña: mínimo 8 caracteres (el de los validadores de
+    Django, que corren después), una mayúscula y un número.
 
     Devuelve un mensaje de error (enumerando lo que falta), o None si es válida.
     """
     faltantes = []
-    if len(password) < 6:
-        faltantes.append("al menos 6 caracteres")
+    if len(password) < 8:
+        faltantes.append("al menos 8 caracteres")
     if not re.search(r"[A-Z]", password):
         faltantes.append("una letra mayúscula")
     if not re.search(r"\d", password):
@@ -349,7 +397,7 @@ class GoogleAuthView(APIView):
 
         # URL pública del avatar en el CDN de Google. No se persiste:
         # Google puede rotarla, así que se refresca en cada login.
-        return auth_response(user, picture=claims.get("picture", ""))
+        return auth_response(user, picture=claims.get("picture", ""), request=request)
 
 
 class LoginView(APIView):
@@ -448,7 +496,7 @@ class LoginView(APIView):
             actor_email=user.email,
         )
 
-        return auth_response(user)
+        return auth_response(user, request=request)
 
 
 def _send_verification_email(user, token):
@@ -462,7 +510,7 @@ def _send_verification_email(user, token):
     verification_url = f"{settings.EMAIL_VERIFICATION_URL}?token={token}"
     try:
         send_mail(
-            subject="Confirmá tu email — ROTULOS",
+            subject="Confirmá tu email — Human Log · Rótulos",
             message=(
                 f"Hola,\n\n"
                 f"Gracias por registrarte. Para confirmar tu cuenta, entrá en "
@@ -473,6 +521,12 @@ def _send_verification_email(user, token):
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
             fail_silently=False,
+            html_message=branded_html(
+                heading="Confirmá tu email",
+                paragraphs=["Gracias por registrarte. Para terminar de crear tu cuenta, confirmá que este email es tuyo."],
+                action=("Confirmar mi email", verification_url),
+                footnote="Si no fuiste vos, podés ignorar este correo.",
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - no bloquear el registro por un fallo de SMTP
         print(f"No se pudo enviar el email de verificación a {user.email}: {exc}")
@@ -558,14 +612,15 @@ class RegisterView(APIView):
         verification.refresh_token()
         _send_verification_email(user, verification.token)
 
-        return Response(
+        response = Response(
             {
                 "detail": "Cuenta creada con éxito.",
                 **tokens_for_user(user),
-                "user": user_payload(user),
+                "user": user_payload(user, request=request),
             },
             status=status.HTTP_201_CREATED,
         )
+        return deliver_tokens(request, response)
 
 
 class LogoutView(APIView):
@@ -576,15 +631,16 @@ class LogoutView(APIView):
     El access token que ya esté en circulación sigue siendo válido hasta que
     expire (vida corta, 15 min) — es la naturaleza de los JWT stateless.
 
-    Requiere estar autenticado (access válido en el header) y mandar el refresh
-    a revocar en el body.
+    Requiere estar autenticado (access válido en el header o en su cookie) y
+    mandar el refresh a revocar en el body — o tenerlo en su cookie, que es el
+    caso del frontend web. Siempre borra las cookies de sesión.
 
-    Body:      {"refresh": "<JWT>"}
+    Body:      {"refresh": "<JWT>"} (opcional con cookies)
     Respuesta: 205 Reset Content
     """
 
     def post(self, request):
-        refresh = request.data.get("refresh")
+        refresh = refresh_from_request(request)
         if not refresh:
             return Response(
                 {"detail": "Falta el campo 'refresh' (token a revocar)."},
@@ -605,7 +661,7 @@ class LogoutView(APIView):
             target_type="user",
             target_repr=request.user.email,
         )
-        return Response(status=status.HTTP_205_RESET_CONTENT)
+        return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
 
 
 def blacklist_all_refresh_tokens(user):
@@ -686,7 +742,7 @@ class PasswordResetRequestView(APIView):
 
         try:
             send_mail(
-                subject="Restablecé tu contraseña — ROTULOS",
+                subject="Restablecé tu contraseña — Human Log · Rótulos",
                 message=(
                     f"Hola,\n\n"
                     f"Recibimos un pedido para restablecer la contraseña de tu "
@@ -698,6 +754,12 @@ class PasswordResetRequestView(APIView):
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
                 fail_silently=False,
+                html_message=branded_html(
+                    heading="Restablecé tu contraseña",
+                    paragraphs=["Recibimos un pedido para restablecer la contraseña de tu cuenta."],
+                    action=("Elegir una contraseña nueva", reset_url),
+                    footnote="Si no fuiste vos, ignorá este correo: tu contraseña actual sigue siendo válida.",
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - ver el docstring: no delatar la cuenta
             print(f"No se pudo enviar el email de reset a {user.email}: {exc}")
@@ -855,3 +917,30 @@ class EmailVerificationResendView(APIView):
         _send_verification_email(request.user, verification.token)
 
         return Response({"detail": "Te reenviamos el email de verificación."})
+
+
+class CookieTokenRefreshView(TokenRefreshView):
+    """POST /api/v1/auth/refresh/ — el ``TokenRefreshView`` de simplejwt
+    (rotación + blacklist, ver ``SIMPLE_JWT``) que además toma el refresh de su
+    cookie cuando el cuerpo no lo trae, y en modo cookie devuelve los tokens
+    nuevos en cookies. Si el refresh ya no sirve, borra las cookies: así el
+    navegador no sigue mandando una sesión muerta."""
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data={"refresh": refresh_from_request(request)})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as error:
+            failure = InvalidToken(error.args[0])
+        except (InvalidToken, DRFValidationError) as error:
+            failure = error
+        else:
+            return deliver_tokens(request, Response(serializer.validated_data, status=status.HTTP_200_OK))
+        if wants_cookies(request):
+            return clear_auth_cookies(
+                Response(
+                    {"detail": "La sesión venció: volvé a iniciar sesión."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            )
+        raise failure

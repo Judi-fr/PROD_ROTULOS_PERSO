@@ -35,6 +35,19 @@ from __future__ import annotations
 
 import logging
 
+from .design_shapes import resolve_color, thermal_text_is_white
+from .text_style import (
+    apply_case,
+    fit_with_ellipsis,
+    pdf_font_name,
+    resolve_text_style,
+    text_width,
+    ttf_path,
+    wrap_lines,
+    zpl_native_ok,
+    zpl_text_graphic,
+    zpl_text_image,
+)
 from .label_rendering import (
     BORDER_INSET_CM,
     DECORATION_KEYS,
@@ -45,6 +58,10 @@ from .label_rendering import (
     DEFAULT_QR_DATA_MARKER,
     DEFAULT_QR_SIZE_CM,
     MIN_SHRINK_FONT_SIZE,
+    QUIET_ZONE_CM,
+    TEXT_BAND_DESCENT_RATIO,
+    TEXT_BAND_PAD_RATIO,
+    TEXT_ROTATIONS,
     _all_placeholders_empty,
     _box_size_cm,
     _fit_size_cm,
@@ -83,11 +100,19 @@ DASH_MM = 2.0
 QR_ERROR_CORRECTION = "M"
 
 # Rango que acepta ZPL para la magnificación del QR y para el ancho de
-# módulo del código de barras (^BY).
+# módulo del código de barras (^BY). El módulo arranca en 2 y no en 1 (que
+# ZPL acepta): con 1 punto las barras no se leen (medido para el PDF en
+# tests/test_scanning.py; mismo mínimo que label_rendering).
 QR_MAGNIFICATION_RANGE = (1, 10)
-BARCODE_MODULE_RANGE = (1, 10)
+BARCODE_MODULE_RANGE = (2, 10)
 
 ALIGN_TO_ZPL = {"left": "L", "center": "C", "right": "R"}
+# ^A0<orientación>: N normal, R girado 90° (se lee de arriba hacia abajo),
+# B girado 270° (de abajo hacia arriba). Mismo ``rotate`` que el PDF.
+ROTATION_TO_ZPL = {0: "N", 90: "R", 270: "B"}
+# Grosor del recuadro de un texto (``frame``), en dots a 203 dpi; se escala
+# con la densidad como el resto.
+TEXT_FRAME_DOTS_AT_8 = 2
 
 
 # ---------------------------------------------------------------------------
@@ -145,9 +170,12 @@ def escape_field_data(text):
     )
 
 
-def _text_commands(entry, context, computed, width_cm, height_cm, default_font_pt, dpmm):
+def _text_commands(entry, context, computed, width_cm, height_cm, default_font_pt, dpmm, palette=None):
     """Los comandos de un campo de texto, o ``[]`` si no hay nada que
-    imprimir. Mismas reglas que ``label_rendering._draw_text_entry``."""
+    imprimir. Mismas reglas que ``label_rendering._draw_text_entry``,
+    incluidas la etiqueta fija (``prefix``), el texto invertido (``invert``:
+    franja ``^GB`` llena y el texto con ``^FR``, que lo imprime en blanco donde
+    pisa negro), el recuadro (``frame``) y el texto vertical (``rotate``)."""
     raw_text = entry.get("text")
     if entry.get("hide_if_empty") and _all_placeholders_empty(raw_text, context, computed):
         return []
@@ -155,50 +183,189 @@ def _text_commands(entry, context, computed, width_cm, height_cm, default_font_p
     if not text:
         return []
 
+    # Tipografía (fase 2, text_style.py): la sans simple sigue con la fuente
+    # de la impresora; lo demás va como gráfico (ver más abajo).
+    style = resolve_text_style(entry, default_font_pt)
+    text = apply_case(text, style)
+    prefix = apply_case((entry.get("prefix") or "").strip(), style)
+    prefix = f"{prefix} " if prefix else ""
+    content = prefix + text
+    rotate = entry.get("rotate") if entry.get("rotate") in TEXT_ROTATIONS else 0
+
     left_pct, top_pct = entry.get("left", 0), entry.get("top", 0)
     x_dots, y_dots = percent_to_dots(left_pct, top_pct, width_cm, height_cm, dpmm)
 
-    # Ancho de la caja: hasta el borde derecho salvo que el campo diga otra
-    # cosa, igual que en el PDF.
-    total_width_dots = cm_to_dots(width_cm, dpmm)
-    box_width_dots = total_width_dots - x_dots
-    if entry.get("width") is not None:
-        box_width_dots = min(box_width_dots, cm_to_dots(float(entry["width"]) / 100 * width_cm, dpmm))
+    # Largo de la caja a lo largo del texto: horizontal, hasta el borde
+    # derecho; vertical, hasta el de abajo (``width`` es % del alto). Igual
+    # que en el PDF.
+    if rotate:
+        box_width_dots = cm_to_dots(height_cm, dpmm) - y_dots
+        if entry.get("width") is not None:
+            box_width_dots = min(box_width_dots, cm_to_dots(float(entry["width"]) / 100 * height_cm, dpmm))
+    else:
+        box_width_dots = cm_to_dots(width_cm, dpmm) - x_dots
+        if entry.get("width") is not None:
+            box_width_dots = min(box_width_dots, cm_to_dots(float(entry["width"]) / 100 * width_cm, dpmm))
     if box_width_dots <= 0:
         return []
 
     font_pt = float(entry.get("font_size") or default_font_pt)
-    if entry.get("shrink_to_fit"):
-        font_pt = _shrink_to_fit_pt(text, font_pt, box_width_dots, dpmm)
+    max_lines = 1 if rotate else style["max_lines"]
+    # Como el PDF: con varios renglones el texto se corta en renglones y no se
+    # achica la letra.
+    if entry.get("shrink_to_fit") and max_lines == 1:
+        font_pt = _shrink_to_fit_pt(content, font_pt, box_width_dots, dpmm)
     font_dots = max(1, points_to_dots(font_pt, dpmm))
 
-    align = ALIGN_TO_ZPL.get(entry.get("align", "left"), "L")
-    payload = escape_field_data(text)
+    orientation = ROTATION_TO_ZPL[rotate]
+    # Vertical no hay alineación: arranca arriba. De abajo hacia arriba eso es
+    # el FINAL de la caja, o sea justificado a la derecha.
+    if rotate == 270:
+        align = "R"
+    elif rotate == 90:
+        align = "L"
+    else:
+        align = ALIGN_TO_ZPL.get(entry.get("align", "left"), "L")
+    invert = bool(entry.get("invert"))
+    # Un color claro sale en blanco (^FR) donde pisa negro, como el invertido.
+    color = resolve_color(entry.get("color"), palette)
+    reverse = invert or bool(color and thermal_text_is_white(color))
+    leading_dots = round(font_dots * style["line_height"])
+    graphic = not rotate and not zpl_native_ok(style)
+    # La franja sigue los renglones REALES, como el PDF. En gráfico se cortan
+    # acá y se reusan; en nativo se estiman con Helvetica (la impresora mide
+    # con su fuente 0).
+    if graphic:
+        lines = _graphic_lines(style, text, prefix, entry, box_width_dots, font_pt, max_lines, dpmm)
+        line_count = len(lines)
+    elif max_lines > 1:
+        dots_per_pt = dpmm * MM_PER_INCH / POINTS_PER_INCH
+        helv = "Helvetica-Bold" if entry.get("bold") else "Helvetica"
+        box_pt = box_width_dots / dots_per_pt
+        native_lines = wrap_lines(content, helv, font_pt, box_pt, max_lines)
+        line_count = len(native_lines) or 1
+        # Lo que no entra en los renglones la impresora lo encima sobre el
+        # último (ilegible, visto en Labelary): se corta acá con "…", como el
+        # PDF. La fuente 0 es más angosta que Helvetica, así que el texto
+        # cortado entra en los mismos renglones.
+        if native_lines and " ".join(native_lines) != " ".join(content.split()):
+            content = " ".join(native_lines)
+    else:
+        line_count = 1
+    extra_dots = leading_dots * (line_count - 1)
+    block = f"{max_lines},{leading_dots - font_dots}" if max_lines > 1 else "1,0"
 
-    def campo(offset):
-        # ^A0N: fuente 0 (la escalable que traen todas), sin rotar, alto en
-        # dots y ancho 0 = proporcional al alto.
+    def campo(offset, payload, reverse=False):
+        # ^A0<o>: fuente 0 (la escalable que traen todas), alto en dots y
+        # ancho 0 = proporcional al alto.
         # ^FB: caja de <ancho>, UNA línea. El "1" es lo que hace que el
         # firmware recorte lo que no entra en vez de seguir escribiendo fuera
         # del rótulo; el PDF hace lo mismo con una elipsis
         # (_truncate_to_width).
         return [
             f"^FO{x_dots + offset},{y_dots + offset}",
-            f"^A0N,{font_dots},0",
-            f"^FB{box_width_dots},1,0,{align},0",
+            f"^A0{orientation},{font_dots},0",
+            f"^FB{box_width_dots},{block},{align},0",
+            *(["^FR"] if reverse else []),
             "^FH\\",
             f"^FD{payload}^FS",
         ]
 
-    commands = campo(0)
-    if entry.get("bold"):
+    commands = _text_band_commands(
+        entry, content, font_pt, font_dots, rotate, x_dots, y_dots, box_width_dots, width_cm, height_cm, dpmm,
+        extra_dots=extra_dots,
+    )
+    if graphic:
+        return commands + _graphic_text_commands(
+            style, lines, prefix, entry, x_dots, y_dots, box_width_dots, font_pt, align, reverse, dpmm
+        )
+    commands += campo(0, escape_field_data(content), reverse=reverse)
+    if entry.get("bold") and not reverse:
         # ZPL no trae una variante negrita de la fuente 0, así que se
         # imprime el mismo texto corrido un dot: el solapamiento engrosa el
         # trazo. Es el recurso habitual en ZPL, y sin esto `bold` se
         # ignoraría en silencio y la etiqueta perdería la jerarquía que el
         # diseño le puso (el destinatario y el CP dejan de destacarse).
-        commands += campo(_bold_offset(font_dots))
+        # Invertido no: con ^FR la segunda pasada volvería a negro lo que la
+        # primera puso en blanco.
+        commands += campo(_bold_offset(font_dots), escape_field_data(content))
+    elif prefix and entry.get("prefix_bold") and not invert and align == "L":
+        # Solo la etiqueta en negrita: misma caja y mismo comienzo, así que
+        # la segunda pasada cae justo sobre ella. Centrado o a la derecha su
+        # lugar depende del largo total, que mide la impresora: ahí no.
+        commands += campo(_bold_offset(font_dots), escape_field_data(prefix.rstrip()))
     return commands
+
+
+def _text_band_commands(
+    entry, content, font_pt, font_dots, rotate, x_dots, y_dots, box_width_dots, width_cm, height_cm, dpmm,
+    extra_dots=0,
+):
+    """La franja negra de ``invert`` y el recuadro de ``frame``, con la misma
+    forma que en el PDF: la caja entera horizontal; vertical, el largo del
+    texto (que acá se estima con Helvetica, como ``shrink_to_fit``: la
+    impresora mide con su fuente 0)."""
+    if not entry.get("invert") and not entry.get("frame"):
+        return []
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    pad = max(1, round(font_dots * TEXT_BAND_PAD_RATIO))
+    across = round(font_dots * (1 + TEXT_BAND_DESCENT_RATIO)) + extra_dots
+    if rotate:
+        bold = "Helvetica-Bold" if entry.get("bold") else "Helvetica"
+        length = points_to_dots(stringWidth(content, bold, font_pt), dpmm)
+        length = min(length, box_width_dots)
+        bx = x_dots - round(font_dots * TEXT_BAND_DESCENT_RATIO) if rotate == 90 else x_dots
+        box = (bx, y_dots - pad, across, length + 2 * pad)
+    else:
+        box = (x_dots - pad, y_dots, box_width_dots + 2 * pad, across)
+    bx, by, bw, bh = (max(0, value) for value in box)
+    # Dentro del rótulo, como en el PDF: un ^GB que se pasa del ancho pierde
+    # su lado derecho.
+    bw = min(bw, cm_to_dots(width_cm, dpmm) - bx)
+    bh = min(bh, cm_to_dots(height_cm, dpmm) - by)
+    if bw <= 0 or bh <= 0:
+        return []
+    commands = []
+    if entry.get("invert"):
+        commands.append(f"^FO{bx},{by}^GB{bw},{bh},{max(1, min(bw, bh))}^FS")
+    if entry.get("frame"):
+        thickness = max(1, round(TEXT_FRAME_DOTS_AT_8 * dpmm / 8))
+        commands.append(f"^FO{bx},{by}^GB{bw},{bh},{thickness}^FS")
+    return commands
+
+
+def _graphic_lines(style, text, prefix, entry, box_width_dots, font_pt, max_lines, dpmm):
+    """Los renglones del texto gráfico, con el mismo corte que el PDF (medido
+    en puntos)."""
+    dots_per_pt = dpmm * MM_PER_INCH / POINTS_PER_INCH
+    spacing = style["letter_spacing"]
+    prefix_font = pdf_font_name(style["family"], bool(entry.get("prefix_bold")) or style["bold"], style["italic"])
+    box_pt = box_width_dots / dots_per_pt - text_width(prefix, prefix_font, font_pt, spacing)
+    if max_lines > 1:
+        lines = wrap_lines(text, style["font_name"], font_pt, box_pt, max_lines, spacing)
+    else:
+        lines = [fit_with_ellipsis(text, style["font_name"], font_pt, box_pt, spacing)]
+    return [line for line in lines if line]
+
+
+def _graphic_text_commands(style, lines, prefix, entry, x_dots, y_dots, box_width_dots, font_pt, align, reverse,
+                           dpmm):
+    """El texto dibujado con su .ttf (``text_style.zpl_text_image``)."""
+    if not lines:
+        return []
+    dots_per_pt = dpmm * MM_PER_INCH / POINTS_PER_INCH
+    spacing = style["letter_spacing"]
+    prefix_spec = None
+    if prefix:
+        prefix_spec = (prefix, ttf_path(style["family"], bool(entry.get("prefix_bold")) or style["bold"],
+                                        style["italic"]))
+    image = zpl_text_image(
+        lines, ttf_path(style["family"], style["bold"], style["italic"]), font_pt * dots_per_pt, box_width_dots,
+        {"L": "left", "C": "center", "R": "right"}[align], style["line_height"], spacing * dots_per_pt,
+        prefix=prefix_spec,
+    )
+    return zpl_text_graphic(x_dots, y_dots, image, reverse)
 
 
 def _bold_offset(font_dots):
@@ -231,7 +398,37 @@ def _shrink_to_fit_pt(text, font_pt, box_width_dots, dpmm):
 # ---------------------------------------------------------------------------
 
 
-def _qr_commands(entry, context, computed, width_cm, height_cm, dpmm):
+def _white_box_commands(x_dots, y_dots, w_dots, h_dots, dpmm):
+    """Caja blanca maciza con la zona de silencio del PDF (``QUIET_ZONE_CM``
+    por lado, ``_draw_white_box``): un código sobre una imagen o un relleno
+    tiene que quedar sobre blanco. Los campos siguientes se dibujan encima."""
+    margin = cm_to_dots(QUIET_ZONE_CM, dpmm)
+    x, y = max(0, x_dots - margin), max(0, y_dots - margin)
+    w, h = w_dots + 2 * margin, h_dots + 2 * margin
+    return [f"^FO{x},{y}", f"^GB{w},{h},{min(w, h)},W,0^FS"]
+
+
+def _shapes_overlap(design, left_pct, top_pct, w_pct, h_pct, width_cm, height_cm):
+    """True si alguna forma toca la caja del código más su zona de silencio."""
+    from .shapes_pdf import shape_box_pct
+
+    shapes = design.get("shapes") if isinstance(design, dict) else None
+    if not isinstance(shapes, list):
+        return False
+    margin_x = QUIET_ZONE_CM / width_cm * 100
+    margin_y = QUIET_ZONE_CM / height_cm * 100
+    c_left, c_top = left_pct - margin_x, top_pct - margin_y
+    c_right, c_bottom = left_pct + w_pct + margin_x, top_pct + h_pct + margin_y
+    for shape in shapes:
+        if not isinstance(shape, dict):
+            continue
+        s_left, s_top, s_right, s_bottom = shape_box_pct(shape)
+        if s_left <= c_right and s_right >= c_left and s_top <= c_bottom and s_bottom >= c_top:
+            return True
+    return False
+
+
+def _qr_commands(entry, context, computed, width_cm, height_cm, dpmm, clear_background=None):
     """QR nativo (``^BQ``). El firmware lo dibuja con módulos exactos, que es
     la diferencia más visible contra rasterizar un PDF."""
     data = _replace_placeholders(entry.get("data", DEFAULT_QR_DATA_MARKER), context, computed)
@@ -248,14 +445,30 @@ def _qr_commands(entry, context, computed, width_cm, height_cm, dpmm):
 
     magnification = _qr_magnification(data, cm_to_dots(size_cm, dpmm))
     x_dots, y_dots = percent_to_dots(left_pct, top_pct, width_cm, height_cm, dpmm)
+    white_box = []
+    if clear_background is not None:
+        modules = _qr_module_count(data)
+        side = modules * magnification if modules else cm_to_dots(size_cm, dpmm)
+        # ^BQ dibuja el símbolo unos dots más abajo que el ^FO.
+        offset = QR_TOP_OFFSET_DOTS_PER_MAGNIFICATION * magnification
+        w_pct = side / (cm_to_dots(width_cm, dpmm) or 1) * 100
+        h_pct = (side + offset) / (cm_to_dots(height_cm, dpmm) or 1) * 100
+        if _shapes_overlap(clear_background, float(left_pct), float(top_pct), w_pct, h_pct, width_cm, height_cm):
+            white_box = _white_box_commands(x_dots, y_dots, side, side + offset, dpmm)
     # ^BQN,2,<mag>: modelo 2 (el estándar). El dato lleva el prefijo
     # "<corrección><modo>," que ZPL espera dentro del ^FD.
-    return [
+    return white_box + [
         f"^FO{x_dots},{y_dots}",
         f"^BQN,2,{magnification}",
         "^FH\\",
         f"^FD{QR_ERROR_CORRECTION}A,{escape_field_data(data)}^FS",
     ]
+
+
+# Alto extra del texto legible bajo las barras, y desplazamiento vertical del
+# ^BQ (en módulos); aproximaciones para dimensionar la caja blanca.
+BARCODE_TEXT_LINE_CM = 0.45
+QR_TOP_OFFSET_DOTS_PER_MAGNIFICATION = 1
 
 
 def _qr_magnification(data, size_dots):
@@ -291,7 +504,7 @@ def _qr_module_count(data):
         return 0
 
 
-def _barcode_commands(entry, context, computed, width_cm, height_cm, dpmm):
+def _barcode_commands(entry, context, computed, width_cm, height_cm, dpmm, clear_background=None):
     """Código de barras 1D nativo (``^BC`` Code128 / ``^BE`` EAN-13).
 
     Lanza ``ValueError`` con el mismo criterio que
@@ -329,13 +542,26 @@ def _barcode_commands(entry, context, computed, width_cm, height_cm, dpmm):
     show_text = "Y" if entry.get("show_text", True) else "N"
     x_dots, y_dots = percent_to_dots(left_pct, top_pct, width_cm, height_cm, dpmm)
 
+    commands = []
+    if clear_background is not None:
+        modules = _barcode_module_count(data, symbology)
+        box_w = modules * module_dots
+        box_h = height_dots + (cm_to_dots(BARCODE_TEXT_LINE_CM, dpmm) if show_text == "Y" else 0)
+        w_pct = box_w / (cm_to_dots(width_cm, dpmm) or 1) * 100
+        h_pct = box_h / (cm_to_dots(height_cm, dpmm) or 1) * 100
+        if _shapes_overlap(clear_background, float(left_pct), float(top_pct), w_pct, h_pct, width_cm, height_cm):
+            commands += _white_box_commands(x_dots, y_dots, box_w, box_h, dpmm)
     # ^BY define el ancho de módulo y la relación ancho/angosto; vale para
     # los ^B que siguen, así que se emite pegado al código.
-    commands = [f"^FO{x_dots},{y_dots}", f"^BY{module_dots},3,{height_dots}"]
+    commands += [f"^FO{x_dots},{y_dots}", f"^BY{module_dots},3,{height_dots}"]
     if symbology == "ean13":
         commands.append(f"^BEN,{height_dots},{show_text},N")
     else:
-        commands.append(f"^BCN,{height_dots},{show_text},N,N")
+        # Modo A (automático): la impresora empaqueta los dígitos de a pares
+        # (subconjunto C), como ReportLab en el PDF. Con el modo N quedaba
+        # todo en subconjunto B y un seguimiento de 19 dígitos salía ~6 cm en
+        # vez de ~4,4 cm, saliéndose de su caja.
+        commands.append(f"^BCN,{height_dots},{show_text},N,N,A")
     commands.append("^FH\\")
     commands.append(f"^FD{escape_field_data(data)}^FS")
     return commands
@@ -346,14 +572,34 @@ def _barcode_module_width(data, symbology, width_dots):
 
     La cuenta de módulos es la del formato: Code128 gasta 11 por carácter
     más el arranque, el dígito de control y el cierre; EAN-13 son siempre
-    95. Si no llega ni con 1 dot por módulo, queda en 1 y el código sale más
+    95. Si no llega ni con 2 dots por módulo, queda en 2 y el código sale más
     ancho de lo pedido — preferible a uno tan angosto que no se lea.
     """
+    return _clamp(width_dots // _barcode_module_count(data, symbology), *BARCODE_MODULE_RANGE)
+
+
+def _barcode_module_count(data, symbology):
+    """Módulos que ocupa el código, zona de silencio aparte.
+
+    EAN-13 son siempre 95. Code128 en modo automático gasta 11 por símbolo
+    (arranque, datos, cambios de subconjunto, control) más 13 del cierre; la
+    cuenta de símbolos sale de la misma codificación que usa el PDF
+    (ReportLab), que pone los pares de dígitos en el subconjunto C igual que
+    el modo A de la impresora.
+    """
     if symbology == "ean13":
-        modules = 95
-    else:
-        modules = 11 * (len(data) + 3) + 2
-    return _clamp(width_dots // modules, *BARCODE_MODULE_RANGE)
+        return 95
+    try:
+        from reportlab.graphics.barcode.code128 import Code128
+
+        code = Code128(data)
+        code.validate()
+        code.encode()
+        return 11 * len(code.encoded) + 2
+    except Exception:
+        # Sin poder codificarlo se cuenta todo en subconjunto B: el código
+        # puede salir más angosto que su caja, nunca más ancho.
+        return 11 * (len(data) + 3) + 2
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +761,7 @@ def render_label_zpl(
     logo_file=None,
     computed=None,
     dpmm=DEFAULT_DPMM,
+    warnings=None,
 ):
     """El ZPL de UNA etiqueta, como texto.
 
@@ -557,18 +804,27 @@ def render_label_zpl(
     ]
 
     commands += _decoration_commands(effective_design, width_cm, height_cm, dpmm)
+    # Formas y cajas (design_shapes.py): capa de fondo, como en el PDF.
+    from .shapes_zpl import shape_commands
+
+    commands += shape_commands(effective_design, context, computed, width_cm, height_cm, default_font_pt, dpmm,
+                              logo_file=logo_file, warnings=warnings)
 
     logo_entry = effective_design.get("logo")
     if logo_entry and logo_file:
         commands += _logo_commands(logo_entry, logo_file, width_cm, height_cm, dpmm)
 
+    # Con formas en el diseño, los códigos llevan caja blanca como en el PDF.
+    clear_background = effective_design if effective_design.get("shapes") else None
     qr_entry = effective_design.get("qr")
     if qr_entry:
-        commands += _qr_commands(qr_entry, context, computed, width_cm, height_cm, dpmm)
+        commands += _qr_commands(qr_entry, context, computed, width_cm, height_cm, dpmm,
+                                 clear_background=clear_background)
 
     barcode_entry = effective_design.get("barcode")
     if barcode_entry:
-        commands += _barcode_commands(barcode_entry, context, computed, width_cm, height_cm, dpmm)
+        commands += _barcode_commands(barcode_entry, context, computed, width_cm, height_cm, dpmm,
+                                      clear_background=clear_background)
 
     text_entries = [
         entry
@@ -581,7 +837,8 @@ def render_label_zpl(
 
     for entry in text_entries:
         commands += _text_commands(
-            entry, context, computed, width_cm, height_cm, default_font_pt, dpmm
+            entry, context, computed, width_cm, height_cm, default_font_pt, dpmm,
+            palette=effective_design.get("palette"),
         )
 
     commands.append("^XZ")

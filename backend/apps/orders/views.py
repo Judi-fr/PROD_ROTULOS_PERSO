@@ -26,12 +26,86 @@ from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
 from apps.common.date_filters import date_range_q
+from apps.accounts.team_models import Team
+from apps.accounts.teams import business_display_name, contact_email, data_owner, order_scope_q
 
 from .ingestion import TARGET_FIELDS, create_order_from_data, validate_mapped_row
 from .models import Address, Order
+from .scan import find_orders
 from .serializers import AddressSerializer, AdminOrderSerializer, OrderSerializer, OrderShipSerializer
+from .shipping import apply_cancel, apply_shipping
 
 User = get_user_model()
+
+
+def filter_orders(queryset, params):
+    """Filtros del listado de pedidos propios, compartidos con la exportación
+    (``bulk_views.OrderExportView``) para que "exportar lo que estoy viendo"
+    sea exactamente lo que se ve."""
+    # ?store=<id> recorta a una tienda conectada, ?store=manual a los
+    # pedidos sin tienda. Como el queryset ya es del usuario, un id de
+    # tienda ajena simplemente devuelve una lista vacía.
+    store = params.get("store")
+    if store:
+        if store == "manual":
+            queryset = queryset.filter(store_connection__isnull=True)
+        elif store.isdigit():
+            queryset = queryset.filter(store_connection_id=int(store))
+        else:
+            raise ValidationError(
+                {"store": "Debe ser el id de una tienda o 'manual'."}
+            )
+    # ?status=created,preparing — uno o varios estados separados por coma
+    # (la pantalla de impresión trabaja sobre los pedidos pendientes).
+    status_param = params.get("status")
+    if status_param:
+        wanted = [value.strip() for value in status_param.split(",") if value.strip()]
+        valid = {choice for choice, _ in Order.Status.choices}
+        unknown = [value for value in wanted if value not in valid]
+        if unknown:
+            raise ValidationError(
+                {"status": f"Estado desconocido: {', '.join(unknown)}."}
+            )
+        queryset = queryset.filter(status__in=wanted)
+    # ?labels_printed=1|0 — con o sin el rótulo ya impreso
+    # (``Order.labels_printed_at``): lo que abren "Para despachar" y "Para
+    # imprimir" del panel.
+    printed = params.get("labels_printed")
+    if printed:
+        if printed not in ("0", "1"):
+            raise ValidationError({"labels_printed": "Debe ser 1 o 0."})
+        queryset = queryset.filter(labels_printed_at__isnull=printed == "0")
+    # ?older_than_days=N — los dados de alta hace más de N días (los
+    # "demorados" del panel; misma cuenta que ``summary_views``).
+    older = params.get("older_than_days")
+    if older:
+        if not older.isdigit():
+            raise ValidationError({"older_than_days": "Debe ser un número de días."})
+        queryset = queryset.filter(created_at__lt=created_before(int(older)))
+    # ?search= — el buscador de Mis pedidos: número del pedido (con o sin
+    # "#"), destinatario o número de seguimiento. Cada palabra tiene que
+    # aparecer en alguno de esos campos.
+    search = (params.get("search") or "").strip()
+    if search:
+        for word in search.lstrip("#").split()[:5]:
+            word_q = (
+                Q(external_number__icontains=word)
+                | Q(external_id__iexact=word)
+                | Q(address__recipient_name__icontains=word)
+                | Q(tracking_number__icontains=word)
+            )
+            if word.isdigit():
+                word_q |= Q(pk=int(word))
+            queryset = queryset.filter(word_q)
+    # ?date_from=/&date_to= (YYYY-MM-DD, inclusive los dos) acota por
+    # fecha de alta. Lo usa la pantalla de impresión para juntar "los
+    # pedidos de esta semana" sin tener que tildarlos de a uno.
+    return queryset.filter(date_range_q(params))
+
+
+def created_before(days):
+    """El corte de "hace más de ``days`` días": ahora menos esos días."""
+    return timezone.now() - timedelta(days=days)
 
 
 class AddressViewSet(viewsets.ModelViewSet):
@@ -46,11 +120,11 @@ class AddressViewSet(viewsets.ModelViewSet):
         # Solo la agenda propia: las direcciones creadas por un pedido de
         # tienda/importación son de terceros (ver Address.Origin).
         return Address.objects.filter(
-            user=self.request.user, origin=Address.Origin.OWN
+            user=data_owner(self.request.user), origin=Address.Origin.OWN
         )
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(user=data_owner(self.request.user))
 
     def destroy(self, request, *args, **kwargs):
         try:
@@ -83,59 +157,24 @@ class OrderViewSet(
         elif self.action == "cancel":
             permission = "orders.cancel"
         elif self.action == "ship":
-            # Despachar un pedido propio: mismo permiso que crearlo o conectar
-            # la tienda de la que viene (no hay uno propio: los tests de
-            # accounts fijan el conjunto exacto de permisos por rol).
-            permission = "orders.create"
+            # Despachar: acceso propio desde los comercios con equipo.
+            permission = "orders.dispatch"
         else:
             permission = "orders.view"
         return [IsAuthenticated(), HasRolePermission(permission)]
 
     def get_queryset(self):
         queryset = (
-            Order.objects.filter(user=self.request.user)
+            Order.objects.filter(order_scope_q(self.request.user), user=data_owner(self.request.user))
             .select_related("address", "store_connection")
             .prefetch_related("status_events")
         )
-        # ?store=<id> recorta a una tienda conectada, ?store=manual a los
-        # pedidos sin tienda. Como el queryset ya es del usuario, un id de
-        # tienda ajena simplemente devuelve una lista vacía.
-        store = self.request.query_params.get("store") if self.action == "list" else None
-        if store:
-            if store == "manual":
-                queryset = queryset.filter(store_connection__isnull=True)
-            elif store.isdigit():
-                queryset = queryset.filter(store_connection_id=int(store))
-            else:
-                raise ValidationError(
-                    {"store": "Debe ser el id de una tienda o 'manual'."}
-                )
-        # ?status=created,preparing — uno o varios estados separados por coma
-        # (la pantalla de impresión trabaja sobre los pedidos pendientes).
-        status_param = (
-            self.request.query_params.get("status") if self.action == "list" else None
-        )
-        if status_param:
-            wanted = [value.strip() for value in status_param.split(",") if value.strip()]
-            valid = {choice for choice, _ in Order.Status.choices}
-            unknown = [value for value in wanted if value not in valid]
-            if unknown:
-                raise ValidationError(
-                    {"status": f"Estado desconocido: {', '.join(unknown)}."}
-                )
-            queryset = queryset.filter(status__in=wanted)
-        # ?date_from=/&date_to= (YYYY-MM-DD, inclusive los dos) acota por
-        # fecha de alta. Lo usa la pantalla de impresión para juntar "los
-        # pedidos de esta semana" sin tener que tildarlos de a uno.
         if self.action == "list":
-            queryset = self._filter_by_dates(queryset)
+            queryset = filter_orders(queryset, self.request.query_params)
         return queryset
 
-    def _filter_by_dates(self, queryset):
-        return queryset.filter(date_range_q(self.request.query_params))
-
     def perform_create(self, serializer):
-        order = serializer.save(user=self.request.user)
+        order = serializer.save(user=data_owner(self.request.user))
         record(
             self.request,
             category="orders",
@@ -153,24 +192,21 @@ class OrderViewSet(
                 {"detail": "Este pedido ya no se puede cancelar."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        previous_status = order.status
-        # El save() del modelo ya deja su propio rastro de auditoría
-        # (order.status_change, sin actor) para ediciones hechas desde el
-        # admin de Django o a mano; acá se evita duplicarlo porque esta
-        # cancelación SÍ tiene un actor conocido (order.cancel, más abajo).
-        order._skip_status_audit = True
-        order.status = Order.Status.CANCELLED
-        order.save(update_fields=["status", "updated_at"])
-        record(
-            request,
-            category="orders",
-            action="order.cancel",
-            target=order,
-            target_type="order",
-            target_repr=str(order),
-            changes={"status": {"from": previous_status, "to": order.status}},
-        )
+        apply_cancel(request, order)
         return Response(self.get_serializer(order).data)
+
+    @action(detail=False, methods=["get"])
+    def scan(self, request):
+        """GET /api/v1/orders/scan/?code=<lo que leyó la cámara o la pistola>
+
+        ``{"matches": [pedido, ...]}``: vacío si no es un pedido de este
+        comercio (o de una tienda que quien escanea no ve), más de uno si el
+        mismo número está en dos tiendas. Ver ``scan.find_orders``."""
+        code = (request.query_params.get("code") or "").strip()
+        if not code:
+            raise ValidationError({"code": "Escaneá o escribí el código del rótulo."})
+        matches = find_orders(self.get_queryset(), code)
+        return Response({"matches": self.get_serializer(matches, many=True).data})
 
     @action(detail=True, methods=["post"])
     def ship(self, request, pk=None):
@@ -183,34 +219,7 @@ class OrderViewSet(
         order = self.get_object()
         serializer = OrderShipSerializer(data=request.data, context={"order": order})
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
-        tracked_fields = ("status", "carrier", "tracking_number", "tracking_url")
-        previous = {field: getattr(order, field) for field in tracked_fields}
-        order.status = data["status"]
-        for field in ("carrier", "tracking_number", "tracking_url"):
-            if field in data:
-                setattr(order, field, data[field].strip())
-        changes = {
-            field: {"from": previous[field], "to": getattr(order, field)}
-            for field in tracked_fields
-            if previous[field] != getattr(order, field)
-        }
-
-        if changes:
-            # Mismo criterio que cancel: esta vista registra su propia
-            # auditoría con actor (order.ship).
-            order._skip_status_audit = True
-            order.save(update_fields=[*tracked_fields, "updated_at"])
-            record(
-                request,
-                category="orders",
-                action="order.ship",
-                target=order,
-                target_type="order",
-                target_repr=str(order),
-                changes=changes,
-            )
+        apply_shipping(request, order, serializer.validated_data)
         # Se relee para que el timeline (status_events, prefetched) incluya
         # el estado nuevo.
         return Response(self.get_serializer(self.get_queryset().get(pk=order.pk)).data)
@@ -240,7 +249,7 @@ class ManualOrderCreateView(APIView):
 
     def post(self, request):
         data = request.data
-        target_user = request.user
+        target_user = data_owner(request.user)
 
         user_id = data.get("user_id")
         if user_id:
@@ -330,7 +339,8 @@ class OrderMetricsView(APIView):
     """
 
     def get_permissions(self):
-        return [IsAuthenticated(), HasRolePermission("orders.view_all")]
+        # La pantalla Reportes tiene su permiso (migración 0029).
+        return [IsAuthenticated(), HasRolePermission("reports.view")]
 
     def _months(self, request):
         raw_months = request.query_params.get("months", "6").strip()
@@ -413,23 +423,32 @@ class OrderMetricsView(APIView):
             for key, data in sorted(transition_totals.items())
         ]
 
-        top_users_qs = (
-            base_qs.values("user__email")
+        # Los pedidos cuelgan del usuario de datos de cada comercio: cada fila
+        # es un comercio, nombrado por su nombre y el mail de la persona dueña.
+        top_users_qs = list(
+            base_qs.values("user_id")
             .annotate(count=Count("id"), last_order_at=Max("created_at"))
             .order_by("-count")[:10]
         )
+        owners = User.objects.in_bulk([row["user_id"] for row in top_users_qs])
         top_users_by_orders = [
-            {"email": row["user__email"], "count": row["count"], "last_order_at": row["last_order_at"]}
+            {
+                "email": contact_email(owners.get(row["user_id"])),
+                "name": business_display_name(owners.get(row["user_id"])),
+                "count": row["count"],
+                "last_order_at": row["last_order_at"],
+            }
             for row in top_users_qs
         ]
 
-        total_users = User.objects.count()
+        # Comercios (abiertos) con pedidos sobre el total de comercios.
+        total_users = Team.objects.filter(closed_at=None).count()
         users_with_orders_count = base_qs.values("user_id").distinct().count()
         users_with_orders = {
             "count": users_with_orders_count,
             "total_users": total_users,
             "percentage": (
-                round(users_with_orders_count * 100 / total_users, 1) if total_users else 0.0
+                min(100.0, round(users_with_orders_count * 100 / total_users, 1)) if total_users else 0.0
             ),
         }
 

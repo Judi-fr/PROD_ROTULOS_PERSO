@@ -1,0 +1,124 @@
+/* ayuda.html: las preguntas frecuentes (el resto viene de perfil.css). */
+
+.faq {
+  margin-bottom: 20px;
+}
+
+.faq-list {
+  padding: 6px 20px 14px;
+}
+
+.faq-list details {
+  border-bottom: 1px solid var(--n-150);
+}
+
+.faq-list details:last-child {
+  border-bottom: 0;
+}
+
+.faq-list summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  font-weight: 700;
+  font-size: var(--text-base);
+  cursor: pointer;
+  list-style: none;
+}
+
+.faq-list summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Un + que pasa a − al abrir. */
+.faq-list summary::after {
+  content: "+";
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  background: var(--accent-50);
+  color: var(--accent-600);
+  font-size: var(--text-lg);
+  line-height: 26px;
+  text-align: center;
+  transition: transform 0.2s;
+}
+
+.faq-list details[open] summary::after {
+  content: "−";
+}
+
+.faq-list summary:hover {
+  color: var(--accent-600);
+}
+
+.faq-list summary:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.faq-list details p {
+  margin: 0 0 16px;
+  color: var(--n-700);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  max-width: 68ch;
+}
+
+/* El bloque entero se pliega: su título es el <summary> de afuera. */
+.faq {
+  margin-top: 20px;
+}
+
+.faq > .faq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+
+.faq > .faq-head::-webkit-details-marker {
+  display: none;
+}
+
+.faq-head-hint::after {
+  content: "Ocultar";
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--accent-600);
+}
+
+.faq:not([open]) .faq-head-hint::after {
+  content: "Mostrar";
+}
+
+.faq-tools {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 20px 0;
+}
+
+.faq-toggle-all {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent-600);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.faq-toggle-all:hover {
+  text-decoration: underline;
+}
+
+.legal-links {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-base);
+}

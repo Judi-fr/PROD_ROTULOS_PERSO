@@ -19,26 +19,22 @@
 		reverse_proxy api:8000
 	}
 
-	# Archivos subidos y generados. Caddy sirve DIRECTO, sin login, solo las
-	# imágenes que el frontend muestra con <img src> (que no puede mandar el
-	# token): miniaturas de rótulos (nombre UUID, no adivinable), vistas
-	# previas de plantillas y logos.
-	#
-	# Todo lo demás de /media tiene datos de compradores y NO se sirve acá:
-	# PDFs de lotes (documents/), rótulos pedidos por la tienda (store_labels/),
-	# planillas de pedidos importadas (orders/imports/) y fotos subidas para
-	# importar (rotulos/). Esos salen solo por la API, que exige sesión o token:
-	# /api/v1/documents/<id>/download/ y la descarga firmada de store_labels.
-	# Una carpeta nueva bajo media/ queda cerrada hasta que se la agregue acá.
-	handle /media/* {
-		@media_publica path /media/labels/thumbs/* /media/labels/templates/* /media/labels/logos/* /media/store_logos/*
-		handle @media_publica {
-			root * /srv
-			file_server
-		}
-		handle {
-			respond 404
-		}
+	# Imágenes públicas que muestra el frontend (logos, fotos de perfil, miniaturas de
+	# plantillas y de rótulos guardados, con nombres al azar). Las sirve Caddy
+	# directo desde el volumen compartido: hacerlas pasar por Django sería
+	# gastar un worker de gunicorn en mandar un archivo.
+	@public_media path /media/store_logos/* /media/accounts/logos/* /media/accounts/avatars/* /media/labels/templates/* /media/labels/logos/* /media/labels/images/* /media/labels/thumbs/*
+	handle @public_media {
+		root * /srv
+		file_server
+	}
+
+	# Todo lo demás de /media/ tiene datos de compradores (PDF de los lotes,
+	# rótulos que pide la tienda, fotos de rótulos): NUNCA directo. Se bajan
+	# por la API, que pide sesión o un token firmado.
+	@private_media path /media/*
+	handle @private_media {
+		respond 404
 	}
 
 	# Estáticos de Django (los del admin, básicamente): los deja
@@ -48,8 +44,15 @@
 		file_server
 	}
 
-	# Todo lo demás es el frontend.
+	# Todo lo demás es el frontend. Solo acá van estos encabezados: la vista
+	# previa de impresión de Shopify carga nuestro PDF de /api/ dentro de un
+	# frame, así que la API no puede prohibirlo.
 	handle {
+		header {
+			X-Frame-Options SAMEORIGIN
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+		}
 		reverse_proxy web:8080
 	}
 }

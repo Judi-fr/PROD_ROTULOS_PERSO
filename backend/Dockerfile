@@ -33,6 +33,17 @@ USER appuser
 
 EXPOSE 8000
 
-# Comando por defecto: servidor de producción (gunicorn + settings de prod).
-# docker-compose lo sobreescribe en desarrollo con runserver.
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+# Settings de producción por defecto. manage.py arranca en dev si la variable
+# no está, y ahí la caché vive en memoria: createcachetable no crearía nada.
+# Los dos docker-compose definen su propio DJANGO_SETTINGS_MODULE, así que
+# esto solo pesa donde nadie lo define (la task definition de ECS).
+ENV DJANGO_SETTINGS_MODULE=config.settings.prod
+
+# Comando por defecto: migrar, crear la tabla de caché y servir con gunicorn.
+# Lo usa ECS, que corre la imagen tal cual: sin esto, cada despliegue con
+# migraciones nuevas dejaba la API rota hasta correrlas a mano. Los
+# docker-compose lo sobreescriben (runserver en dev; en prod su propio
+# comando, que ya migra). Con más de una réplica las migraciones correrían
+# en paralelo: ahí pasan a ser un paso aparte del despliegue.
+# `exec` deja a gunicorn como PID 1, para que reciba el SIGTERM de ECS.
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py createcachetable && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 150"]

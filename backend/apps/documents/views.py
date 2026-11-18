@@ -14,7 +14,6 @@ esta app solo lista/descarga/borra.
 from __future__ import annotations
 
 import mimetypes
-import os
 
 from django.db.models import Q
 from django.http import FileResponse, Http404
@@ -28,6 +27,7 @@ from apps.accounts.pagination import UserAdminPagination
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
 from apps.common.date_filters import date_range_q
+from apps.accounts.teams import data_owner, visible_document_ids
 
 from .models import Document, UploadedLabelFile
 from .serializers import AdminDocumentSerializer, DocumentSerializer, UploadedLabelFileSerializer
@@ -52,7 +52,11 @@ class DocumentViewSet(
         return [IsAuthenticated(), HasRolePermission(permission)]
 
     def get_queryset(self):
-        queryset = Document.objects.filter(user=self.request.user, is_active=True)
+        queryset = Document.objects.filter(user=data_owner(self.request.user), is_active=True)
+        # Un lote con pedidos de tiendas que la persona no tiene no se le muestra.
+        visible = visible_document_ids(self.request.user, queryset)
+        if visible is not None:
+            queryset = queryset.filter(id__in=visible)
         params = self.request.query_params
 
         search = params.get("search", "").strip()
@@ -96,7 +100,7 @@ class DocumentViewSet(
         if document.status != Document.Status.READY or not document.file:
             raise Http404("Este documento todavía no tiene un archivo para descargar.")
 
-        filename = os.path.basename(document.file.name)
+        filename = document.download_name
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         response = FileResponse(
             document.file.open("rb"), content_type=content_type, as_attachment=True, filename=filename

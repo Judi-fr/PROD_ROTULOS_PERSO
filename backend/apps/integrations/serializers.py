@@ -6,8 +6,12 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.labels.serializers import ImageOrDataUrlField
+from apps.accounts.teams import allowed_store_ids, data_owner
+from apps.accounts.teams import contact_email as owner_contact_email
 
-from . import store_labels
+from . import shipping_rates
+from .providers.tiendanube import labels as store_labels
+from .providers import get_provider
 from .models import (
     IncomingWebhook,
     IntegrationKey,
@@ -36,6 +40,31 @@ class StoreConnectionSerializer(serializers.ModelSerializer):
     def get_label_api_enabled(self, connection):
         return store_labels.supports_label_api(connection)
 
+    # Si el plugin de impresión de la tienda quedó vinculado (WooCommerce, ver
+    # ``StoreProvider.configure_admin_print``). ``null`` = no se sabe / no aplica.
+    print_plugin_linked = serializers.SerializerMethodField()
+
+    def get_print_plugin_linked(self, connection):
+        return (connection.preferences or {}).get("print_plugin")
+
+    # Plataformas que cotizan con una tabla propia (VTEX): si se le puede
+    # publicar la nuestra y en qué quedó (ver shipping_rates.rates_push_state).
+    supports_rates_push = serializers.SerializerMethodField()
+    rates_push = serializers.SerializerMethodField()
+
+    def get_supports_rates_push(self, connection):
+        return get_provider(connection.platform).supports_rates_push
+
+    def get_rates_push(self, connection):
+        return shipping_rates.rates_push_state(connection) or None
+
+    # Con qué transportista se despacha desde el admin de la tienda ("" = que
+    # se decida solo, ver apps.carriers.store_dispatch).
+    dispatch_carrier = serializers.SerializerMethodField()
+
+    def get_dispatch_carrier(self, connection):
+        return str((connection.preferences or {}).get("dispatch_carrier") or "")
+
     class Meta:
         model = StoreConnection
         fields = [
@@ -56,6 +85,10 @@ class StoreConnectionSerializer(serializers.ModelSerializer):
             "label_printer_dpmm",
             "scopes",
             "label_api_enabled",
+            "print_plugin_linked",
+            "supports_rates_push",
+            "rates_push",
+            "dispatch_carrier",
             "last_error",
             "connected_at",
             "disconnected_at",
@@ -92,7 +125,7 @@ class StoreSettingsSerializer(serializers.ModelSerializer):
         # dueño sale de request.user, nunca de un id que manda el cliente.
         if template is None:
             return template
-        user = self.context["request"].user
+        user = data_owner(self.context["request"].user)
         if not template.is_public and template.owner_id != user.pk:
             raise serializers.ValidationError("Esa plantilla no es tuya ni es pública.")
         return template
@@ -157,18 +190,20 @@ class ShippingRateSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "store_name", "created_at", "updated_at"]
 
     def validate_connection(self, connection):
-        if connection.owner_id != self.context["request"].user.pk:
+        person = self.context["request"].user
+        if connection.owner_id != data_owner(person).pk:
             raise serializers.ValidationError("Esa tienda no es tuya.")
+        allowed = allowed_store_ids(person)
+        if allowed is not None and connection.pk not in allowed:
+            raise serializers.ValidationError("No tenés habilitada esa tienda.")
         return connection
 
     def validate(self, attrs):
         # Los CP se guardan normalizados para poder compararlos como texto
         # en la consulta del checkout (ver shipping_rates.matching_rates).
-        from .shipping_rates import normalize_postal_code
-
         for field in ("postal_code_from", "postal_code_to"):
             if field in attrs:
-                normalized = normalize_postal_code(attrs[field])
+                normalized = shipping_rates.normalize_postal_code(attrs[field])
                 if not normalized:
                     raise serializers.ValidationError(
                         {field: "Poné un código postal con números, por ejemplo 1602."}
@@ -200,7 +235,9 @@ class StoreClaimSerializer(serializers.Serializer):
 
 
 class IntegrationKeySerializer(serializers.ModelSerializer):
-    owner_email = serializers.EmailField(source="owner.email", read_only=True)
+    # El mail de la persona dueña del comercio (los datos cuelgan de su
+    # usuario de datos, que no es una persona).
+    owner_email = serializers.SerializerMethodField()
 
     class Meta:
         model = IntegrationKey
@@ -217,6 +254,9 @@ class IntegrationKeySerializer(serializers.ModelSerializer):
         # key_hash nunca se expone (ver el docstring del modelo); prefix
         # solo se puede LEER, lo genera la vista al crear la clave.
         read_only_fields = ["id", "owner_email", "prefix", "last_used_at", "created_at"]
+
+    def get_owner_email(self, obj):
+        return owner_contact_email(getattr(obj, "owner", None)) or None
 
 
 class IncomingWebhookSerializer(serializers.ModelSerializer):

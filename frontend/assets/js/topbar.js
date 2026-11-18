@@ -1,4 +1,6 @@
-// Barra superior compartida (avatar, nombre, email y acciones).
+// Barra superior compartida: volver al panel y el comercio a la izquierda, las
+// acciones de la página en el medio y el menú de la cuenta (Mi cuenta, Mi
+// actividad, Ayuda, Cerrar sesión) a la derecha.
 //
 // Estaba copiada en cada página: el mismo bloque HTML en 12 archivos y la
 // misma función renderTopbar en 11 .js. Acá se escribe una sola vez; cada
@@ -7,8 +9,12 @@
 //   <header class="topbar" id="appTopbar"
 //           data-links='[{"href":"dashboard.html","label":"Volver al panel"}]'></header>
 //
-// El botón "Cerrar sesión" lo pone esta barra siempre, con el id logoutBtn
-// de antes: cada página le sigue enganchando su listener (window.Auth.logout).
+// Muestra el selector de comercio (una persona puede estar en varios).
+//
+// El botón "Cerrar sesión" lo pone esta barra siempre, dentro del menú de la
+// cuenta, con el id logoutBtn de antes: cada página le sigue enganchando su
+// listener (window.Auth.logout). Un link a dashboard.html o a lo que ya está en
+// el menú de la cuenta no se repite entre las acciones.
 //
 // Los datos del usuario salen de la sesión guardada (window.Auth) para que la
 // barra aparezca completa de entrada; cuando la página trae el usuario fresco
@@ -17,7 +23,6 @@
 // Cargar DESPUÉS de config.js/auth.js y ANTES del script propio de la página.
 
 (function () {
-  const AVATAR_FALLBACK = "https://api.dicebear.com/7.x/avataaars/svg?seed=";
 
   function container() {
     return document.getElementById("appTopbar");
@@ -33,67 +38,215 @@
     }
   }
 
+  // El menú de la cuenta: lo personal, fuera de las acciones de la página.
+  const ACCOUNT_LINKS = [
+    { href: "organizacion.html", label: "Mi cuenta" },
+    { href: "mi_actividad.html", label: "Mi actividad" },
+    { href: "ayuda.html", label: "Ayuda" },
+  ];
+  // Íconos de Phosphor (el juego único de la app, ver ui.css).
+  const ICONS = { home: "house-simple", chevron: "caret-down", logout: "sign-out" };
+
+  function icon(name) {
+    return `<i class="ph ph-${ICONS[name]}" aria-hidden="true"></i>`;
+  }
+
+  const here = () => location.pathname.split("/").pop() || "index.html";
+  const samePage = (href) => href.split("#")[0] === here();
+
   function build(node, user) {
     const email = (user && user.email) || "—";
     const name = (user && (user.display_name || user.full_name)) || (user && user.email) || "Usuario";
-    const picture = user && user.picture;
+    // La foto que subió (perfil personal) gana sobre la de Google.
+    const picture = user && (user.photo || user.picture);
 
     node.replaceChildren();
+    node.classList.add("app-topbar");
 
-    const userBox = document.createElement("div");
-    userBox.className = "topbar-user";
+    // Izquierda: volver al panel y el comercio en el que trabaja ESTA pestaña
+    // (renderTeamSwitcher, utils.js; apps/accounts/teams.py). Algunas páginas
+    // cargan esta barra antes que utils.js: entonces se dibuja al terminar
+    // de cargar.
+    const left = document.createElement("div");
+    left.className = "topbar-left";
+    const home = document.createElement("a");
+    home.className = "topbar-home";
+    home.href = "dashboard.html";
+    // La marca del producto (Human Log · Rótulos) es también el camino al panel.
+    home.title = "Human Log · Rótulos — volver al panel";
+    home.setAttribute("aria-label", "Rótulos: volver al panel");
+    home.innerHTML = `<img src="assets/images/favicon.svg" alt="" width="26" height="26"><span>Rótulos</span>`;
+    left.appendChild(home);
+    const teamBox = document.createElement("div");
+    teamBox.className = "topbar-team";
+    left.appendChild(teamBox);
+    node.appendChild(left);
+    const drawSwitcher = () => {
+      if (typeof renderTeamSwitcher === "function") renderTeamSwitcher(teamBox, user);
+    };
+    if (typeof renderTeamSwitcher === "function") drawSwitcher();
+    else document.addEventListener("DOMContentLoaded", drawSwitcher, { once: true });
 
-    const avatar = document.createElement("img");
-    avatar.className = "avatar";
-    avatar.id = "userAvatar";
-    avatar.alt = "";
-    avatar.src = picture || `${AVATAR_FALLBACK}${encodeURIComponent(email)}`;
-    userBox.appendChild(avatar);
-
-    const info = document.createElement("div");
-    info.className = "topbar-user-info";
-    const nameEl = document.createElement("span");
-    nameEl.className = "topbar-user-name";
-    nameEl.id = "userName";
-    nameEl.textContent = name;
-    const emailEl = document.createElement("span");
-    emailEl.className = "topbar-user-email";
-    emailEl.id = "userEmail";
-    emailEl.textContent = email;
-    info.appendChild(nameEl);
-    info.appendChild(emailEl);
-    userBox.appendChild(info);
-    node.appendChild(userBox);
-
-    const actions = document.createElement("div");
+    // Medio: las acciones de la página (data-links). El panel ya tiene su
+    // botón y lo de la cuenta está en su menú, así que esos no se repiten.
+    // Los links vienen del HTML de la página, no del backend: igual se
+    // insertan con textContent y href directo, nunca con innerHTML. Un link
+    // con "perm" solo aparece si la sesión tiene ese permiso (el backend
+    // vuelve a chequear al entrar; esto solo evita ofrecer de más).
+    const permissions = (user && Array.isArray(user.permissions) && user.permissions) || null;
+    const skip = new Set(["dashboard.html", ...ACCOUNT_LINKS.map((link) => link.href)]);
+    const actions = document.createElement("nav");
     actions.className = "topbar-actions";
-    // Los links vienen del HTML de la página (data-links), no del backend:
-    // igual se insertan con textContent y href directo, nunca con innerHTML.
+    actions.setAttribute("aria-label", "Acciones de esta página");
     readLinks(node).forEach((link) => {
-      if (!link || !link.href) return;
+      if (!link || !link.href || skip.has(link.href.split("#")[0])) return;
+      if (link.perm && permissions && !permissions.includes(link.perm)) return;
       const anchor = document.createElement("a");
-      anchor.className = "btn btn-outline";
+      anchor.className = "topbar-link";
       anchor.href = link.href;
       anchor.textContent = link.label || link.href;
       if (link.id) anchor.id = link.id;
       actions.appendChild(anchor);
     });
+    node.appendChild(actions);
 
+    // Derecha: la cuenta. "Cerrar sesión" conserva el id logoutBtn: cada
+    // página le sigue enganchando su listener (window.Auth.logout).
+    const account = document.createElement("div");
+    account.className = "topbar-account";
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "topbar-account-btn";
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.title = `${name} · ${email}`;
+    const avatar = document.createElement("img");
+    avatar.className = "avatar";
+    avatar.id = "userAvatar";
+    avatar.alt = "";
+    // Sin foto, las iniciales de personAvatarUrl (utils.js). En muchas páginas
+    // utils.js carga DESPUÉS que esta barra: entonces se pone al terminar de leer la página.
+    const drawAvatar = () => { avatar.src = picture || personAvatarUrl({ ...(user || {}), display_name: name }); };
+    if (picture || typeof personAvatarUrl === "function") drawAvatar();
+    else document.addEventListener("DOMContentLoaded", drawAvatar, { once: true });
+    const nameEl = document.createElement("span");
+    nameEl.className = "topbar-user-name";
+    nameEl.id = "userName";
+    nameEl.textContent = name;
+    trigger.append(avatar, nameEl);
+    trigger.insertAdjacentHTML("beforeend", `<span class="topbar-chevron">${icon("chevron")}</span>`);
+
+    const menu = document.createElement("div");
+    menu.className = "topbar-menu";
+    menu.setAttribute("role", "menu");
+    menu.hidden = true;
+    const who = document.createElement("div");
+    who.className = "topbar-menu-who";
+    const whoName = document.createElement("strong");
+    whoName.textContent = name;
+    const emailEl = document.createElement("span");
+    emailEl.id = "userEmail";
+    emailEl.textContent = email;
+    who.append(whoName, emailEl);
+    menu.appendChild(who);
+    ACCOUNT_LINKS.forEach((link) => {
+      const anchor = document.createElement("a");
+      anchor.href = link.href;
+      anchor.textContent = link.label;
+      anchor.setAttribute("role", "menuitem");
+      if (samePage(link.href)) anchor.setAttribute("aria-current", "page");
+      menu.appendChild(anchor);
+    });
     const logout = document.createElement("button");
-    logout.className = "btn btn-outline";
+    logout.className = "topbar-menu-logout";
     logout.id = "logoutBtn";
     logout.type = "button";
-    logout.textContent = "Cerrar sesión";
-    actions.appendChild(logout);
-    node.appendChild(actions);
+    logout.setAttribute("role", "menuitem");
+    logout.innerHTML = `${icon("logout")}<span>Cerrar sesión</span>`;
+    // La barra se vuelve a dibujar cuando la página trae el usuario fresco, y
+    // el listener que la página le había puesto al botón viejo se perdía: el
+    // botón cerraba la sesión solo a veces. Ahora lo hace la barra misma (el
+    // listener de la página, si quedó en este botón, no se ejecuta además).
+    logout.addEventListener("click", (event) => {
+      event.stopImmediatePropagation();
+      if (window.Auth && typeof window.Auth.logout === "function") window.Auth.logout();
+    });
+    menu.appendChild(logout);
+
+    const setOpen = (open) => {
+      menu.hidden = !open;
+      trigger.setAttribute("aria-expanded", String(open));
+      account.classList.toggle("is-open", open);
+    };
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setOpen(menu.hidden);
+      if (!menu.hidden) menu.querySelector("a, button")?.focus();
+    });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.focus();
+      }
+    });
+    document.addEventListener("click", (event) => {
+      if (!account.contains(event.target)) setOpen(false);
+    });
+    account.append(trigger, menu);
+
+    // "Buscar" (Ctrl+K): una función o un pedido desde cualquier pantalla
+    // (command_palette.js, que se carga una sola vez).
+    const search = document.createElement("button");
+    search.type = "button";
+    search.className = "topbar-search-btn";
+    search.title = "Buscar una función o un pedido (Ctrl+K)";
+    search.setAttribute("aria-label", "Buscar una función o un pedido");
+    search.innerHTML = `<i class="ph ph-magnifying-glass" aria-hidden="true"></i><span>Buscar</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} K</kbd>`;
+    search.addEventListener("click", () => window.AppPalette && window.AppPalette.open());
+    account.prepend(search);
+    node.appendChild(account);
+    loadPalette();
   }
+
+  // El buscador vive en su propio archivo, al lado de este; lleva la misma
+  // marca de versión (?v=) que topbar.js para no quedar viejo en la caché.
+  const SCRIPT_SRC = (document.currentScript && document.currentScript.src) || "";
+  function loadPalette() {
+    if (window.AppPalette || document.getElementById("appPaletteScript") || !SCRIPT_SRC) return;
+    const url = new URL("command_palette.js", SCRIPT_SRC);
+    url.search = new URL(SCRIPT_SRC).search;
+    const script = document.createElement("script");
+    script.id = "appPaletteScript";
+    script.src = url.href;
+    document.body.appendChild(script);
+  }
+
+  // Con muchos links o una ventana mediana, los de la página no entran en la
+  // fila y quedaban cortados ("Cola de impresió"). Entonces la barra pasa al
+  // armado de dos filas, el mismo del celular (is-crowded en ui.css). Se mide
+  // sin la clase, en el mismo cuadro, así no parpadea.
+  function fitLinks(node) {
+    const actions = node.querySelector(".topbar-actions");
+    node.classList.remove("is-crowded");
+    if (!actions || !actions.children.length) return;
+    if (actions.scrollWidth > actions.clientWidth + 1) node.classList.add("is-crowded");
+  }
+
+  let observed = null;
 
   function render(user) {
     const node = container();
     if (!node) return;
     build(node, user || (window.Auth && window.Auth.getCurrentUser()) || {});
+    fitLinks(node);
+    if (observed !== node && window.ResizeObserver) {
+      observed = node;
+      new ResizeObserver(() => fitLinks(node)).observe(node);
+    }
   }
 
   window.AppTopbar = { render };
+  // La marca en la pestaña: "Mis pedidos · Human Log Rótulos".
+  if (!document.title.includes("Human Log")) document.title = `${document.title} · Human Log Rótulos`;
   render();
 })();
