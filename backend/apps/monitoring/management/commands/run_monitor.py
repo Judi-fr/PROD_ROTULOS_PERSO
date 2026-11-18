@@ -12,8 +12,8 @@ import time
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db import close_old_connections
 
+from apps.common.db import close_stale_connections
 from apps.monitoring import heartbeats
 from apps.monitoring import notices
 from apps.monitoring.alerts import run_alerts
@@ -30,7 +30,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             while True:
-                close_old_connections()
+                # Un proceso largo no se queda con una conexión que la base ya
+                # cerró, sin cortar una transacción abierta (apps.common.db).
+                close_stale_connections()
                 try:
                     heartbeats.beat(heartbeats.MONITOR, force=True)
                 except Exception:  # noqa: BLE001 - con la base caída igual hay que chequear
