@@ -221,6 +221,11 @@ def validate_email_format(email):
     return None
 
 
+# Cambiar la contraseña por la misma no cambia nada; se avisa en vez de
+# responder "actualizada". Solo se compara con la actual (sin historial).
+SAME_PASSWORD_MSG = "La contraseña nueva tiene que ser distinta de la actual."
+
+
 def validate_password_strength(password):
     """Reglas de contraseña: mínimo 8 caracteres (el de los validadores de
     Django, que corren después), una mayúscula y un número.
@@ -279,6 +284,11 @@ class ChangePasswordView(APIView):
             )
 
         new_password = serializer.validated_data["new_password"]
+        if request.user.check_password(new_password):
+            return Response(
+                {"new_password": SAME_PASSWORD_MSG},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Mismas dos capas de validación que el registro y el reset por email:
         # composición propia del proyecto + validators de Django.
@@ -539,7 +549,7 @@ class RegisterView(APIView):
     (mismos tokens que el resto de los métodos).
 
     Body:     {"email": "...", "password": "...",
-               "first_name": "(opcional)", "last_name": "(opcional)"}
+               "first_name": "(opcional)", "last_name": "(obligatorio con first_name)"}
     Respuesta: {"access": "<JWT>", "refresh": "<JWT>", "user": {...}}  (201)
     """
 
@@ -564,6 +574,14 @@ class RegisterView(APIView):
         if email_error:
             return Response(
                 {"detail": email_error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # El nombre es opcional para un cliente de la API, pero si viene tiene
+        # que estar completo: un nombre sin apellido es un dato a medias.
+        if first_name and not last_name:
+            return Response(
+                {"detail": "Escribí tu nombre y apellido."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -713,8 +731,13 @@ class PasswordResetRequestView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # No se corta si el formato es inválido ni si no existe la cuenta: en
-        # ambos casos se responde igual para no filtrar qué emails existen.
+        # Un texto que no es un email se rechaza: decirlo no revela nada sobre
+        # qué cuentas existen. Lo que sí se responde igual exista o no la
+        # cuenta es un email bien formado.
+        email_error = validate_email_format(email)
+        if email_error:
+            return Response({"detail": email_error}, status=status.HTTP_400_BAD_REQUEST)
+
         user = User.objects.filter(username__iexact=email, is_active=True).first()
         if user is not None:
             self._send_reset_email(user)
@@ -804,6 +827,11 @@ class PasswordResetConfirmView(APIView):
                 {"detail": "El enlace de restablecimiento no es válido o expiró."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Quien tiene el enlace ya puede elegir cualquier contraseña: avisarle
+        # que repitió la actual no le da nada que no tenga.
+        if user.check_password(new_password):
+            return Response({"detail": SAME_PASSWORD_MSG}, status=status.HTTP_400_BAD_REQUEST)
 
         # Mismas dos capas de validación que el registro (ver RegisterView):
         # composición propia + validators de Django (con el usuario para la

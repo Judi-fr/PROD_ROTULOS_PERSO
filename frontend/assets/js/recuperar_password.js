@@ -21,6 +21,12 @@ form.addEventListener("submit", async (event) => {
     emailInput.focus();
     return;
   }
+  // Mismo formato que valida el backend (EMAIL_REGEX en auth_views.py).
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    showMessage("Eso no parece un email. Revisalo (por ejemplo, nombre@tucomercio.com).");
+    emailInput.focus();
+    return;
+  }
 
   // Se deshabilita mientras viaja: el endpoint está limitado por throttling
   // (scope password_reset) para frenar el envío masivo de correos, y no tiene
