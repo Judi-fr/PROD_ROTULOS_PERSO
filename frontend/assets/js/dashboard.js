@@ -1,16 +1,13 @@
-// Dashboard (menú) para usuarios no administradores.
-// El menú se arma en el BACKEND según el rol efectivo del usuario: este
-// archivo solo pide el endpoint y renderiza lo que devuelve, sin decidir
-// visibilidad por rol acá. Sesión y apiFetch salen de assets/js/auth.js
+// Inicio del comerciante (rediseño 2026-11-18, con barra lateral): los números
+// del día, la semana, "Qué hacer ahora" y las estadísticas del período. La
+// navegación es la barra lateral (app_sidebar.js, armada en el backend) y el
+// buscador, Ctrl+K (command_palette.js). Sesión y apiFetch salen de assets/js/auth.js
 // (window.Auth), compartido con el resto del frontend.
 
 const API_BASE = `${window.APP_CONFIG.API_BASE}/auth`;
 const DASHBOARD_URL = `${API_BASE}/users/me/dashboard/`;
 const MY_INVITATIONS_URL = `${window.APP_CONFIG.API_BASE}/team/my-invitations/`;
 
-// Las secciones del panel (cada una con sus links internos) y sus íconos
-// vienen armadas del backend (apps/accounts/dashboard_sections.py): acá solo
-// se dibujan.
 const NOTICES_URL = `${window.APP_CONFIG.API_BASE}/notices/`;
 const SUMMARY_URL = `${window.APP_CONFIG.API_BASE}/orders/summary/`;
 const ONBOARDING_HIDDEN_KEY = "onboardingHidden";
@@ -30,188 +27,6 @@ function showMessage(text, type = "error") {
   el.textContent = text;
   el.className = `dashboard-message ${type}`;
   el.style.display = "block";
-}
-
-// Todas las tarjetas tienen la misma forma (cabecera, lista de herramientas
-// con lugar para tres, "Abrir" abajo a todo el ancho) para que la grilla
-// quede pareja aunque cada sección tenga distinta cantidad de herramientas.
-// El backend (dashboard_sections.py) nombra los íconos de cada sección con su
-// nombre de Material Design; acá se traducen a Phosphor, el juego de la app.
-const SECTION_ICONS = {
-  "mdi-package-variant": "package",
-  "mdi-printer": "printer",
-  "mdi-view-grid-plus-outline": "squares-four",
-  "mdi-store-outline": "storefront",
-  "mdi-account-group-outline": "users-three",
-  "mdi-lifebuoy": "lifebuoy",
-  "mdi-shield-account-outline": "shield-check",
-};
-
-function sectionIcon(value) {
-  const name = String(value || "").split(/\s+/).find((part) => part.startsWith("mdi-"));
-  return SECTION_ICONS[name] || "squares-four";
-}
-
-function buildSectionCard(section, { wide = false } = {}) {
-  const card = document.createElement("article");
-  card.className = wide ? "section-card section-card-wide" : "section-card";
-
-  const head = document.createElement("div");
-  head.className = "section-card-head";
-  const icon = document.createElement("span");
-  icon.className = "section-card-icon";
-  icon.innerHTML = `<i class="ph ph-${escapeHtml(sectionIcon(section.icon))}" aria-hidden="true"></i>`;
-  const text = document.createElement("div");
-  text.className = "section-card-text";
-  const title = document.createElement("h2");
-  title.className = "section-card-title";
-  title.textContent = section.label;
-  const description = document.createElement("p");
-  description.className = "section-card-description";
-  description.textContent = section.description || "";
-  text.append(title, description);
-  head.append(icon, text);
-
-  const tools = document.createElement("ul");
-  tools.className = "section-card-tools";
-  tools.setAttribute("aria-label", `Herramientas de ${section.label}`);
-  (section.links || []).forEach((link) => {
-    const item = document.createElement("li");
-    const anchor = document.createElement("a");
-    anchor.href = link.url;
-    anchor.innerHTML = '<span></span><i class="ph ph-caret-right" aria-hidden="true"></i>';
-    anchor.querySelector("span").textContent = link.label;
-    item.appendChild(anchor);
-    tools.appendChild(item);
-  });
-
-  const open = document.createElement("a");
-  open.className = "section-btn section-btn-soft section-card-open";
-  open.href = section.url;
-  open.innerHTML = `<span></span> <i class="ph ph-arrow-right" aria-hidden="true"></i>`;
-  open.querySelector("span").textContent = `Abrir ${section.label}`;
-
-  card.append(head, tools, open);
-  return card;
-}
-
-// Columnas según cuántas secciones hay, para que no quede una suelta: 4 en
-// 2×2, 6 en 3×2; una fila incompleta va centrada. Administración (solo el
-// admin) va aparte, a todo el ancho, para no romper la grilla.
-function columnsFor(count) {
-  if (count === 4) return 2;
-  return Math.min(Math.max(count, 1), 3);
-}
-
-function renderSections(sections) {
-  const container = document.getElementById("menuGroups");
-  if (!container) return;
-  container.innerHTML = "";
-  if (!Array.isArray(sections) || sections.length === 0) {
-    container.innerHTML = '<p class="menu-loading">No hay secciones disponibles.</p>';
-    return;
-  }
-  const regular = sections.filter((section) => section.key !== "admin");
-  const admin = sections.find((section) => section.key === "admin");
-  const grid = document.createElement("div");
-  grid.className = "section-grid";
-  grid.dataset.columns = String(columnsFor(regular.length));
-  regular.forEach((section) => grid.appendChild(buildSectionCard(section)));
-  container.appendChild(grid);
-  if (admin) container.appendChild(buildSectionCard(admin, { wide: true }));
-}
-
-// ---------------------------------------------------------------------------
-// BUSCADOR DE FUNCIONES: todas las herramientas del usuario en un solo lugar.
-// Junta las de las tarjetas (``sections``: cada sección y sus links) con el
-// ``menu`` completo, que trae también las que no entran en una tarjeta; las
-// dos listas ya vienen filtradas por permiso desde el backend. Sin acentos ni
-// mayúsculas, por nombre de la función o de su sección. Flechas para moverse,
-// Enter abre, Esc cierra, "/" en cualquier lado lleva al buscador.
-// ---------------------------------------------------------------------------
-// normalizeSearch, IN_PAGE_TOOLS y collectTools están en utils.js: también
-// los usa el buscador de la barra superior (command_palette.js, Ctrl+K).
-function setupToolSearch(sections, menu) {
-  const input = document.getElementById("toolSearchInput");
-  const list = document.getElementById("toolSearchResults");
-  if (!input || !list || input.dataset.ready) return;
-  input.dataset.ready = "1";
-  const tools = collectTools(sections, menu);
-  let matches = [];
-  let active = 0;
-
-  function close() {
-    list.hidden = true;
-    input.setAttribute("aria-expanded", "false");
-  }
-
-  function paint() {
-    list.innerHTML = "";
-    if (!matches.length) {
-      const empty = document.createElement("li");
-      empty.className = "tool-search-empty";
-      empty.textContent = "No encontramos esa función. Probá con otra palabra.";
-      list.appendChild(empty);
-    }
-    matches.forEach((tool, index) => {
-      const item = document.createElement("li");
-      item.role = "option";
-      item.className = index === active ? "active" : "";
-      item.setAttribute("aria-selected", index === active ? "true" : "false");
-      const link = document.createElement("a");
-      link.href = tool.url;
-      link.innerHTML = "<span></span><small></small>";
-      link.querySelector("span").textContent = tool.label;
-      link.querySelector("small").textContent = tool.section;
-      item.appendChild(link);
-      item.addEventListener("mousemove", () => {
-        if (active !== index) {
-          active = index;
-          paint();
-        }
-      });
-      list.appendChild(item);
-    });
-    list.hidden = false;
-    input.setAttribute("aria-expanded", "true");
-  }
-
-  input.addEventListener("input", () => {
-    const words = normalizeSearch(input.value).split(/\s+/).filter(Boolean);
-    if (!words.length) {
-      close();
-      return;
-    }
-    matches = tools.filter((tool) => words.every((word) => tool.haystack.includes(word))).slice(0, 8);
-    active = 0;
-    paint();
-  });
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      input.value = "";
-      close();
-    } else if (!list.hidden && matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      active = (active + (event.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length;
-      paint();
-    } else if (event.key === "Enter" && matches[active] && !list.hidden) {
-      event.preventDefault();
-      window.location.href = matches[active].url;
-    }
-  });
-  input.addEventListener("focus", () => {
-    if (input.value.trim()) input.dispatchEvent(new Event("input"));
-  });
-  document.addEventListener("click", (event) => {
-    if (!event.target.closest("#toolSearch")) close();
-  });
-  document.addEventListener("keydown", (event) => {
-    const typing = event.target.closest("input, textarea, select, [contenteditable='true']");
-    if (event.key === "/" && !typing) {
-      event.preventDefault();
-      input.focus();
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +68,16 @@ let lastStats = null;
 function renderTodayStats(summary, noticeCount) {
   const box = document.getElementById("todayStats");
   const problems = summary.shipment_problems + noticeCount;
+  // La línea de cada número es lo que de verdad hay día por día (summary.week):
+  // los pedidos que entraron y los que se despacharon en la semana.
+  const week = Array.isArray(summary.week) ? summary.week : [];
+  const entered = week.map((day) => Number(day.entered) || 0);
+  const dispatched = week.map((day) => Number(day.dispatched) || 0);
+  const sum = (values) => values.reduce((a, b) => a + b, 0);
   const stats = [
-    { key: "to_print", label: "Para imprimir", hint: "Sin rótulo todavía", icon: "printer", value: summary.to_print, href: TO_PRINT_URL },
+    { key: "to_print", label: "Para imprimir", hint: week.length ? `Entraron ${sum(entered)} en la semana` : "Sin rótulo todavía", icon: "printer", value: summary.to_print, href: TO_PRINT_URL, line: entered, lineLabel: "Pedidos que entraron por día" },
     { key: "to_dispatch", label: "Para despachar", hint: "Con el rótulo impreso", icon: "package", value: summary.to_dispatch, href: TO_DISPATCH_URL },
-    { key: "on_the_way", label: "En camino", hint: "Despachados, sin entregar", icon: "truck", value: summary.on_the_way, href: ON_THE_WAY_URL },
+    { key: "on_the_way", label: "En camino", hint: week.length ? `Despachaste ${sum(dispatched)} en la semana` : "Despachados, sin entregar", icon: "truck", value: summary.on_the_way, href: ON_THE_WAY_URL, line: dispatched, lineLabel: "Pedidos despachados por día", tone: "info" },
     { key: "problems", label: "Con problemas", hint: "Envíos con novedad y avisos", icon: "warning-circle", value: problems, href: noticeCount ? "notificaciones.html" : "pedidos.html", alert: problems > 0 },
   ];
   const previous = lastStats;
@@ -273,12 +94,24 @@ function renderTodayStats(summary, noticeCount) {
           <span class="today-stat-label">${escapeHtml(stat.label)}</span>
           <i class="ph ph-arrow-up-right today-stat-go" aria-hidden="true"></i>
         </span>
-        <span class="today-stat-value">${value}</span>
+        <span class="today-stat-main">
+          <span class="today-stat-value">${value}</span>
+          ${sparkline(stat.line, stat.lineLabel, stat.tone)}
+        </span>
         <span class="today-stat-hint">${escapeHtml(stat.hint)}</span>`;
       return link;
     })
   );
   box.hidden = false;
+}
+
+// Una línea chica con los 7 días (sin ejes: el detalle está en "La semana").
+function sparkline(values, label, tone) {
+  if (!Array.isArray(values) || values.length < 2 || !values.some(Boolean)) return "";
+  const max = Math.max(...values) || 1;
+  const step = 92 / (values.length - 1);
+  const points = values.map((v, i) => `${(2 + i * step).toFixed(1)},${(27 - (v / max) * 24).toFixed(1)}`).join(" ");
+  return `<svg class="today-spark${tone ? ` is-${tone}` : ""}" width="96" height="30" viewBox="0 0 96 30" role="img" aria-label="${escapeHtml(label)}: ${values.join(", ")}"><polyline points="${points}" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline></svg>`;
 }
 
 function todoItem({ icon, text, tone = "", action = "", href = "", primary = false, onHide = null, stores = [] }) {
@@ -445,6 +278,129 @@ setInterval(renderTodayUpdated, 15 * 1000);
 document.addEventListener("visibilitychange", refreshToday);
 
 // ---------------------------------------------------------------------------
+// ESTADÍSTICAS DEL PERÍODO (GET /orders/stats/?days=7|30|90): despacho en
+// 24 h, transportistas y destinos. El backend manda solo los bloques que el
+// miembro puede ver (allowed); sin ninguno responde 403 y la fila no aparece.
+// El período elegido queda en este navegador (el mismo que Estadísticas).
+// ---------------------------------------------------------------------------
+const STATS_URL = `${window.APP_CONFIG.API_BASE}/orders/stats/`;
+const STATS_DAYS_KEY = "statsDays";
+const formatNumber = (value) => (value === null || value === undefined ? "—" : Number(value).toLocaleString("es-AR"));
+
+function savedDays() {
+  try {
+    const days = Number(localStorage.getItem(STATS_DAYS_KEY));
+    return [7, 30, 90].includes(days) ? days : 30;
+  } catch (err) {
+    return 30;
+  }
+}
+
+function setupPeriodSwitch() {
+  const box = document.getElementById("periodSwitch");
+  if (!box || box.dataset.ready) return;
+  box.dataset.ready = "1";
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-days]");
+    if (!button) return;
+    const days = Number(button.dataset.days);
+    try {
+      localStorage.setItem(STATS_DAYS_KEY, String(days));
+    } catch (err) {
+      /* sin almacenamiento: vale para esta visita */
+    }
+    loadStats(days);
+  });
+  loadStats(savedDays());
+}
+
+async function loadStats(days) {
+  document.querySelectorAll("#periodSwitch button").forEach((button) => {
+    button.setAttribute("aria-pressed", String(Number(button.dataset.days) === days));
+  });
+  const data = await fetchJson(`${STATS_URL}?days=${days}`);
+  const allowed = (data && data.allowed) || [];
+  document.getElementById("statsRow").hidden = !allowed.length;
+  document.getElementById("periodSwitch").hidden = !allowed.length;
+  if (!allowed.length) return;
+  const period = `Pedidos de los últimos ${days} días`;
+  renderDispatch(allowed.includes("dispatch") ? data.dispatch : null, period);
+  renderCarriers(allowed.includes("carriers") ? data.carriers : null, days);
+  renderBuyers(allowed.includes("buyers") ? data.buyers : null, days);
+}
+
+function renderDispatch(stats, period) {
+  const card = document.getElementById("dispatchCard");
+  card.hidden = !stats;
+  if (!stats) return;
+  document.getElementById("dispatchSub").textContent = period;
+  const gauge = document.getElementById("dispatchGauge");
+  const foot = document.getElementById("dispatchFoot");
+  if (!stats.shipped) {
+    gauge.innerHTML = '<p class="stat-empty">Todavía no despachaste pedidos de este período.</p>';
+    foot.replaceChildren();
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, Number(stats.within_24h) || 0));
+  const arc = Math.PI * 80;
+  gauge.innerHTML = `<svg width="200" height="112" viewBox="0 0 200 112" role="img" aria-label="${pct} % de los pedidos despachados en menos de 24 horas">
+      <path class="gauge-track" d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke-width="16" stroke-linecap="round"></path>
+      ${pct > 0 ? `<path class="gauge-value" d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke-width="16" stroke-linecap="round" stroke-dasharray="${((arc * pct) / 100).toFixed(1)} ${arc.toFixed(1)}"></path>` : ""}
+    </svg><span class="gauge-number">${pct} %</span>`;
+  foot.innerHTML = `<div><dt>Mediana</dt><dd>${formatNumber(stats.median_hours)} h</dd></div>
+    <div><dt>En 48 h</dt><dd>${formatNumber(stats.within_48h)} %</dd></div>
+    <div><dt>Esperando</dt><dd>${formatNumber(stats.waiting)}</dd></div>`;
+}
+
+function renderCarriers(rows, days) {
+  const card = document.getElementById("carriersCard");
+  card.hidden = !rows;
+  if (!rows) return;
+  document.getElementById("carriersSub").textContent = `Envíos de los últimos ${days} días`;
+  const box = document.getElementById("carriersTable");
+  if (!rows.length) {
+    box.innerHTML = '<p class="stat-empty">Sin envíos en este período.</p>';
+    return;
+  }
+  box.innerHTML = `<table class="carrier-table">
+      <thead><tr><th scope="col">Transportista</th><th scope="col">Envíos</th><th scope="col">Entregados</th><th scope="col">Días a entregar</th><th scope="col">Con problemas</th></tr></thead>
+      <tbody>${rows
+        .map(
+          (row) => `<tr>
+          <th scope="row">${escapeHtml(row.carrier)}</th>
+          <td>${formatNumber(row.shipped)}</td>
+          <td>${formatNumber(row.delivered)}</td>
+          <td>${row.avg_delivery_days === null ? "—" : formatNumber(row.avg_delivery_days)}</td>
+          <td class="${row.problems ? "is-problem" : ""}">${formatNumber(row.problems)}</td>
+        </tr>`
+        )
+        .join("")}</tbody></table>`;
+}
+
+function renderBuyers(buyers, days) {
+  const card = document.getElementById("buyersCard");
+  card.hidden = !buyers;
+  if (!buyers) return;
+  document.getElementById("buyersSub").textContent = `Pedidos por provincia, últimos ${days} días`;
+  const list = document.getElementById("buyersBars");
+  const states = (buyers.states || []).slice(0, 5);
+  if (!states.length) {
+    list.innerHTML = '<li class="stat-empty">Sin pedidos en este período.</li>';
+    return;
+  }
+  const max = Math.max(...states.map((row) => row.count)) || 1;
+  list.replaceChildren(
+    ...states.map((row) => {
+      const item = document.createElement("li");
+      item.innerHTML = `<span class="state-name"></span><span class="state-count">${formatNumber(row.count)}</span>
+        <span class="state-track" aria-hidden="true"><span style="width:${Math.round((row.count / max) * 100)}%"></span></span>`;
+      item.querySelector(".state-name").textContent = row.name;
+      return item;
+    })
+  );
+}
+
+// ---------------------------------------------------------------------------
 // PRIMEROS PASOS: solo para el dueño de un comercio que no terminó de
 // armarlo. "Ocultar" queda en este navegador (es una comodidad, no un dato).
 // ---------------------------------------------------------------------------
@@ -608,14 +564,13 @@ async function loadDashboard() {
     // guardada, que la barra necesita para no ofrecer "Administración" de más.
     window.AppTopbar.render({ ...getCurrentUser(), ...(data.user || {}), team: data.team, teams: data.teams });
     renderOnboarding(data.onboarding);
-    renderSections(data.sections || []);
-    setupToolSearch(data.sections || [], data.menu || []);
     loadInvitationNotice();
     if (!data.team) {
       document.getElementById("noTeamNotice").hidden = false;
       return;
     }
     loadToday();
+    setupPeriodSwitch();
     renderSampleOrdersNotice(document.getElementById("sampleNotice"), { onChange: () => window.location.reload() });
   } catch (err) {
     if (!err || !err.isSessionExpired) {

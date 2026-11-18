@@ -69,6 +69,7 @@ function createElement(tag, className, text) {
 // code: el número de error (estado HTTP) o el código que devolvió la
 // plataforma; se muestra para que el comerciante lo pueda citar en soporte.
 function showConnectResult(text, type = "error", code = null) {
+  selectStore("new");
   setConnectCardOpen(true);
   const el = document.getElementById("connectMessage");
   if (!el) {
@@ -238,9 +239,14 @@ function renderStoreCard(store) {
   title.appendChild(createElement("h3", "store-name", store.name || `Tienda ${store.external_store_id}`));
   title.appendChild(createElement("span", "store-platform", store.platform_label || store.platform));
   head.appendChild(title);
-  head.appendChild(
+  const side = createElement("div", "store-card-actions");
+  side.appendChild(
     createElement("span", `store-status ${STATUS_CLASSES[store.status] || "off"}`, store.status_label || store.status)
   );
+  const orders = createElement("a", "btn btn-primary btn-small", "Ver sus pedidos");
+  orders.href = `pedidos.html?tienda=${encodeURIComponent(store.id)}`;
+  side.appendChild(orders);
+  head.appendChild(side);
   card.appendChild(head);
 
   if (store.store_url && /^https?:\/\//i.test(store.store_url)) {
@@ -588,19 +594,85 @@ async function saveSettings(store, payload, button, feedback) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Elegir una tienda (2026-11-18): la lista de la izquierda ("Nueva tienda" y
+// las conectadas) muestra a la derecha los pasos para conectar o la tarjeta de
+// la tienda elegida. Empieza en ?tienda=<id> o la recién conectada; si no, en
+// la primera tienda; sin tiendas, en "Nueva tienda".
+// ---------------------------------------------------------------------------
+let selectedStore = (() => {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("tienda") || params.get("store_connected") || null;
+})();
+let pickerStores = [];
+
+function initials(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return ((words[0] || "?")[0] + (words[1] ? words[1][0] : "")).toUpperCase();
+}
+
+function selectStore(id) {
+  selectedStore = String(id);
+  applyStoreSelection();
+}
+
+function applyStoreSelection() {
+  const ids = pickerStores.map((store) => String(store.id));
+  if (!selectedStore || (selectedStore !== "new" && !ids.includes(selectedStore))) {
+    selectedStore = ids[0] || "new";
+  }
+  const isNew = selectedStore === "new";
+  document.getElementById("connectCard").hidden = !isNew;
+  if (isNew) setConnectCardOpen(true);
+  document.getElementById("storesSection").hidden = isNew;
+  document.querySelectorAll("#storesList .store-card").forEach((card) => {
+    card.hidden = card.dataset.storeId !== selectedStore;
+  });
+  document.querySelectorAll("#storesPicker [data-pick]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.pick === selectedStore));
+  });
+}
+
+function renderStorePicker(stores) {
+  pickerStores = stores;
+  const picker = document.getElementById("storesPicker");
+  picker.querySelectorAll("[data-pick]:not([data-pick='new'])").forEach((node) => node.remove());
+  stores.forEach((store, index) => {
+    const button = createElement("button", "stores-pick");
+    button.type = "button";
+    button.dataset.pick = String(store.id);
+    const mark = createElement("span", `stores-pick-mark store-color-${index % 8}`, initials(store.name || store.platform_label));
+    mark.setAttribute("aria-hidden", "true");
+    const text = createElement("span", "stores-pick-text");
+    text.appendChild(createElement("strong", "", store.name || `Tienda ${store.external_store_id}`));
+    text.appendChild(createElement("small", "", store.platform_label || PLATFORM_LABELS[store.platform] || store.platform));
+    const status = createElement("span", `store-status ${STATUS_CLASSES[store.status] || "off"}`, store.status_label || store.status);
+    button.append(mark, text, status);
+    picker.appendChild(button);
+  });
+  applyStoreSelection();
+}
+
+document.getElementById("storesPicker")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-pick]");
+  if (!button) return;
+  selectStore(button.dataset.pick);
+  // En el celular el panel queda abajo de la lista: se lleva la vista hasta él.
+  if (window.matchMedia("(max-width: 860px)").matches) {
+    document.querySelector(".stores-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
 function renderStores(stores) {
   syncConnectCard(stores);
   const list = document.getElementById("storesList");
   list.replaceChildren();
   if (!stores.length) {
-    list.insertAdjacentHTML("beforeend", appEmptyState({
-      icon: "store",
-      title: "Todavía no conectaste ninguna tienda",
-      text: "Elegí tu plataforma en «Conectar una tienda», acá arriba: desde ese momento tus pedidos entran solos.",
-    }));
+    renderStorePicker([]);
     return;
   }
   stores.forEach((store) => list.appendChild(renderStoreCard(store)));
+  renderStorePicker(stores);
 }
 
 async function loadStores() {

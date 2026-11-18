@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .auth_views import team_payload, teams_payload
-from .dashboard_sections import build_sections, onboarding
+from .dashboard_sections import build_sections, build_sidebar, onboarding
 from .permissions_map import get_effective_role, user_has_permission
 
 
@@ -246,6 +246,8 @@ class DashboardView(APIView):
                 "menu": menu,
                 # El panel agrupado y los primeros pasos (dashboard_sections.py).
                 "sections": build_sections(user),
+                # La barra lateral de todas las páginas del comerciante.
+                "sidebar": build_sidebar(user),
                 "onboarding": onboarding(user),
                 # El comercio actual (o None: el panel manda a crear uno o a
                 # sumarse) y todos los suyos, para el selector.

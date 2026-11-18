@@ -611,3 +611,102 @@ header.app-topbar .topbar-menu-logout:hover { background: var(--danger-50); }
 }
 .sample-notice > .ph { font-size: var(--text-lg); color: var(--accent-600); }
 .sample-notice > span { flex: 1; min-width: 200px; }
+
+/* --- Barra lateral del comerciante (app_sidebar.js, 2026-11-18) -------------
+   Fija a la izquierda en escritorio; el contenido de la página se corre con
+   el padding del body, así ninguna página cambia su HTML. En pantallas
+   angostas se esconde y se abre sobre el contenido (body.sidebar-open). */
+:root { --sidebar-w: 272px; }
+.app-sidebar {
+  position: fixed; inset: 0 auto 0 0; z-index: 60; width: var(--sidebar-w); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 16px; padding: 18px 14px 14px;
+  background: var(--surface); border-right: 1px solid var(--line); overflow-y: auto;
+  font-family: var(--font-sans); color: var(--ink);
+}
+body.has-app-sidebar { padding-left: var(--sidebar-w); }
+.sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px; }
+.sidebar-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); border-radius: var(--radius-md); }
+.sidebar-brand img { display: block; border-radius: var(--radius-md); }
+.sidebar-brand span { display: flex; flex-direction: column; line-height: 1.15; }
+.sidebar-brand strong { font-size: var(--text-md); font-weight: 700; letter-spacing: -0.01em; }
+.sidebar-brand small { font-size: var(--text-xs); color: var(--muted); }
+.sidebar-close { display: none; width: 40px; height: 40px; border: 0; border-radius: var(--radius-md); background: transparent;
+  color: var(--ink-2); font-size: var(--text-lg); cursor: pointer; align-items: center; justify-content: center; }
+.sidebar-team:empty { display: none; }
+.sidebar-team .team-switcher { width: 100%; max-width: none; height: 42px; padding-top: 0; padding-bottom: 0; background-color: var(--surface-2); }
+.sidebar-search { display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; padding: 0 10px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--muted);
+  font-size: var(--text-sm); cursor: pointer; text-align: left; }
+.sidebar-search span { flex: 1; }
+.sidebar-search kbd { font-family: var(--font-mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.sidebar-search:hover { background: var(--surface-2); color: var(--ink); }
+.sidebar-section-title { display: block; padding: 0 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted); }
+.sidebar-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sidebar-row { display: flex; align-items: center; gap: 2px; }
+.sidebar-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px;
+  border-radius: var(--radius-md); color: var(--ink-2); font-size: var(--text-base); font-weight: 500; text-decoration: none;
+  transition: background var(--speed) var(--ease), color var(--speed) var(--ease); }
+.sidebar-link .ph { font-size: 19px; flex-shrink: 0; }
+.sidebar-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-link:hover { background: var(--n-100); color: var(--ink); }
+.sidebar-item.is-active > .sidebar-row > .sidebar-link { background: var(--accent-500); color: var(--n-0); font-weight: 600; }
+.sidebar-badge { font-size: var(--text-xs); font-weight: 600; line-height: 1; padding: 4px 8px; border-radius: var(--radius-full);
+  background: var(--n-100); color: var(--ink); }
+.sidebar-item.is-active .sidebar-badge { background: rgba(255, 255, 255, 0.22); color: var(--n-0); }
+.sidebar-toggle { width: 32px; height: 32px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--subtle); cursor: pointer; }
+.sidebar-toggle:hover { background: var(--n-100); color: var(--ink); }
+.sidebar-toggle .ph { transition: transform var(--speed) var(--ease); }
+.sidebar-toggle[aria-expanded="true"] .ph { transform: rotate(180deg); }
+.sidebar-sub { list-style: none; margin: 2px 0 6px 19px; padding: 0 0 0 12px; border-left: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 1px; }
+.sidebar-sub a { display: block; padding: 7px 8px; border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--ink-2); text-decoration: none; }
+.sidebar-sub a:hover { background: var(--n-100); color: var(--ink); }
+.sidebar-sub a[aria-current="page"] { color: var(--accent-600); font-weight: 600; background: var(--accent-50); }
+.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+.sidebar-user { display: flex; align-items: center; gap: 10px; padding: 12px 8px 2px; border-top: 1px solid var(--line);
+  color: var(--ink); text-decoration: none; border-radius: 0 0 var(--radius-md) var(--radius-md); }
+.sidebar-user:hover strong { color: var(--accent-600); }
+.sidebar-avatar { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; background: var(--accent-100); }
+.sidebar-user span { display: flex; flex-direction: column; min-width: 0; }
+.sidebar-user strong { font-size: var(--text-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-user small { font-size: var(--text-xs); color: var(--muted); }
+.app-sidebar a:focus-visible, .app-sidebar button:focus-visible, .app-sidebar select:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.sidebar-backdrop { display: none; }
+
+/* La barra superior, con la lateral a la vista: sin marca, sin buscador
+   (están en la lateral) y con la campana de avisos. */
+header.app-topbar .topbar-menu-toggle { display: none; width: 40px; height: 40px; border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--ink); font-size: 22px; cursor: pointer; align-items: center; justify-content: center; }
+header.app-topbar .topbar-bell { position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: var(--radius-md); color: var(--ink-2); font-size: 20px; text-decoration: none; }
+header.app-topbar .topbar-bell:hover { background: var(--n-100); color: var(--ink); }
+header.app-topbar .topbar-bell.has-news::after { content: ""; position: absolute; top: 9px; right: 10px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--danger-500); border: 2px solid var(--surface); }
+body.has-app-sidebar header.app-topbar .topbar-home { display: none; }
+body.has-app-sidebar header.app-topbar .topbar-search-btn { display: none; }
+
+@media (max-width: 960px) {
+  body.has-app-sidebar { padding-left: 0; }
+  .app-sidebar { width: min(300px, 86vw); transform: translateX(-100%); transition: transform 0.22s var(--ease); box-shadow: none; }
+  body.sidebar-open .app-sidebar { transform: none; box-shadow: var(--shadow-lg); }
+  .sidebar-close { display: inline-flex; }
+  .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(28, 26, 23, 0.45);
+    opacity: 0; pointer-events: none; transition: opacity 0.22s var(--ease); }
+  body.sidebar-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
+  body.sidebar-open { overflow: hidden; }
+  header.app-topbar .topbar-menu-toggle { display: inline-flex; }
+  body.has-app-sidebar header.app-topbar .topbar-home { display: flex; }
+  body.has-app-sidebar header.app-topbar .topbar-search-btn { display: inline-flex; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar, .sidebar-backdrop, .sidebar-toggle .ph { transition: none; }
+}
+/* Lo que flota abajo (barra de selección de Mis pedidos, la de Imprimir y los
+   "Deshacer") se centra en el contenido, no debajo de la barra lateral. */
+@media (min-width: 961px) {
+  body.has-app-sidebar .selection-bar,
+  body.has-app-sidebar .print-dock { left: calc(50% + var(--sidebar-w) / 2); width: min(760px, calc(100vw - var(--sidebar-w) - 32px)); }
+  body.has-app-sidebar .app-undo-stack { left: calc(var(--sidebar-w) + 16px); }
+}

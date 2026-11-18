@@ -1,6 +1,9 @@
-// Barra superior compartida: volver al panel y el comercio a la izquierda, las
-// acciones de la página en el medio y el menú de la cuenta (Mi cuenta, Mi
-// actividad, Ayuda, Cerrar sesión) a la derecha.
+// Barra superior compartida: las acciones de la página y, a la derecha, el
+// buscador, los avisos y el menú de la cuenta (Mi cuenta, Mi actividad, Ayuda,
+// Cerrar sesión). Desde 2026-11-18 la navegación es la barra lateral
+// (app_sidebar.js), que este archivo carga: la marca y el selector de comercio
+// pasaron allá; en pantallas angostas la barra lateral se abre con el botón de
+// menú de esta barra.
 //
 // Estaba copiada en cada página: el mismo bloque HTML en 12 archivos y la
 // misma función renderTopbar en 11 .js. Acá se escribe una sola vez; cada
@@ -63,29 +66,29 @@
     node.replaceChildren();
     node.classList.add("app-topbar");
 
-    // Izquierda: volver al panel y el comercio en el que trabaja ESTA pestaña
-    // (renderTeamSwitcher, utils.js; apps/accounts/teams.py). Algunas páginas
-    // cargan esta barra antes que utils.js: entonces se dibuja al terminar
-    // de cargar.
+    // Izquierda: en pantallas angostas, el botón que abre la barra lateral y la
+    // marca (en escritorio la barra lateral ya está a la vista con la marca y el
+    // selector de comercio, ver app_sidebar.js).
     const left = document.createElement("div");
     left.className = "topbar-left";
+    const menuToggle = document.createElement("button");
+    menuToggle.type = "button";
+    menuToggle.className = "topbar-menu-toggle";
+    menuToggle.setAttribute("aria-label", "Abrir el menú");
+    menuToggle.setAttribute("aria-expanded", "false");
+    menuToggle.setAttribute("aria-controls", "appSidebar");
+    menuToggle.innerHTML = '<i class="ph ph-list" aria-hidden="true"></i>';
+    menuToggle.addEventListener("click", () => window.AppSidebar && window.AppSidebar.open());
+    left.appendChild(menuToggle);
     const home = document.createElement("a");
     home.className = "topbar-home";
     home.href = "dashboard.html";
-    // La marca del producto (Human Log · Rótulos) es también el camino al panel.
-    home.title = "Human Log · Rótulos — volver al panel";
-    home.setAttribute("aria-label", "Rótulos: volver al panel");
+    // La marca del producto (Human Log · Rótulos) es también el camino al inicio.
+    home.title = "Human Log · Rótulos — ir al inicio";
+    home.setAttribute("aria-label", "Rótulos: ir al inicio");
     home.innerHTML = `<img src="assets/images/favicon.svg" alt="" width="26" height="26"><span>Rótulos</span>`;
     left.appendChild(home);
-    const teamBox = document.createElement("div");
-    teamBox.className = "topbar-team";
-    left.appendChild(teamBox);
     node.appendChild(left);
-    const drawSwitcher = () => {
-      if (typeof renderTeamSwitcher === "function") renderTeamSwitcher(teamBox, user);
-    };
-    if (typeof renderTeamSwitcher === "function") drawSwitcher();
-    else document.addEventListener("DOMContentLoaded", drawSwitcher, { once: true });
 
     // Medio: las acciones de la página (data-links). El panel ya tiene su
     // botón y lo de la cuenta está en su menú, así que esos no se repiten.
@@ -203,20 +206,30 @@
     search.setAttribute("aria-label", "Buscar una función o un pedido");
     search.innerHTML = `<i class="ph ph-magnifying-glass" aria-hidden="true"></i><span>Buscar</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} K</kbd>`;
     search.addEventListener("click", () => window.AppPalette && window.AppPalette.open());
-    account.prepend(search);
+    // La campana: los avisos del comercio (el punto lo pone app_sidebar.js).
+    const bell = document.createElement("a");
+    bell.className = "topbar-bell";
+    bell.id = "topbarBell";
+    bell.href = "notificaciones.html";
+    bell.setAttribute("aria-label", "Avisos");
+    bell.title = "Avisos";
+    bell.innerHTML = '<i class="ph ph-bell" aria-hidden="true"></i>';
+    account.prepend(search, bell);
     node.appendChild(account);
-    loadPalette();
+    loadScript("command_palette.js", "appPaletteScript", () => window.AppPalette);
+    loadScript("app_sidebar.js", "appSidebarScript", () => window.AppSidebar);
   }
 
-  // El buscador vive en su propio archivo, al lado de este; lleva la misma
-  // marca de versión (?v=) que topbar.js para no quedar viejo en la caché.
+  // El buscador (command_palette.js) y la barra lateral (app_sidebar.js) viven
+  // en su propio archivo, al lado de este; llevan la misma marca de versión
+  // (?v=) que topbar.js para no quedar viejos en la caché.
   const SCRIPT_SRC = (document.currentScript && document.currentScript.src) || "";
-  function loadPalette() {
-    if (window.AppPalette || document.getElementById("appPaletteScript") || !SCRIPT_SRC) return;
-    const url = new URL("command_palette.js", SCRIPT_SRC);
+  function loadScript(file, id, loaded) {
+    if (loaded() || document.getElementById(id) || !SCRIPT_SRC) return;
+    const url = new URL(file, SCRIPT_SRC);
     url.search = new URL(SCRIPT_SRC).search;
     const script = document.createElement("script");
-    script.id = "appPaletteScript";
+    script.id = id;
     script.src = url.href;
     document.body.appendChild(script);
   }
@@ -237,7 +250,12 @@
   function render(user) {
     const node = container();
     if (!node) return;
-    build(node, user || (window.Auth && window.Auth.getCurrentUser()) || {});
+    const current = user || (window.Auth && window.Auth.getCurrentUser()) || {};
+    build(node, current);
+    // La barra lateral se dibuja con el mismo usuario (si ya cargó; si no, lo
+    // lee de acá al cargar).
+    window.__topbarUser = user || null;
+    if (window.AppSidebar) window.AppSidebar.render(user || null);
     fitLinks(node);
     if (observed !== node && window.ResizeObserver) {
       observed = node;

@@ -532,3 +532,35 @@
   font: inherit;
   color: var(--danger-500);
 }
+
+/* === Tiendas en dos columnas (2026-11-18, boceto aprobado) ==================
+   A la izquierda "Nueva tienda" y las conectadas; a la derecha, la elegida. */
+.main { max-width: var(--page-wide); }
+.stores-layout { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.stores-picker { flex: 1 1 280px; max-width: 360px; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  position: sticky; top: 16px; }
+.stores-panel { flex: 3 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.stores-panel > [hidden] { display: none; }
+.stores-pick { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 12px 14px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); color: var(--ink);
+  font: inherit; text-align: left; cursor: pointer; transition: border-color var(--speed) var(--ease), box-shadow var(--speed) var(--ease); }
+.stores-pick:hover { border-color: var(--line-strong); }
+.stores-pick[aria-pressed="true"] { border-color: var(--accent-500); box-shadow: var(--ring); }
+.stores-pick:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.stores-pick-mark { width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  background: var(--accent-100); color: var(--accent-700); font-weight: 700; font-size: var(--text-sm); }
+.stores-pick-mark.store-color-1, .stores-pick-mark.store-color-5 { background: var(--info-100); color: var(--info-700); }
+.stores-pick-mark.store-color-2, .stores-pick-mark.store-color-6 { background: var(--warning-100); color: var(--warning-700); }
+.stores-pick-mark.store-color-3, .stores-pick-mark.store-color-7 { background: var(--n-150); color: var(--n-700); }
+.stores-pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.stores-pick-text strong { font-size: var(--text-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stores-pick-text small { font-size: var(--text-xs); color: var(--muted); }
+.stores-pick .store-status { font-size: var(--text-xs); padding: 2px 9px; flex-shrink: 0; }
+.stores-pick-new { border-style: dashed; border-color: var(--accent-300); color: var(--accent-600); }
+.stores-pick-new .stores-pick-mark { background: var(--accent-100); color: var(--accent-600); font-size: 18px; }
+.stores-pick-new[aria-pressed="true"] { background: var(--accent-50); }
+.stores-panel .store-card { margin-bottom: 0; border: 0; padding: 0; }
+.store-card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 860px) {
+  .stores-picker { max-width: none; position: static; }
+}

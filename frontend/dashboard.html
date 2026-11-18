@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
-    <title>Mi Panel</title>
+    <title>Inicio</title>
     <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
     <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
     <meta name="theme-color" content="#308028" />
@@ -19,40 +19,27 @@
 
     <link rel="stylesheet" href="assets/css/base.css" />
     <link rel="stylesheet" href="assets/css/app.css" />
-    <link rel="stylesheet" href="assets/css/dashboard.css?v=2026-11-11" />
+    <link rel="stylesheet" href="assets/css/dashboard.css" />
   </head>
   <body>
     <div class="layout">
-      <!-- La barra compartida (assets/js/topbar.js): panel, comercio, cuenta.
-           "Administración" solo para quien puede ver usuarios (el admin). -->
-      <header class="topbar" id="appTopbar" data-links='[{"href": "gestionuser.html", "label": "Administración", "perm": "users.view"}]'></header>
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; carga la
+           barra lateral (app_sidebar.js). -->
+      <header class="topbar" id="appTopbar" data-links='[]'></header>
 
       <main class="main">
-        <!-- Cabecera: la fecha y el título a la izquierda, el buscador de
-             funciones a la derecha (dashboard.js, setupToolSearch: busca en
-             todas las herramientas a las que el usuario tiene acceso, también
-             las que no entran en las tarjetas). -->
+        <!-- Cabecera: la fecha y el título; a la derecha, el período de las
+             estadísticas de abajo (dashboard.js, loadStats). La navegación es la
+             barra lateral (app_sidebar.js) y el buscador, Ctrl+K. -->
         <div class="dash-head">
           <div class="main-heading">
             <span class="dash-date" id="dashboardDate"></span>
             <h1 id="dashboardTitle">Hoy</h1>
-            <p>Lo que tu comercio tiene pendiente y por dónde seguir.</p>
           </div>
-
-          <div class="tool-search" id="toolSearch" role="search">
-            <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
-            <input
-              type="search"
-              id="toolSearchInput"
-              placeholder="Buscar una función…"
-              autocomplete="off"
-              role="combobox"
-              aria-expanded="false"
-              aria-controls="toolSearchResults"
-              aria-label="Buscar una función: planilla, impresora, tarifas"
-            />
-            <kbd class="tool-search-key" aria-hidden="true">/</kbd>
-            <ul id="toolSearchResults" class="tool-search-results" role="listbox" hidden></ul>
+          <div class="period-switch" id="periodSwitch" role="group" aria-label="Período de las estadísticas" hidden>
+            <button type="button" data-days="7" aria-pressed="false">7 días</button>
+            <button type="button" data-days="30" aria-pressed="true">30 días</button>
+            <button type="button" data-days="90" aria-pressed="false">90 días</button>
           </div>
         </div>
 
@@ -67,47 +54,70 @@
         <!-- Pedidos de ejemplo cargados (utils.js, renderSampleOrdersNotice). -->
         <div id="sampleNotice" class="sample-notice" role="status" hidden></div>
 
-        <!-- Bandeja de trabajo (dashboard.js / loadToday): los números del día
-             (GET /orders/summary/) y "Qué hacer ahora", que junta lo pendiente
-             con los avisos del comercio (GET /notices/). -->
         <section id="onboardingBox" class="onboarding" aria-label="Primeros pasos" hidden></section>
-        <section id="todayStats" class="today-stats" aria-label="Números de hoy" hidden></section>
-        <section id="todoBox" class="todo" aria-labelledby="todoTitle" hidden>
-          <div class="todo-head">
-            <h2 class="todo-title" id="todoTitle">Qué hacer ahora</h2>
-            <span class="today-updated" id="todayUpdated" aria-live="off"></span>
-          </div>
-          <ul class="todo-list" id="todoList"></ul>
-        </section>
 
-        <!-- La semana: entraron vs. despachados por día (dashboard_week.js). -->
-        <section id="weekBox" class="week" aria-labelledby="weekTitle" hidden>
-          <div class="week-head">
-            <div>
-              <h2 class="todo-title" id="weekTitle">La semana</h2>
-              <p class="week-summary" id="weekSummary"></p>
+        <!-- Los cuatro números del día (GET /orders/summary/), cada uno abre
+             su lista ya filtrada. -->
+        <section id="todayStats" class="today-stats" aria-label="Pedidos de hoy" hidden></section>
+
+        <!-- La semana (dashboard_week.js) y "Qué hacer ahora" (loadToday, que
+             junta lo pendiente con los avisos del comercio, GET /notices/). -->
+        <div class="dash-row">
+          <section id="weekBox" class="week dash-card dash-card-wide" aria-labelledby="weekTitle" hidden>
+            <div class="week-head">
+              <div>
+                <h2 class="todo-title" id="weekTitle">La semana</h2>
+                <p class="week-summary" id="weekSummary"></p>
+              </div>
+              <ul class="week-legend" aria-label="Referencias">
+                <li><i class="week-key week-entered" aria-hidden="true"></i>Entraron</li>
+                <li><i class="week-key week-dispatched" aria-hidden="true"></i>Despachados</li>
+              </ul>
             </div>
-            <ul class="week-legend" aria-label="Referencias">
-              <li><i class="week-key week-entered" aria-hidden="true"></i>Entraron</li>
-              <li><i class="week-key week-dispatched" aria-hidden="true"></i>Despachados</li>
-            </ul>
-          </div>
-          <div class="week-chart-wrap">
-            <div class="week-chart" id="weekChart"></div>
-            <div class="week-tooltip" id="weekTooltip" role="status" hidden></div>
-          </div>
-          <details class="week-table">
-            <summary>Ver como tabla</summary>
-            <table>
-              <thead><tr><th scope="col">Día</th><th scope="col">Entraron</th><th scope="col">Despachados</th></tr></thead>
-              <tbody id="weekTableBody"></tbody>
-            </table>
-          </details>
-        </section>
+            <div class="week-chart-wrap">
+              <div class="week-chart" id="weekChart"></div>
+              <div class="week-tooltip" id="weekTooltip" role="status" hidden></div>
+            </div>
+            <details class="week-table">
+              <summary>Ver como tabla</summary>
+              <table>
+                <thead><tr><th scope="col">Día</th><th scope="col">Entraron</th><th scope="col">Despachados</th></tr></thead>
+                <tbody id="weekTableBody"></tbody>
+              </table>
+            </details>
+          </section>
 
-        <h2 class="tools-title" id="toolsTitle">Todas las herramientas</h2>
-        <div id="menuGroups">
-          <p class="menu-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
+          <section id="todoBox" class="todo dash-card" aria-labelledby="todoTitle" hidden>
+            <div class="todo-head">
+              <h2 class="todo-title" id="todoTitle">Qué hacer ahora</h2>
+              <span class="today-updated" id="todayUpdated" aria-live="off"></span>
+            </div>
+            <ul class="todo-list" id="todoList"></ul>
+          </section>
+        </div>
+
+        <!-- Estadísticas del período (GET /orders/stats/?days=): cada bloque
+             solo si el miembro tiene ese permiso (stats.dispatch, stats.carriers,
+             stats.buyers). Las mismas cuentas que Mi comercio → Estadísticas. -->
+        <div class="dash-row" id="statsRow" hidden>
+          <section id="dispatchCard" class="dash-card stat-card" aria-labelledby="dispatchTitle" hidden>
+            <h2 class="todo-title" id="dispatchTitle">Despacho en 24 h</h2>
+            <p class="stat-sub" id="dispatchSub"></p>
+            <div class="gauge" id="dispatchGauge"></div>
+            <dl class="stat-foot" id="dispatchFoot"></dl>
+          </section>
+
+          <section id="carriersCard" class="dash-card stat-card dash-card-wide" aria-labelledby="carriersTitle" hidden>
+            <h2 class="todo-title" id="carriersTitle">Transportistas</h2>
+            <p class="stat-sub" id="carriersSub"></p>
+            <div class="table-scroll" id="carriersTable"></div>
+          </section>
+
+          <section id="buyersCard" class="dash-card stat-card" aria-labelledby="buyersTitle" hidden>
+            <h2 class="todo-title" id="buyersTitle">A dónde enviás</h2>
+            <p class="stat-sub" id="buyersSub"></p>
+            <ul class="state-bars" id="buyersBars"></ul>
+          </section>
         </div>
       </main>
     </div>
@@ -117,6 +127,6 @@
     <script src="assets/js/utils.js?v=2026-10-29"></script>
     <script src="assets/js/topbar.js"></script>
     <script src="assets/js/dashboard_week.js"></script>
-    <script src="assets/js/dashboard.js?v=2026-11-11"></script>
+    <script src="assets/js/dashboard.js"></script>
   </body>
 </html>
