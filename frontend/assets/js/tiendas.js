@@ -723,8 +723,10 @@ async function init() {
 document.querySelectorAll("[data-platform-pick]").forEach((button) => {
   button.addEventListener("click", () => {
     const chosen = button.dataset.platformPick;
-    // Eligió con la lista de tiendas todavía cargando: que no se le cierre la tarjeta.
+    // Eligió con la lista de tiendas todavía cargando: que no se le cierre la
+    // tarjeta, ni se pase a la primera tienda cuando llega la lista.
     connectCardTouched = true;
+    selectedStore = "new";
     document.querySelectorAll("[data-platform-pick]").forEach((other) => {
       const active = other === button;
       other.setAttribute("aria-pressed", active ? "true" : "false");
