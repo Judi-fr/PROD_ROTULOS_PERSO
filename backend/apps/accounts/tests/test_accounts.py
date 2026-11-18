@@ -2632,13 +2632,18 @@ class ForcedPasswordChangeTests(AuthTestCase):
 
     def test_crear_sin_password_sin_setting_sigue_dando_400(self):
         # Regresión: sin ADMIN_CREATED_USER_PASSWORD configurado, el
-        # comportamiento previo se mantiene intacto.
+        # comportamiento previo se mantiene intacto. El setting se fija vacío
+        # acá: si no, el test dependía del .env de quien lo corre (con la
+        # variable definida en el .env local, el alta daba 201).
+        from django.test import override_settings
+
         self.client.force_authenticate(user=self.admin)
-        resp = self.client.post(
-            self.USERS_URL,
-            {"email": "sin_pass@example.com", "full_name": "Sin Pass", "role": "subscriber", "status": "active"},
-            format="json",
-        )
+        with override_settings(ADMIN_CREATED_USER_PASSWORD=""):
+            resp = self.client.post(
+                self.USERS_URL,
+                {"email": "sin_pass@example.com", "full_name": "Sin Pass", "role": "subscriber", "status": "active"},
+                format="json",
+            )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_crear_sin_password_con_setting_usa_temporal_y_marca_flag(self):
