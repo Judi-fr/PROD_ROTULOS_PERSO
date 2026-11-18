@@ -62,6 +62,13 @@ class CommercialFlowTests(AndreaniTestMixin, APITestCase):
         login = self.call("post", "/auth/login/", {"email": EMAIL, "password": CLAVE})
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
         self.assertIsNone(login.data["user"]["team"])
+        # Sin confirmar el email no puede usar nada todavía (2026-11-18): abre el
+        # enlace del correo que le llegó al registrarse.
+        self.assertFalse(login.data["user"]["email_verified"])
+        blocked = self.call("get", "/orders/", expected=403)
+        self.assertEqual(blocked.data["code"], "email_not_verified")
+        link = next(line for line in mail.outbox[-1].body.splitlines() if "token=" in line)
+        self.call("post", "/auth/verify-email/confirm/", {"token": link.split("token=", 1)[1].strip()})
         no_team = self.call("get", "/orders/", expected=403)
         self.assertEqual(no_team.data["code"], "no_team")
 

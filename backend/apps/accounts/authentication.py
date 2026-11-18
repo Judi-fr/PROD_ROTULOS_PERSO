@@ -1,4 +1,5 @@
-"""Autenticación JWT + enforcement de "forzar cambio de contraseña".
+"""Autenticación JWT + enforcement de "forzar cambio de contraseña" y de
+"confirmar el email" (2026-11-18).
 
 ``JWTAuthenticationWithPasswordPolicy`` es el único choke point que cubre
 TODA la API: muchas vistas ya pisan ``permission_classes`` explícitamente
@@ -19,8 +20,10 @@ from rest_framework.permissions import SAFE_METHODS
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
+from rest_framework.permissions import AllowAny
+
 from .auth_cookies import access_cookie_name, wants_cookies
-from .models import PasswordChangeRequirement
+from .models import PasswordChangeRequirement, user_email_verified
 
 # Endpoints alcanzables aunque el usuario tenga must_change_password=True:
 # el propio cambio de contraseña, ver el propio perfil (para no romper la
@@ -31,6 +34,27 @@ _ALLOWED_WHILE_PENDING = {
     ("GET", "/api/v1/auth/me/"),
     ("POST", "/api/v1/auth/logout/"),
 }
+
+
+# Endpoints alcanzables con el email sin confirmar (2026-11-18, pedido del
+# usuario: "exigí que confirmen el email antes de usar la app"): ver el propio
+# perfil (la pantalla "Confirmá tu email" muestra a qué dirección se mandó),
+# reenviar el correo y salir. Las vistas públicas (AllowAny: login, registro,
+# confirmar el enlace, refresh, seguimiento público...) no se tocan.
+_ALLOWED_WHILE_UNVERIFIED = {
+    ("GET", "/api/v1/auth/me/"),
+    ("POST", "/api/v1/auth/verify-email/resend/"),
+    ("POST", "/api/v1/auth/logout/"),
+}
+
+EMAIL_NOT_VERIFIED_MSG = "Confirmá tu email para empezar a usar Rótulos: te mandamos un enlace a tu correo."
+
+
+def _view_is_public(request):
+    """True si la vista que atiende el request es pública (AllowAny): ahí no
+    se exige nada aunque venga una sesión."""
+    view = (getattr(request, "parser_context", None) or {}).get("view")
+    return any(cls is AllowAny for cls in getattr(view, "permission_classes", ()))
 
 
 def user_must_change_password(user):
@@ -58,6 +82,16 @@ class JWTAuthenticationWithPasswordPolicy(JWTAuthentication):
                         "must_change_password": True,
                     }
                 )
+        # Cuenta creada con el formulario de registro que todavía no abrió el
+        # enlace del correo: solo puede ver su perfil, pedir el correo de nuevo
+        # y salir (ver user_email_verified: las cuentas viejas, las de Google y
+        # las que crea el admin cuentan como confirmadas).
+        if (
+            (request.method, request.path) not in _ALLOWED_WHILE_UNVERIFIED
+            and not _view_is_public(request)
+            and not user_email_verified(user)
+        ):
+            raise PermissionDenied({"detail": EMAIL_NOT_VERIFIED_MSG, "code": "email_not_verified"})
         return result
 
     def _authenticate_cookie(self, request):

@@ -80,6 +80,14 @@
               throw new Error(data?.detail || "El enlace de verificación no es válido.");
             }
             showMsg(data.detail || "Tu email quedó confirmado.", true);
+            // La sesión guardada en este navegador también, así no vuelve a
+            // la pantalla "Confirmá tu email".
+            try {
+              const stored = JSON.parse(localStorage.getItem("user") || "null");
+              if (stored) localStorage.setItem("user", JSON.stringify({ ...stored, email_verified: true }));
+            } catch (err) {
+              /* sin almacenamiento: el panel lo vuelve a leer */
+            }
           })
           .catch((err) => {
             showMsg(err.message || "Error de red. Revisá tu conexión.", false);

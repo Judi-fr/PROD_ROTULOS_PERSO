@@ -385,6 +385,13 @@ exact midnight. It reads `.get()`, so it takes query params or a JSON body dict 
   `PasswordResetRequestView`/`Confirm`, `EmailVerificationConfirmView`/`Resend`, `ChangePasswordView`, plus
   `user_payload()`/`auth_response()` — every login endpoint returns the same
   `{access, refresh, user: {..., role, permissions}}` shape.
+- **Confirming the email is required (2026-11-18)**: an account created with the register form can log in but,
+  until it opens the email link, `JWTAuthenticationWithPasswordPolicy` answers 403 `{"code": "email_not_verified"}`
+  everywhere except `GET me/`, `POST verify-email/resend/`, `POST logout/` and public (AllowAny) views; `auth.js`
+  sends that 403 to `confirmar_email.html` (+ `assets/js/confirmar_email.js`: the address, "Ya lo confirmé",
+  "Mandármelo de nuevo", "Entrar con otra cuenta"), and login/register land there when `email_verified` is false.
+  `user_email_verified`: no `EmailVerification` row = verified, so old accounts, Google ones and the ones the admin
+  creates are not affected. Tests: `test_email_required.py`, e2e "una cuenta nueva no entra hasta confirmar el email".
 - Refresh tokens rotate and get blacklisted on rotation/logout (`SIMPLE_JWT` + `token_blacklist` app);
   password reset revokes all outstanding refresh tokens.
 - Password rules (`validate_password_strength`, `auth_views.py`): 8+ chars (Django's own minimum, so the screens say 8), one uppercase, one digit, plus

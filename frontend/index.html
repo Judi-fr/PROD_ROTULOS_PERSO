@@ -78,7 +78,9 @@
     // después ?next=, la página que pidió sin sesión (por ejemplo Ayuda desde
     // Términos), solo si es una página de esta misma carpeta: un ?next= con
     // otro sitio no puede usarse para mandar a alguien afuera tras el login.
-    function landingPage(isAdmin) {
+    function landingPage(isAdmin, user) {
+      // Sin confirmar el email no puede usar la app: primero eso.
+      if (user && user.email_verified === false) return 'confirmar_email.html';
       if (localStorage.getItem('pendingTiendanubePrint')) {
         return localStorage.getItem('pendingTiendanubePage') || 'imprimir_tiendanube.html';
       }
@@ -109,7 +111,7 @@
       // el enlace de vinculación), vuelve a terminar ese paso.
       // Lo mismo si venía de "Imprimir rótulos" en las acciones masivas de
         // Tiendanube (assets/js/tiendanube/imprimir_tiendanube.js guardó los pedidos elegidos).
-        window.location.replace(landingPage(isAdmin));
+        window.location.replace(landingPage(isAdmin, data.user));
     }
 
     // Callback de Google Identity Services: response.credential es el ID
@@ -194,7 +196,7 @@
         // el enlace de vinculación), vuelve a terminar ese paso.
         // Lo mismo si venía de "Imprimir rótulos" en las acciones masivas de
         // Tiendanube (assets/js/tiendanube/imprimir_tiendanube.js guardó los pedidos elegidos).
-        window.location.replace(landingPage(isAdmin));
+        window.location.replace(landingPage(isAdmin, data.user));
       } catch (error) {
         showMessage(error.message || 'El email o la contraseña no son correctos.');
       }

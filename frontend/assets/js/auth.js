@@ -20,6 +20,9 @@
   const CHANGE_PASSWORD_URL = SCRIPT_URL
     ? new URL("../../cambiar-password.html", SCRIPT_URL).href
     : "cambiar-password.html";
+  const CONFIRM_EMAIL_URL = SCRIPT_URL
+    ? new URL("../../confirmar_email.html", SCRIPT_URL).href
+    : "confirmar_email.html";
   const TEAM_START_URL = SCRIPT_URL
     ? new URL("../../comercio_inicio.html", SCRIPT_URL).href
     : "comercio_inicio.html";
@@ -171,6 +174,7 @@
   //   redirige al login. Un 401 en la propia llamada de refresh nunca
   //   reintenta (evita el bucle).
   // - Ante un 403 con must_change_password, redirige a cambiar-password.html.
+  // - Ante un 403 con code email_not_verified, a confirmar_email.html.
   async function apiFetch(url, options = {}) {
     await migration;
     const isRefreshCall = url === REFRESH_URL;
@@ -199,6 +203,13 @@
         const pendingError = new Error("Cambio de contraseña pendiente");
         pendingError.isSessionExpired = true;
         throw pendingError;
+      }
+      // Email sin confirmar (authentication.py): a la pantalla que lo pide.
+      if (body && body.code === "email_not_verified" && !/\/confirmar_email\.html$/.test(window.location.pathname)) {
+        window.location.replace(CONFIRM_EMAIL_URL);
+        const unverifiedError = new Error("Email sin confirmar");
+        unverifiedError.isSessionExpired = true;
+        throw unverifiedError;
       }
       // Sin comercio: a crear uno o sumarse, salvo en las páginas que se
       // usan sin comercio (ahí la página muestra lo que corresponda).

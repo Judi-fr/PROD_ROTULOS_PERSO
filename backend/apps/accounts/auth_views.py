@@ -513,9 +513,9 @@ def _send_verification_email(user, token):
     """Arma el link al frontend y envía el correo de verificación de email.
 
     A diferencia de ``PasswordResetRequestView._send_reset_email``, un fallo
-    de SMTP acá NO debe cortar el registro: la cuenta ya se creó y el usuario
-    tiene que poder loguearse igual (verificación suave, no bloqueante), así
-    que el envío queda envuelto en try/except.
+    de SMTP acá NO debe cortar el registro: la cuenta ya se creó, entra a la
+    pantalla "Confirmá tu email" y desde ahí puede pedir el correo de nuevo,
+    así que el envío queda envuelto en try/except.
     """
     verification_url = f"{settings.EMAIL_VERIFICATION_URL}?token={token}"
     try:
@@ -624,7 +624,7 @@ class RegisterView(APIView):
             last_name=last_name,
         )
 
-        # Verificación suave de email (solo cuentas email/contraseña; Google ya
+        # Verificación de email (solo cuentas email/contraseña; Google ya
         # confirma el email antes de llegar acá, ver GoogleAuthView).
         verification, _ = EmailVerification.objects.get_or_create(user=user)
         verification.refresh_token()
@@ -885,8 +885,9 @@ class EmailVerificationConfirmView(APIView):
     """POST /api/v1/auth/verify-email/confirm/
 
     Confirma la verificación de email a partir del token que llega en el
-    link del correo (ver ``_send_verification_email``). Verificación SUAVE:
-    esta vista solo actualiza el estado, no bloquea nada por sí sola.
+    link del correo (ver ``_send_verification_email``). Hasta confirmarlo, la
+    cuenta solo puede ver su perfil, pedir el correo de nuevo y salir (ver
+    ``authentication.JWTAuthenticationWithPasswordPolicy``).
 
     Body:      {"token": "..."}
     Respuesta: 200 con un mensaje de éxito, o 400 si el token es inválido o expiró.
@@ -911,7 +912,7 @@ class EmailVerificationConfirmView(APIView):
 
         if verification.is_expired():
             return Response(
-                {"detail": "El enlace de verificación expiró. Pedí uno nuevo desde tu perfil."},
+                {"detail": "El enlace de verificación expiró. Entrá a tu cuenta y pedí uno nuevo."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
