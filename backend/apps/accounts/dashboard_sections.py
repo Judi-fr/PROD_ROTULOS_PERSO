@@ -13,7 +13,7 @@ equipo, ver ``permissions_map.user_has_permission``). El ``menu`` plano de
 
 from __future__ import annotations
 
-from .permissions_map import get_effective_role, user_has_permission
+from .permissions_map import _role_has_permission, get_effective_role, user_has_permission
 
 
 def _links(user, candidates):
@@ -113,6 +113,10 @@ def build_sections(user):
     return sections
 
 
+# Las secciones que son trabajo de un comercio: sin uno elegido van en gris.
+MERCHANT_SECTIONS = ("orders", "print", "design", "stores", "carriers")
+
+
 def build_sidebar(user):
     """La barra lateral del comerciante (2026-11-18, boceto aprobado por el
     usuario): la misma en todas sus páginas, en vez de las tarjetas del panel.
@@ -133,12 +137,20 @@ def build_sidebar(user):
     # comercio (2026-11-19, al pasar la administración a esta barra).
     has_team = membership(user) is not None
     can = lambda permission: has_team and user_has_permission(user, permission)  # noqa: E731
+    # Sin comercio, las secciones del comercio se muestran igual pero en gris
+    # (``disabled``): las que su rol permitiría, sin funciones ni números, y al
+    # tocarlas la barra avisa que primero hay que crear un comercio o sumarse
+    # a uno (2026-11-19, pedido del usuario). Con comercio, lo de siempre.
+    show = can if has_team else (lambda permission: _role_has_permission(user, permission))  # noqa: E731
     items = []
 
     def add(key, label, icon, url, links, match=(), badge=None, place="main"):
+        disabled = not has_team and key in MERCHANT_SECTIONS
         items.append({
-            "key": key, "label": label, "icon": icon, "url": url, "links": _links(user, links),
-            "match": list(match), "badge": badge, "place": place,
+            "key": key, "label": label, "icon": icon, "url": url,
+            "links": [] if disabled else _links(user, links),
+            "match": list(match), "badge": None if disabled else badge, "place": place,
+            "disabled": disabled,
         })
 
     # Quien administra y no está en ningún comercio tiene por Inicio el
@@ -147,7 +159,7 @@ def build_sidebar(user):
     home_overview = overview and not has_team
     add("home", "Inicio", "house-simple", "resumen_plataforma.html" if home_overview else "dashboard.html", [],
         match=("dashboard.html",) if home_overview else ())
-    if can("orders.view"):
+    if show("orders.view"):
         add(
             "orders", "Pedidos", "package", "pedidos.html",
             [
@@ -161,9 +173,9 @@ def build_sidebar(user):
                    "envios_andreani.html", "importar_empretienda.html"),
             badge="orders",
         )
-    if can("labels.batch") or can("documents.view"):
+    if show("labels.batch") or show("documents.view"):
         add(
-            "print", "Imprimir", "printer", "imprimir_rotulos.html" if can("labels.batch") else "documentos.html",
+            "print", "Imprimir", "printer", "imprimir_rotulos.html" if show("labels.batch") else "documentos.html",
             [
                 ("Imprimir rótulos", "imprimir_rotulos.html", "labels.batch"),
                 ("Documentos", "documentos.html", "documents.view"),
@@ -172,7 +184,7 @@ def build_sidebar(user):
             ],
             badge="print" if can("labels.batch") else None,
         )
-    if can("labels.view"):
+    if show("labels.view"):
         add(
             "design", "Diseño de rótulos", "squares-four", "mis_plantillas.html",
             [
@@ -182,13 +194,13 @@ def build_sidebar(user):
             ],
             match=("editor_rotulos.html", "versiones_plantilla.html"),
         )
-    if can("stores.manage"):
+    if show("stores.manage"):
         add(
             "stores", "Tiendas", "storefront", "tiendas.html",
             [("Rótulos pedidos por la tienda", "rotulos_tienda.html", "orders.view")],
             match=("integraciones.html",),
         )
-    if can("carriers.manage"):
+    if show("carriers.manage"):
         from apps.carriers.providers import all_providers
 
         carriers = [(provider.name, f"transportista.html?carrier={provider.code}", None) for provider in all_providers()]
@@ -210,7 +222,10 @@ def build_sidebar(user):
     business = [row for row in business if row[0] == "Datos del comercio"
                 or (row[0] == "Estadísticas" and stats)
                 or (row[0] in ("Miembros y perfiles", "Actividad") and can("team.manage"))]
-    add("business", "Mi comercio", "users-three", "equipo.html", business,
+    if not has_team:
+        business = []
+    # Sin comercio, "Mi comercio" es donde se crea uno o se suma a uno.
+    add("business", "Mi comercio", "users-three", "equipo.html" if has_team else "comercio_inicio.html", business,
         match=("perfiles_equipo.html", "actividad_equipo.html", "comercio_inicio.html", "invitaciones.html"))
     add(
         "help", "Ayuda", "lifebuoy", "ayuda.html",
@@ -246,7 +261,7 @@ def build_sidebar(user):
         items.append({
             "key": "admin", "label": "Administración", "icon": "shield-check", "url": admin_links[0]["url"],
             "links": admin_links, "match": ["comercio_usuario.html"], "badge": None,
-            "place": "main",
+            "place": "main", "disabled": False,
         })
     return items
 

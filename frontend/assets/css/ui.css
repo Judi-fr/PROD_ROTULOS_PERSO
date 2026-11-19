@@ -658,6 +658,12 @@ body.has-app-sidebar { padding-left: var(--sidebar-w); }
 .sidebar-badge { font-size: var(--text-xs); font-weight: 600; line-height: 1; padding: 4px 8px; border-radius: var(--radius-full);
   background: var(--n-100); color: var(--ink); }
 .sidebar-item.is-active .sidebar-badge { background: rgba(255, 255, 255, 0.22); color: var(--n-0); }
+/* Sección del comercio sin comercio elegido (app_sidebar.js): en gris, con un
+   candado; al tocarla avisa que primero hay que crear uno o sumarse. */
+.sidebar-item.is-disabled .sidebar-link { color: var(--subtle); }
+.sidebar-item.is-disabled .sidebar-link > .ph:first-child { opacity: 0.6; }
+.sidebar-item.is-disabled .sidebar-link:hover { background: var(--n-50); color: var(--muted); }
+.sidebar-lock { margin-left: auto; font-size: 14px; color: var(--subtle); }
 /* Punto de falla en "Estado del sistema" (app_sidebar.js, /health/system/). */
 .sidebar-alert { margin-left: auto; width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 0 3px var(--surface); }
 .sidebar-sub .sidebar-alert { display: inline-block; margin-left: 8px; vertical-align: middle; }

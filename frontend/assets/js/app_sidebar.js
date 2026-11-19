@@ -88,7 +88,44 @@
     return i;
   }
 
+  // Una sección del comercio sin comercio elegido (build_sidebar la manda con
+  // `disabled`): se ve en gris y al tocarla explica que primero hay que crear
+  // un comercio o sumarse a uno, en vez de llevar a una pantalla que no anda.
+  function buildDisabledItem(item) {
+    const li = document.createElement("li");
+    li.className = "sidebar-item is-disabled";
+    const row = document.createElement("div");
+    row.className = "sidebar-row";
+    const link = document.createElement("a");
+    link.className = "sidebar-link";
+    link.href = "comercio_inicio.html";
+    link.setAttribute("aria-disabled", "true");
+    link.title = "Necesitás un comercio";
+    link.appendChild(icon(item.icon || "circle"));
+    const label = document.createElement("span");
+    label.className = "sidebar-label";
+    label.textContent = item.label;
+    link.appendChild(label);
+    const lock = icon("lock-simple");
+    lock.classList.add("sidebar-lock");
+    link.appendChild(lock);
+    link.addEventListener("click", async (event) => {
+      event.preventDefault();
+      setOpen(false);
+      // appConfirm vive en utils.js; sin él, directo a crear el comercio.
+      const go = typeof appConfirm !== "function" || await appConfirm(
+        `Para usar ${item.label} primero necesitás un comercio\n\nCreá el tuyo o sumate al de alguien con su código o una invitación. Después vas a poder usar todas las funciones.`,
+        { confirmLabel: "Crear o sumarme a un comercio", cancelLabel: "Ahora no" }
+      );
+      if (go) window.location.href = "comercio_inicio.html";
+    });
+    row.appendChild(link);
+    li.appendChild(row);
+    return li;
+  }
+
   function buildItem(item) {
+    if (item.disabled) return buildDisabledItem(item);
     const li = document.createElement("li");
     li.className = "sidebar-item";
     const active = isActive(item);

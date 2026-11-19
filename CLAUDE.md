@@ -2000,8 +2000,11 @@ and the email moved under the name (no Email column; email order stays in "Orden
   button are gone; the platform administration is the sidebar's "Administración" section (`build_sidebar`: Usuarios,
   Roles y permisos (`is_staff`), Comercios, Todos los pedidos, Reportes, Registros de auditoría, Mensajes de soporte, Comercios dados de baja,
   Catálogos, Estado del sistema, each with its page's permission, so platform staff see only theirs; `place: main`).
-  The merchant sections of the sidebar need a current business: the admin has every permission, and without one they
-  only bounced to `comercio_inicio.html`. Each admin page's heading is `.page-head`/`.page-head-actions` in
+  The merchant sections of the sidebar need a current business. **Without one they show in grey (2026-11-19, user's
+  ask)**: `build_sidebar` still sends Pedidos, Imprimir, Diseño, Tiendas and Transportistas that the ROLE allows
+  (`_role_has_permission`, `MERCHANT_SECTIONS`) with `disabled: true`, no links and no badge, and "Mi comercio" points to
+  `comercio_inicio.html`; `app_sidebar.js` (`buildDisabledItem`) draws them grey with a lock and, on click, asks
+  "Para usar X primero necesitás un comercio" with "Crear o sumarme a un comercio" → `comercio_inicio.html`. Each admin page's heading is `.page-head`/`.page-head-actions` in
   `gestionuser.css` (it was `.topbar`, which clashed with the shared bar).
 - **Platform summary, the admin's home (2026-11-19)**: `resumen_plataforma.html` + `assets/js/resumen_plataforma.js`, built
   with the merchant home's pieces (`dashboard.css`, `dashboard_week.js`). `GET /api/v1/admin/overview/`

@@ -69,16 +69,38 @@ class SidebarTests(APITestCase):
         admin.is_staff = True
         admin.save()
         items = sidebar(self.client, admin)
-        self.assertEqual(list(items), ["home", "business", "help", "admin"])
+        # Sin comercio las secciones del comercio vienen en gris (disabled),
+        # sin funciones ni números.
+        self.assertEqual(list(items), ["home", "orders", "print", "design", "stores", "carriers", "business", "help", "admin"])
+        for key in ("orders", "print", "design", "stores", "carriers"):
+            self.assertTrue(items[key]["disabled"], key)
+            self.assertEqual(items[key]["links"], [], key)
+            self.assertIsNone(items[key]["badge"], key)
+        self.assertFalse(items["admin"]["disabled"])
+        self.assertEqual(items["business"]["url"], "comercio_inicio.html")
         # Sin comercio, su Inicio es el resumen de la plataforma.
         self.assertEqual(items["home"]["url"], "resumen_plataforma.html")
         self.assertNotIn("resumen_plataforma.html", [link["url"] for link in items["admin"]["links"]])
         new_business(admin)
         items = sidebar(self.client, admin)
         self.assertIn("orders", items)
+        self.assertFalse(items["orders"]["disabled"])
+        self.assertTrue(items["orders"]["links"])
         # Con comercio, el Inicio es el del comercio y el resumen va en Administración.
         self.assertEqual(items["home"]["url"], "dashboard.html")
         self.assertEqual(items["admin"]["links"][0]["url"], "resumen_plataforma.html")
+
+    def test_merchant_without_a_business_sees_the_sections_in_grey(self):
+        alone = make_user("solo@example.com")
+        items = sidebar(self.client, alone)
+        self.assertEqual(list(items), ["home", "orders", "print", "design", "stores", "carriers", "business", "help"])
+        self.assertTrue(all(items[key]["disabled"] for key in ("orders", "print", "design", "stores", "carriers")))
+        self.assertFalse(items["home"]["disabled"])
+        self.assertEqual(items["business"]["url"], "comercio_inicio.html")
+        self.assertEqual(items["business"]["links"], [])
+
+    def test_owner_sections_are_not_disabled(self):
+        self.assertFalse(any(item["disabled"] for item in sidebar(self.client, self.owner).values()))
 
     def test_merchant_gets_no_administration(self):
         self.assertNotIn("admin", sidebar(self.client, self.owner))
