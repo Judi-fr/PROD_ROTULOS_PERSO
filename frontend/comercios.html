@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Comercios</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/gestionuser.css" />
+    <link rel="stylesheet" href="assets/css/comercios.css" />
+  </head>
+  <body data-requires="users.view">
+    <div class="layout">
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), sección Administración. -->
+      <header class="topbar" id="appTopbar"></header>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h1 id="businessesTitle">Comercios</h1>
+            <p>Los comercios abiertos de la plataforma: quién es el dueño, su equipo, sus tiendas y cómo vienen sus pedidos.</p>
+          </div>
+          <div class="page-head-actions">
+            <a class="btn btn-outline" href="comercios_baja.html">Dados de baja</a>
+          </div>
+        </div>
+
+        <p id="pageMessage" class="page-message" role="status" aria-live="polite" hidden></p>
+
+        <!-- Lista (GET /teams/directory/): búsqueda al escribir, orden por las
+             columnas y "Solo con problemas". Un clic en una fila abre la ficha
+             (GET /teams/<id>/detail/). comercios.js. -->
+        <section class="roles-card" aria-labelledby="businessesTitle">
+          <div class="biz-toolbar">
+            <label class="search-box biz-search">
+              <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+              <input id="bizSearch" type="search" placeholder="Buscar por nombre o mail del dueño" autocomplete="off" aria-label="Buscar comercios" />
+            </label>
+            <label class="biz-problems">
+              <input type="checkbox" id="bizProblems" />
+              Solo con tiendas con errores
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table class="biz-table">
+              <thead>
+                <tr>
+                  <th scope="col"><button type="button" class="biz-sort" data-sort="name">Comercio</button></th>
+                  <th scope="col">Tiendas</th>
+                  <th scope="col" class="is-num">Equipo</th>
+                  <th scope="col" class="is-num"><button type="button" class="biz-sort" data-sort="orders_30d">Pedidos 30 días</button></th>
+                  <th scope="col"><button type="button" class="biz-sort" data-sort="last_activity">Última actividad</button></th>
+                  <th scope="col"><button type="button" class="biz-sort" data-sort="created_at">Alta</button></th>
+                </tr>
+              </thead>
+              <tbody id="bizBody">
+                <tr><td colspan="6" class="table-placeholder"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination-bar">
+            <div class="showing" id="bizInfo"></div>
+            <div class="pager" id="bizPager"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- La ficha de un comercio: el diálogo de la app (ui.css, .app-dialog). -->
+    <dialog id="bizDialog" class="app-dialog biz-dialog" aria-labelledby="bizDialogTitle">
+      <div class="biz-dialog-head">
+        <div>
+          <h2 id="bizDialogTitle" class="biz-dialog-title">Comercio</h2>
+          <p id="bizDialogSub" class="biz-dialog-sub"></p>
+        </div>
+        <button type="button" class="biz-dialog-close" id="bizDialogClose" aria-label="Cerrar"><i class="ph ph-x" aria-hidden="true"></i></button>
+      </div>
+      <div id="bizDialogBody" class="biz-dialog-body"></div>
+    </dialog>
+
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/admin_common.js"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/comercios.js"></script>
+  </body>
+</html>

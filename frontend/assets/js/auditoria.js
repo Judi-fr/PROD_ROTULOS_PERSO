@@ -38,7 +38,7 @@ function renderAuditRows(logs) {
   const body = document.getElementById("auditBody");
   if (!body) return;
   if (!logs.length) {
-    body.innerHTML = `<tr><td colspan="6" class="table-placeholder">No hay registros para mostrar.</td></tr>`;
+    body.innerHTML = adminEmptyRow(6, { icon: "search", title: "No hay registros para mostrar", text: "Probá con otros filtros o con otras fechas." });
     return;
   }
   body.innerHTML = "";
@@ -73,7 +73,7 @@ async function loadAuditLogs() {
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error("Error al cargar auditoría:", err);
-    if (body) body.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:red;">${escapeHtml(err.message)}</td></tr>`;
+    if (body) body.innerHTML = adminErrorRow(6, err.message);
   }
 }
 

@@ -18,21 +18,20 @@
     />
 
     <link rel="stylesheet" href="assets/css/gestionuser.css" />
+    <link rel="stylesheet" href="assets/css/reportes.css" />
   </head>
   <body>
     <div class="layout">
-      <!-- SIDEBAR: renderizado por assets/js/admin_sidebar.js -->
-      <div id="adminSidebar" data-active="reports"></div>
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), la misma de todas las páginas. -->
+      <header class="topbar" id="appTopbar"></header>
 
       <!-- MAIN -->
       <main class="main">
-        <div class="topbar">
+        <div class="page-head">
           <div>
             <h1 id="reportsTitle">Reportes</h1>
             <p>Métricas sobre usuarios, seguridad de cuentas, pedidos y soporte.</p>
-          </div>
-          <div class="topbar-actions">
-            <button class="btn btn-outline" id="logoutAdminBtn" type="button">Cerrar sesión</button>
           </div>
         </div>
 
@@ -48,9 +47,9 @@
             <span id="reportsUpdatedAt" class="reports-updated" aria-live="polite"></span>
           </div>
 
-          <!-- Pestañas: un bloque por vez (antes eran 26 tarjetas en una sola
-               página larga). reportes.js las maneja y recuerda la elegida en
-               el #hash de la URL. -->
+          <!-- Pestañas: un bloque por vez; reportes.js recuerda la elegida en el
+               #hash. Cada una: números del período arriba y debajo los gráficos
+               (report_charts.js: columnas por mes, barras y tablas). -->
           <nav class="reports-tabs" role="tablist" aria-label="Bloques de reportes">
             <button type="button" class="reports-tab" role="tab" data-tab="usuarios">Usuarios</button>
             <button type="button" class="reports-tab" role="tab" data-tab="seguridad">Seguridad</button>
@@ -59,214 +58,156 @@
           </nav>
 
           <div class="reports-panel" role="tabpanel" data-panel="usuarios">
-          <!-- USUARIOS -->
-          <h2 class="reports-block-title">Usuarios</h2>
-          <div class="reports-grid">
-            <div class="roles-card">
-              <div class="roles-card-title">Usuarios por rol</div>
-              <div id="metricsRoleDistribution" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
+            <p class="reports-panel-note" id="usuariosNote" hidden></p>
+            <div class="report-kpis" id="usersKpis" aria-label="Números del período"></div>
+            <div class="report-grid">
+            <section class="report-card is-wide" aria-labelledby="chartSignupsTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="chartSignupsTitle">Altas y bajas por mes</h3>
+                <p class="report-card-sub">Cuentas creadas y cuentas desactivadas.</p>
+              </div></div>
+              <div id="chartSignups" class="report-body"></div>
+            </section>
+            <section class="report-card is-narrow" aria-labelledby="barsRolesTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsRolesTitle">Por rol</h3>
+              </div></div>
+              <div id="barsRoles" class="report-body"></div>
+            </section>
+            <section class="report-card" aria-labelledby="tableRetentionTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="tableRetentionTitle">Retención por mes de registro</h3>
+                <p class="report-card-sub">Cuántos de los que se registraron ese mes volvieron a entrar.</p>
+              </div></div>
+              <div id="tableRetention" class="report-body"></div>
+            </section>
+            <section class="report-card" aria-labelledby="barsAuthTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsAuthTitle">Cómo entran</h3>
+                <p class="report-card-sub">Método con el que se creó la cuenta.</p>
+              </div></div>
+              <div id="barsAuth" class="report-body"></div>
+            </section>
             </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title" id="metricsSignupsByMonthTitle">Altas por mes</div>
-              <div id="metricsSignupsByMonth" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Método de autenticación</div>
-              <div id="metricsAuthMethod" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Altas vs. bajas por mes</div>
-              <div id="metricsActiveVsInactive" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Usuarios activos</div>
-              <div id="metricsActiveUsers" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Retención por cohorte de registro</div>
-              <div id="metricsRetention" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Bloqueos por mes</div>
-              <div id="metricsLockoutsByMonth" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Top 10 · intentos fallidos</div>
-              <div id="metricsTopFailedAttempts" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Antigüedad de cuentas</div>
-              <div id="metricsAccountAge" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-          </div>
-
           </div>
 
           <div class="reports-panel" role="tabpanel" data-panel="seguridad" hidden>
-          <!-- SEGURIDAD -->
-          <h2 class="reports-block-title">Seguridad</h2>
-          <div class="reports-grid">
-            <div class="roles-card">
-              <div class="roles-card-title">Verificación de email</div>
-              <div id="metricsEmailVerification" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
+            <p class="reports-panel-note" id="seguridadNote" hidden></p>
+            <div class="report-kpis" id="securityKpis" aria-label="Números del período"></div>
+            <div class="report-grid">
+            <section class="report-card is-wide" aria-labelledby="chartLockoutsTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="chartLockoutsTitle">Bloqueos por mes</h3>
+                <p class="report-card-sub">Cuentas bloqueadas por contraseñas equivocadas.</p>
+              </div></div>
+              <div id="chartLockouts" class="report-body"></div>
+            </section>
+            <section class="report-card is-narrow" aria-labelledby="tableVerificationTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="tableVerificationTitle">Verificación por método</h3>
+              </div></div>
+              <div id="tableVerification" class="report-body"></div>
+            </section>
+            <section class="report-card is-full" aria-labelledby="tableFailedTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="tableFailedTitle">Más intentos fallidos</h3>
+                <p class="report-card-sub">Las 10 cuentas con más contraseñas equivocadas seguidas.</p>
+              </div></div>
+              <div id="tableFailed" class="report-body"></div>
+            </section>
             </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Cambio de contraseña pendiente</div>
-              <div id="metricsPendingPasswordChange" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Método de autenticación × verificación de email</div>
-              <div id="metricsAuthVerificationCross" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-          </div>
-
           </div>
 
           <div class="reports-panel" role="tabpanel" data-panel="pedidos" hidden>
-          <!-- PEDIDOS -->
-          <h2 class="reports-block-title">Pedidos</h2>
-          <div class="reports-grid" id="ordersMetricsGrid" style="display:none;">
-            <div class="roles-card">
-              <div class="roles-card-title">Pedidos por mes</div>
-              <div id="metricsOrdersByMonth" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
+            <p class="reports-panel-note" id="pedidosNote" hidden></p>
+            <div class="report-kpis" id="ordersKpis" aria-label="Números del período"></div>
+            <div class="report-grid">
+            <section class="report-card is-wide" aria-labelledby="chartOrdersTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="chartOrdersTitle">Pedidos por mes</h3>
+                <p class="report-card-sub">Pedidos de todos los comercios.</p>
+              </div></div>
+              <div id="chartOrders" class="report-body"></div>
+            </section>
+            <section class="report-card is-narrow" aria-labelledby="barsStatusTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsStatusTitle">Por estado</h3>
+                <p class="report-card-sub">Dónde está cada pedido hoy.</p>
+              </div></div>
+              <div id="barsStatus" class="report-body"></div>
+            </section>
+            <section class="report-card" aria-labelledby="tableTimesTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="tableTimesTitle">Tiempo entre estados</h3>
+                <p class="report-card-sub">Promedio de horas de un estado al siguiente.</p>
+              </div></div>
+              <div id="tableTimes" class="report-body"></div>
+            </section>
+            <section class="report-card" aria-labelledby="barsCancelledFromTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsCancelledFromTitle">Cancelados según su estado anterior</h3>
+              </div></div>
+              <div id="barsCancelledFrom" class="report-body"></div>
+            </section>
+            <section class="report-card" aria-labelledby="barsStatesTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsStatesTitle">Provincias</h3>
+              </div></div>
+              <div id="barsStates" class="report-body"></div>
+            </section>
+            <section class="report-card" aria-labelledby="barsCitiesTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsCitiesTitle">Ciudades</h3>
+              </div></div>
+              <div id="barsCities" class="report-body"></div>
+            </section>
+            <section class="report-card is-full" aria-labelledby="tableTopUsersTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="tableTopUsersTitle">Cuentas con más pedidos</h3>
+              </div></div>
+              <div id="tableTopUsers" class="report-body"></div>
+            </section>
             </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Embudo de estados</div>
-              <div id="metricsOrdersByStatus" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Tasa de cancelación</div>
-              <div id="metricsCancellationRate" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Tiempo promedio entre estados</div>
-              <div id="metricsAvgTimeBetweenStatuses" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Top 10 · usuarios por pedidos</div>
-              <div id="metricsTopUsersByOrders" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Usuarios con pedidos</div>
-              <div id="metricsUsersWithOrders" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Pedidos por ciudad</div>
-              <div id="metricsOrdersByCity" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Pedidos por provincia</div>
-              <div id="metricsOrdersByState" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-          </div>
-          <p id="ordersMetricsEmpty" class="roles-loading" style="display:none;">Sin datos todavía.</p>
-
           </div>
 
           <div class="reports-panel" role="tabpanel" data-panel="soporte" hidden>
-          <!-- SOPORTE Y ACTIVIDAD -->
-          <h2 class="reports-block-title" id="supportActivityTitle" style="display:none;">Soporte y actividad</h2>
-          <div class="reports-grid" id="supportActivityGrid" style="display:none;">
-            <div class="roles-card">
-              <div class="roles-card-title">Mensajes de soporte por mes</div>
-              <div id="metricsSupportByMonth" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Mensajes por estado</div>
-              <div id="metricsSupportByStatus" class="metrics-bars">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Tiempo promedio de respuesta</div>
-              <div id="metricsAvgResponseTime" class="metrics-stat-row">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Actividad por administrador</div>
-              <div id="metricsAdminActivityByActor" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Actividad por tipo de acción</div>
-              <div id="metricsAdminActivityByAction" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
-            </div>
-
-            <div class="roles-card">
-              <div class="roles-card-title">Logins por mes</div>
-              <div id="metricsLoginEvents" class="metrics-table">
-                <p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>
-              </div>
+            <p class="reports-panel-note" id="soporteNote" hidden></p>
+            <div class="report-kpis" id="supportKpis" aria-label="Números del período"></div>
+            <div class="report-grid">
+            <section class="report-card is-wide" aria-labelledby="chartSupportTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="chartSupportTitle">Mensajes de soporte por mes</h3>
+              </div></div>
+              <div id="chartSupport" class="report-body"></div>
+            </section>
+            <section class="report-card is-narrow" aria-labelledby="barsSupportStatusTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsSupportStatusTitle">Mensajes por estado</h3>
+              </div></div>
+              <div id="barsSupportStatus" class="report-body"></div>
+            </section>
+            <section class="report-card is-wide" aria-labelledby="chartLoginsTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="chartLoginsTitle">Ingresos por mes</h3>
+                <p class="report-card-sub">Inicios de sesión correctos y fallidos.</p>
+              </div></div>
+              <div id="chartLogins" class="report-body"></div>
+            </section>
+            <section class="report-card is-narrow" aria-labelledby="barsActorsTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsActorsTitle">Acciones por administrador</h3>
+              </div></div>
+              <div id="barsActors" class="report-body"></div>
+            </section>
+            <section class="report-card is-full" aria-labelledby="barsActionsTitle">
+              <div class="report-card-head"><div>
+                <h3 class="report-card-title" id="barsActionsTitle">Acciones de administración por tipo</h3>
+              </div></div>
+              <div id="barsActions" class="report-body"></div>
+            </section>
             </div>
           </div>
-          </div>
+
         </section>
       </main>
 
@@ -274,7 +215,8 @@
       <script src="assets/js/auth.js"></script>
       <script src="assets/js/utils.js"></script>
       <script src="assets/js/admin_common.js"></script>
-      <script src="assets/js/admin_sidebar.js"></script>
+      <script src="assets/js/topbar.js"></script>
+      <script src="assets/js/report_charts.js"></script>
       <script src="assets/js/reportes.js"></script>
     </div>
   </body>

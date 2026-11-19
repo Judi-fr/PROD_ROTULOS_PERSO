@@ -29,7 +29,7 @@ const problems = [];
 const tmp = mkdtempSync(join(tmpdir(), "check-frontend-"));
 
 // Compartidos por muchas páginas: cada una tiene solo parte de lo que usan.
-const SHARED_SCRIPTS = new Set(["utils.js", "auth.js", "topbar.js", "command_palette.js", "admin_sidebar.js", "admin_common.js", "print.js", "config.js"]);
+const SHARED_SCRIPTS = new Set(["utils.js", "auth.js", "topbar.js", "command_palette.js", "admin_common.js", "print.js", "config.js"]);
 
 function checkElementRefs(name, html) {
   const ids = new Set([...html.matchAll(/\bid=["']([\w-]+)["']/g)].map((m) => m[1]));

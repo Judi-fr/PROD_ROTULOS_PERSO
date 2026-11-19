@@ -551,6 +551,12 @@ async function loadDashboard() {
     const data = await response.json();
     // Sin comercio no hay nada del trabajo del comercio: a crear uno o
     // sumarse. El admin entra igual (la administración no necesita comercio).
+    // Quien administra la plataforma (admin o su personal) tiene por Inicio el
+    // resumen de la plataforma (build_sidebar).
+    if (!data.team && Array.isArray(data.sidebar) && data.sidebar.some((item) => item.key === "home" && item.url === "resumen_plataforma.html")) {
+      window.location.replace("resumen_plataforma.html");
+      return;
+    }
     if (!data.team && !(data.user && data.user.is_admin)) {
       window.location.replace("comercio_inicio.html");
       return;

@@ -60,6 +60,10 @@
   let items = null;
   let counts = null;
   let currentUser = null;
+  // Estado de /health/system/ ("ok"/"warning"/"error"), solo para quien ve
+  // "Estado del sistema" en Administración.
+  let health = null;
+  let healthAsked = false;
   // Secciones que la persona abrió o cerró con la flechita (key → abierta).
   const choices = new Map();
 
@@ -109,6 +113,7 @@
       count.setAttribute("aria-label", `${badge} pendientes`);
       link.appendChild(count);
     }
+    if ((item.links || []).some((entry) => pageOf(entry.url) === "estado_sistema.html")) addHealthDot(link);
     row.appendChild(link);
 
     // Las funciones de la sección: abiertas en la sección activa; cualquiera
@@ -138,6 +143,7 @@
         const anchor = document.createElement("a");
         anchor.href = entry.url;
         anchor.textContent = entry.label;
+        if (pageOf(entry.url) === "estado_sistema.html") addHealthDot(anchor);
         const same = entry.url.includes("?") || entry.url.includes("#") ? entry.url === full : pageOf(entry.url) === here();
         if (same) anchor.setAttribute("aria-current", "page");
         subLi.appendChild(anchor);
@@ -224,6 +230,42 @@
     updateBell();
   }
 
+  // Un punto rojo (error) o ámbar (advertencia) en "Estado del sistema" y en
+  // su sección cuando algo falla, así el admin no depende solo del mail de
+  // alerta. Lo hacía admin_sidebar.js (quitado 2026-11-19). La sonda pública
+  // /health/system/ no trae detalles; a lo sumo una vez por minuto.
+  function addHealthDot(node) {
+    if (!health || !health.status || !["error", "warning"].includes(health.status)) return;
+    const failing = Object.values(health.checks || {}).filter((value) => value === health.status).length;
+    const what = health.status === "error" ? "con error" : "con advertencia";
+    const label = `${failing || "Un"} chequeo${failing === 1 ? "" : "s"} ${what}`;
+    const dot = document.createElement("span");
+    dot.className = `sidebar-alert sidebar-alert-${health.status}`;
+    dot.title = label;
+    dot.setAttribute("aria-label", label);
+    node.appendChild(dot);
+  }
+
+  async function loadHealth() {
+    if (healthAsked) return;
+    const wanted = (items || []).some((item) => (item.links || []).some((entry) => pageOf(entry.url) === "estado_sistema.html"));
+    if (!wanted) return;
+    healthAsked = true;
+    const cached = readCache("appSidebarHealth", COUNTS_TTL_MS);
+    if (cached) {
+      health = cached;
+    } else {
+      try {
+        const response = await fetch(`${API}/health/system/`);
+        health = await response.json();
+        writeCache("appSidebarHealth", health);
+      } catch {
+        return;
+      }
+    }
+    draw();
+  }
+
   function ensureAside() {
     let aside = document.getElementById("appSidebar");
     if (!aside) {
@@ -264,6 +306,7 @@
     if (cached) {
       items = cached;
       draw();
+      loadHealth();
       return;
     }
     const data = await getJson(`${API}/auth/users/me/dashboard/`);
@@ -271,6 +314,7 @@
       items = data.sidebar;
       writeCache(key, items);
       draw();
+      loadHealth();
     }
   }
 
