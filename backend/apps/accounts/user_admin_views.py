@@ -21,6 +21,7 @@ from apps.common.spreadsheet import safe_cell, xlsx_bytes
 from .models import LoginLockout, Team
 from .pagination import UserAdminPagination
 from .permissions_map import DEFAULT_ROLE, LEGACY_ROLE_ALIASES, get_effective_role, user_has_permission
+from .role_permission_views import ROLE_LABELS
 from .serializers import ROLE_CHOICES, UserAdminSerializer, ensure_role_groups
 from .teams import internal_users_q
 
@@ -683,7 +684,8 @@ class UserAdminViewSet(viewsets.ModelViewSet):
                 user.id,
                 full_name or user.email,
                 user.email,
-                get_effective_role(user).capitalize(),
+                # Como en la pantalla ("Comerciante"); un rol propio, con su nombre.
+                ROLE_LABELS.get(get_effective_role(user), get_effective_role(user)),
                 "Activo" if user.is_active else "Inactivo",
                 user.date_joined.strftime("%Y-%m-%d") if user.date_joined else "",
                 user.last_login.isoformat() if user.last_login else "",

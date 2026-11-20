@@ -88,12 +88,12 @@ function openAuditChangesModal(changes) {
     return `<div><strong>${escapeHtml(field)}:</strong> ${escapeHtml(JSON.stringify(diff))}</div>`;
   });
   content.innerHTML = rows.join("") || "<p>Sin detalle.</p>";
-  modal.style.display = "flex";
+  if (!modal.open) modal.showModal();
 }
 
 function closeAuditChangesModal() {
   const modal = document.getElementById("auditChangesModal");
-  if (modal) modal.style.display = "none";
+  if (modal && modal.open) modal.close();
 }
 
 document.getElementById("auditBody")?.addEventListener("click", (event) => {
@@ -107,6 +107,10 @@ document.getElementById("auditBody")?.addEventListener("click", (event) => {
 });
 document.getElementById("closeAuditChangesModal")?.addEventListener("click", closeAuditChangesModal);
 document.getElementById("closeAuditChangesModalBtn")?.addEventListener("click", closeAuditChangesModal);
+// Un clic en el fondo cierra, como el detalle de usuario.
+document.getElementById("auditChangesModal")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeAuditChangesModal();
+});
 
 document.getElementById("applyAuditFiltersBtn")?.addEventListener("click", () => {
   auditPage = 1;

@@ -2973,6 +2973,14 @@ class UserExportCsvTests(AuthTestCase):
         fila_google = by_email["csv_google@example.com"]
         self.assertEqual(fila_google[7], "Google")
 
+    def test_export_el_rol_sale_como_en_la_pantalla(self):
+        # QA en AWS (2026-11-20): salía "Subscriber" y "Admin".
+        self.client.force_authenticate(user=self.admin)
+        rows = self._parse_csv(self.client.get(self.URL))
+        by_email = {row[2]: row for row in rows[1:]}
+        self.assertEqual(by_email["admin_csv@example.com"][3], "Administrador")
+        self.assertEqual(by_email["csv_a@example.com"][3], "Comerciante")
+
     def test_export_en_excel_trae_las_mismas_columnas_y_filas(self):
         from io import BytesIO
 

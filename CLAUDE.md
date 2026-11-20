@@ -71,9 +71,11 @@ source venv/bin/activate
 SQLite — an in-memory SQLite ignores things Postgres enforces (closing a connection inside a test's
 transaction was invisible locally and broke 13 tests there). It installs `requirements-dev.txt` (so the
 scanning tests run with zxing-cpp), and in parallel runs `lint` (flake8 + `check_frontend.mjs`), `e2e` (the
-Playwright browser tests), builds the production images and runs `shellcheck` on the backup scripts. Lint and
-e2e used to live only in the Azure pipelines, which don't trigger by themselves, so they never ran until
-2026-11-20. `tblib` is installed only in CI so a test failing in parallel
+Playwright browser tests), builds the production images, runs `shellcheck` on the backup scripts and
+`agent-windows` builds `RotulosAgente.exe` on `windows-latest` (artifact `rotulos-agent-windows`; the API serves it
+only if it is in `backend/apps/printing/agent/dist/` when its image is built — whoever builds the server image puts
+it there). Lint, e2e and the .exe used to live only in the Azure pipelines, which don't trigger by themselves, so
+they never ran until 2026-11-20. `tblib` is installed only in CI so a test failing in parallel
 shows its real error instead of "cannot pickle 'traceback'".
 
 **Logging** is configured in `base.py`, not only in prod. Everything under the `apps.` namespace goes to
@@ -318,7 +320,8 @@ and `/static` → 8000 and `/` → 8001 under one domain, so someone else's brow
 - `api/v1/` → `apps.orders.urls` (`addresses/`, `orders/` — list filters `?store=<id>|manual`,
   `?status=created,preparing`, `?date_from=`/`?date_to=` (YYYY-MM-DD, both inclusive, by creation
   date) and `?search=` (Mis pedidos' search box: every word must match the order number with or without
-  "#", our id, the recipient or the tracking number) —, `admin/orders/`, `orders/metrics/`, `orders/summary/` (the dashboard's "Hoy"),
+  "#", our id, the recipient — ignoring accents and ñ, `apps/common/text.accent_insensitive_regex` through
+  `__iregex`, so it works on SQLite and Postgres — or the tracking number) —, `admin/orders/`, `orders/metrics/`, `orders/summary/` (the dashboard's "Hoy"),
   `orders/manual/`, `orders/imports/...`, `orders/import-mappings/`)
 - `api/v1/audit/` → `apps.audit.urls` (`logs/`, `actions/`, `metrics/`)
 - `api/v1/documents/` → `apps.documents.urls` (generated batch output)
@@ -375,7 +378,8 @@ endpoint that silently accepted a reversed range.
 `spreadsheet.py` holds the downloadable-sheet rules every export follows: `csv_bytes(columns, rows)` (`;` + BOM,
 what Spanish Excel opens on double click), `xlsx_bytes(columns, rows, title)` (text forced to string) and
 `safe_cell` (values starting with `= + - @` neutralized — CSV injection). Used by the order export and the audit
-export. The comparison is always `__date__gte`/`__date__lte` on
+export. `text.py`: `fold` (no accents, ñ → n, casefold) and `accent_insensitive_regex` (order search, buyer stats).
+The comparison is always `__date__gte`/`__date__lte` on
 a `DateTimeField`: with a plain `__lte`, "up to the 24th" would exclude everything on the 24th except
 exact midnight. It reads `.get()`, so it takes query params or a JSON body dict (`batch_views` passes
 `filters` from the body).
@@ -596,6 +600,11 @@ a store between businesses was considered as a stage 2 and dropped (2026-10-23, 
   report: the owner person; the notice mail names the business), `business_display_name(user)` (label/manifest/
   export fallback when there is no sender or recipient name), `contact_email(user)` (admin serializers'
   `owner_email`/`user_email`), `team_of_data_user(user)`. Order metrics count businesses, not users.
+  `business_data_user(user)` (2026-11-20): where the ADMIN picks a person for something that belongs to a
+  business — the owner of an API key, an incoming or outgoing webhook (`integrations/serializers.BusinessOwnerMixin`)
+  and the manual order "a nombre de" (`orders/manual/` `user_id`) — it stores that person's business: their only open
+  one, or with several the only one they own; otherwise a 400 naming them. Before, the order landed on the person and
+  no business saw it, and outgoing webhooks never fired.
   `account.update` is audited against the team. A background label batch carries `view_all` from the requester
   (the document's user is the data user).
 - **Current business of a request**: the frontend sends `X-Team-Id` (per tab, see Frontend); `TeamCacheMiddleware`
@@ -743,7 +752,9 @@ Actividad (`team.manage`; their scripts return early without it) and **Estadíst
   period, grouped by `Order.carrier` ("Sin indicar" when empty), `shipped`, `delivered`, `avg_delivery_days`
   (delivered − shipped), `problems`/`problem_rate` (carrier shipment issue/returning), `cost_total`/`cost_avg` from
   non-cancelled shipments' `quoted_price` (strings, null when none). `buyers`: orders created in the period minus
-  cancelled, `total` and top 10 `states`/`cities` (grouped ignoring case and spaces). Tests:
+  cancelled, `total` and top 10 `states`/`cities` (grouped ignoring case, spaces and accents; a province
+  `carriers.common.province_code` recognizes is one row with its name — "CABA", "Capital Federal" and "Ciudad
+  Autónoma de Buenos Aires" are the same — and so is a city named like its own province). Tests:
   `apps/orders/tests/test_business_stats.py`.
 - Screen: period buttons (remembered in localStorage), dispatch as stat tiles, carriers as a table (several measures),
   buyers as single-series horizontal bars in the app green (no legend; the title says what is counted).
@@ -764,6 +775,9 @@ Actividad (`team.manage`; their scripts return early without it) and **Estadíst
   action, target=None, ..., changes=None)`, called explicitly from the views that need it (no signals).
   It wraps the insert in `transaction.atomic()` and swallows/logs any exception — a failed audit write must
   never break the calling request.
+- **The business's internal user never shows** (2026-11-20): `target_repr` goes through `clean_target_repr` when
+  saved (also the one a view builds, like `str(order)`, which carries `comercio-…@datos.invalid`) and again when shown
+  (admin list and export, team activity), for the rows saved before. A data user as `target` is named by its business.
 
 ### Orders (`apps/orders`)
 
@@ -822,7 +836,8 @@ Actividad (`team.manage`; their scripts return early without it) and **Estadíst
   the list; logic in `scan.find_orders`) maps what a camera or a handheld scanner reads on the label to orders: the
   barcode is `{{tracking}}` (carrier number, or our id zero-padded to 6), the QR `{{tracking_url}}` (carrier link, or
   our signed public link). Order: signed link → exact `tracking_url` → exact `tracking_number` → `external_number`
-  (and the id when ≥ 6 digits); `{matches: [...]}`, more than one = same number in two stores (the screen asks).
+  (and the id when ≥ 6 digits, or a shorter id of an order with no store number: "#8" is what the app shows for it);
+  `{matches: [...]}`, more than one = same number in two stores (the screen asks).
   Screen `escanear.html` + `assets/js/escanear.js` (topbar of Mis pedidos, function search): native `BarcodeDetector`,
   else `@zxing/browser@0.1.5` from jsDelivr loaded on demand (iPhone Safari); a scanner gun types + Enter into the
   same field. Mode "despachar" posts `/orders/<id>/ship/` after a 5 s `appUndoable`; repeated reads of the same
@@ -1933,7 +1948,8 @@ last both ways. The bulk actions are a dark floating bar at the bottom (`.bulk-d
 "Exportar" is ONE button (2026-10-26; there were "Exportar", an .xlsx built in the browser from the ticked rows with
 SheetJS from a CDN, and "Exportar CSV" from the server): a small panel asks which users (the whole filtered list, or
 the ticked ones — preselected when there are) and the format, and the server builds both:
-`GET /users/export/?file_type=csv|xlsx` (csv by default and unchanged; xlsx via `apps.common.spreadsheet.xlsx_bytes`).
+`GET /users/export/?file_type=csv|xlsx` (csv by default and unchanged — comma, no BOM, pinned by `UserExportCsvTests`;
+xlsx via `apps.common.spreadsheet.xlsx_bytes`; the role column says "Administrador"/"Comerciante" since 2026-11-20).
 Redesigned the same day (`assets/css/gestionuser_page.css`, `body.users-page`, so the other admin pages that share
 `gestionuser.css` don't change): one search box (the table's), the four stat cards became one strip — the total
 with an active/inactive bar plus Activos/Inactivos/Bloqueados as buttons that set the status/locked filters

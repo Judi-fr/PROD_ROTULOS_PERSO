@@ -23,6 +23,7 @@ from apps.common.spreadsheet import csv_bytes, xlsx_bytes
 
 from .models import AuditLog
 from .serializers import AuditLogSerializer
+from .services import clean_target_repr
 
 
 class AuditLogPagination(UserAdminPagination):
@@ -229,7 +230,7 @@ def audit_export_row(log):
         log.get_action_display(),
         log.target_type,
         log.target_id,
-        log.target_repr,
+        clean_target_repr(log.target_repr),
         _changes_text(log.changes),
         log.ip_address or "",
         log.user_agent,

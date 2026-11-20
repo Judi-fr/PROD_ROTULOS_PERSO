@@ -94,19 +94,18 @@
         </section>
       </main>
 
-      <!-- AUDIT CHANGES MODAL (solo lectura) -->
-      <div id="auditChangesModal" class="admin-modal" style="display:none;">
-        <div class="admin-modal-box" role="dialog" aria-modal="true">
-          <div class="admin-modal-head">
-            <h3 class="admin-modal-title">Detalle del cambio</h3>
-            <button id="closeAuditChangesModal" type="button" class="admin-modal-close" aria-label="Cerrar">&times;</button>
-          </div>
-          <div id="auditChangesContent" class="admin-modal-content"></div>
-          <div class="admin-modal-foot">
-            <button id="closeAuditChangesModalBtn" type="button" class="btn btn-outline">Cerrar</button>
-          </div>
+      <!-- Detalle de un cambio (solo lectura): el <dialog> de la app (ui.css,
+           .app-dialog), como el detalle de usuario de gestionuser.html. -->
+      <dialog id="auditChangesModal" class="app-dialog admin-detail-dialog" aria-labelledby="auditChangesTitle">
+        <div class="admin-modal-head">
+          <h3 class="admin-modal-title" id="auditChangesTitle">Detalle del cambio</h3>
+          <button id="closeAuditChangesModal" type="button" class="admin-modal-close" aria-label="Cerrar"><i class="ph ph-x" aria-hidden="true"></i></button>
         </div>
-      </div>
+        <div id="auditChangesContent" class="admin-modal-content"></div>
+        <div class="admin-modal-foot">
+          <button id="closeAuditChangesModalBtn" type="button" class="btn btn-outline">Cerrar</button>
+        </div>
+      </dialog>
 
       <script src="assets/js/config.js"></script>
       <script src="assets/js/auth.js"></script>

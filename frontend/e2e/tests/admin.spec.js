@@ -29,3 +29,27 @@ test("no ve el usuario interno de los comercios", async ({ page }) => {
   await expect(page.locator("tbody tr").first()).toBeVisible();
   await expect(page.locator("main")).not.toContainText("datos.invalid");
 });
+
+test("en Auditoría, Ver cambios muestra el detalle a la vista", async ({ page }) => {
+  // El 2026-11-19 se fue el estilo de esa ventana y el detalle quedaba
+  // dibujado al pie de la página: el botón parecía no hacer nada.
+  // Un alta de usuario deja una fila con detalle (la base de prueba no trae ninguna).
+  await page.goto("/gestionuser.html");
+  await page.click("#openCreatePanel");
+  await page.fill("#fullNameInput", "Auditoría de Prueba");
+  await page.fill("#emailInput", "auditoria-e2e@rotulos.local");
+  await page.selectOption("#roleSelect", { label: "Comerciante" });
+  await page.selectOption("#statusSelect", "active");
+  await page.locator("#createUserForm button[type=submit]").click();
+  await expect(page.locator("tbody")).toContainText("auditoria-e2e@rotulos.local");
+
+  // Pantalla baja: con la lista larga del servidor el detalle quedaba fuera de vista.
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.goto("/auditoria.html");
+  await page.selectOption("#auditCategoryFilter", { label: "Usuarios" });
+  await page.getByRole("button", { name: "Aplicar" }).click();
+  await page.getByRole("button", { name: "Ver cambios" }).first().click();
+  const detail = page.getByRole("dialog", { name: "Detalle del cambio" });
+  await expect(detail).toBeInViewport();
+  await expect(detail).toContainText("auditoria-e2e@rotulos.local");
+});

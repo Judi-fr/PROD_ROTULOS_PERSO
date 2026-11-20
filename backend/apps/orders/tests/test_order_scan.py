@@ -58,6 +58,17 @@ class OrderScanTests(APITestCase):
     def test_por_el_numero_que_ve_el_comprador(self):
         self.assertEqual(self.scan("#1001"), [self.tracked.pk])
 
+    def test_por_el_numero_que_muestra_la_app_de_un_pedido_cargado_a_mano(self):
+        # QA en AWS (2026-11-20): la pantalla invita a escribir el número y
+        # "#8" (lo que muestra la app de un pedido sin número de tienda) no
+        # encontraba nada.
+        self.assertEqual(self.scan(str(self.plain.pk)), [self.plain.pk])
+        self.assertEqual(self.scan(f"#{self.plain.pk}"), [self.plain.pk])
+
+    def test_un_pedido_de_tienda_no_se_encuentra_por_nuestro_id_corto(self):
+        # Se muestra con el número de la tienda (#1001), no con nuestro id.
+        self.assertEqual(self.scan(str(self.tracked.pk)), [])
+
     def test_dos_tiendas_con_el_mismo_numero_devuelven_los_dos(self):
         twin = Order.objects.create(
             user=self.biz, address=self.address, store_connection=self.store_b, external_id="t2", external_number="1001"

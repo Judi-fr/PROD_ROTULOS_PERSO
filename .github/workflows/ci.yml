@@ -1,6 +1,6 @@
 # CI: corre en cada push y en cada pull request contra main.
 #
-# Cinco trabajos en paralelo, cada uno atrapa una clase distinta de error:
+# Seis trabajos en paralelo, cada uno atrapa una clase distinta de error:
 #   - tests:   la suite de Django contra Postgres 17, el mismo motor y versión
 #              que producción (SQLite deja pasar errores que Postgres no).
 #   - lint:    flake8 (solo errores reales, ver backend/.flake8) y el chequeo del
@@ -12,9 +12,13 @@
 #              roto no lo ve ningún test, y se descubre recién en el servidor.
 #   - scripts: shellcheck sobre los scripts de backup/restore, que corren en
 #              producción sin que nadie los mire hasta el día que hacen falta.
+#   - agent-windows: arma RotulosAgente.exe (el agente de impresión para
+#              Windows) y lo deja como artefacto "rotulos-agent-windows". La
+#              API lo sirve si está en backend/apps/printing/agent/dist/ al
+#              armar su imagen; si no, "Descargar para Windows" da error.
 #
-# Lint y e2e estaban solo en los pipelines de Azure (backend/ y frontend/
-# azure-pipelines.yml), que no se disparan solos: no corrían nunca.
+# Lint, e2e y el .exe estaban solo en los pipelines de Azure (backend/ y
+# frontend/azure-pipelines.yml), que no se disparan solos: no corrían nunca.
 name: CI
 
 on:
@@ -204,3 +208,35 @@ jobs:
       - name: shellcheck
         # sh y no bash: corren en Alpine (busybox).
         run: shellcheck --shell=sh --severity=warning backup/*.sh frontend/docker-entrypoint.sh
+
+  agent-windows:
+    name: Agente de impresión para Windows (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend/apps/printing/agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12: la última que PyInstaller 6.11 da por probada (igual que Azure).
+          python-version: "3.12"
+
+      - name: PyInstaller
+        run: python -m pip install pyinstaller==6.11.1
+
+      - name: Armar RotulosAgente.exe
+        run: pyinstaller --onefile --console --clean --noconfirm --name RotulosAgente --distpath dist rotulos_print_agent.py
+
+      # Que el .exe arranque de verdad, y no solo que se haya armado.
+      - name: Probar el .exe
+        run: .\dist\RotulosAgente.exe --help
+
+      - name: Guardar el .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotulos-agent-windows
+          path: backend/apps/printing/agent/dist/RotulosAgente.exe
+          retention-days: 30
