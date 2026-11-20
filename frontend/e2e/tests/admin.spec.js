@@ -40,6 +40,8 @@ test("en Auditoría, Ver cambios muestra el detalle a la vista", async ({ page }
   await page.fill("#emailInput", "auditoria-e2e@rotulos.local");
   await page.selectOption("#roleSelect", { label: "Comerciante" });
   await page.selectOption("#statusSelect", "active");
+  // Con contraseña: sin ella el alta depende de la configuración del servidor (en el CI da 400).
+  await page.fill("#passwordInput", "E2eRotulos2026");
   await page.locator("#createUserForm button[type=submit]").click();
   await expect(page.locator("tbody")).toContainText("auditoria-e2e@rotulos.local");
 
