@@ -26,8 +26,16 @@ from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.role_permissions import HasRolePermission
 from apps.audit.services import record
 from apps.common.date_filters import date_range_q
+from apps.common.text import accent_insensitive_regex
 from apps.accounts.team_models import Team
-from apps.accounts.teams import business_display_name, contact_email, data_owner, order_scope_q
+from apps.accounts.teams import (
+    NoSingleBusiness,
+    business_data_user,
+    business_display_name,
+    contact_email,
+    data_owner,
+    order_scope_q,
+)
 
 from .ingestion import TARGET_FIELDS, create_order_from_data, validate_mapped_row
 from .models import Address, Order
@@ -91,7 +99,8 @@ def filter_orders(queryset, params):
             word_q = (
                 Q(external_number__icontains=word)
                 | Q(external_id__iexact=word)
-                | Q(address__recipient_name__icontains=word)
+                # Sin importar tildes ni eñes: "joaquin" encuentra a "Joaquín".
+                | Q(address__recipient_name__iregex=accent_insensitive_regex(word))
                 | Q(tracking_number__icontains=word)
             )
             if word.isdigit():
@@ -249,7 +258,6 @@ class ManualOrderCreateView(APIView):
 
     def post(self, request):
         data = request.data
-        target_user = data_owner(request.user)
 
         user_id = data.get("user_id")
         if user_id:
@@ -257,7 +265,14 @@ class ManualOrderCreateView(APIView):
                 raise PermissionDenied(
                     "No tenés permiso para dar de alta pedidos a nombre de otro usuario."
                 )
-            target_user = get_object_or_404(User, pk=user_id)
+            # El pedido va al comercio de esa persona: a nombre de ella no lo
+            # vería nadie (los pedidos cuelgan del usuario de datos).
+            try:
+                target_user = business_data_user(get_object_or_404(User, pk=user_id))
+            except NoSingleBusiness as exc:
+                raise ValidationError({"user_id": str(exc)})
+        else:
+            target_user = data_owner(request.user)
 
         mapped = {field: data.get(field) for field in TARGET_FIELDS}
         row_errors = validate_mapped_row(mapped)

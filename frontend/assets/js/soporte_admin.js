@@ -39,7 +39,7 @@ function renderSupportRows(messages) {
   const body = document.getElementById("supportBody");
   if (!body) return;
   if (!messages.length) {
-    body.innerHTML = `<tr><td colspan="4" class="table-placeholder">No hay mensajes para mostrar.</td></tr>`;
+    body.innerHTML = adminEmptyRow(4, { icon: "check", title: "No hay mensajes para mostrar", text: "Los que manden los usuarios desde Ayuda aparecen acá." });
     return;
   }
   body.innerHTML = "";
@@ -75,7 +75,7 @@ async function loadSupportMessages() {
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error("Error al cargar la bandeja de soporte:", err);
-    if (body) body.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:red;">${escapeHtml(err.message)}</td></tr>`;
+    if (body) body.innerHTML = adminErrorRow(4, err.message);
   }
 }
 

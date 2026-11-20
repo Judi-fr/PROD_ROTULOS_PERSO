@@ -8,12 +8,14 @@ haya autenticado el usuario:
     {"access": "<JWT>", "refresh": "<JWT>", "user": {...}}
 """
 
+import copy
 import hashlib
 import re
 from math import ceil
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
@@ -120,13 +122,45 @@ class EmailVerificationHourlyThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
+def _for_reset_token(user):
+    """El usuario tal como lo ve el token de "olvidé mi contraseña": sin
+    ``last_login``.
+
+    Django mete el último ingreso en el hash, así que un login después de
+    pedir el mail invalidaría el link. Desde que el login guarda
+    ``last_login`` (2026-11-19) eso dejaría a la víctima sin poder recuperar
+    la cuenta mientras quien se la robó siga entrando. Sin él, el link sigue
+    siendo de un solo uso (cambia la contraseña) y vence solo
+    (``PASSWORD_RESET_TIMEOUT``); para una cuenta que nunca entró es el mismo
+    token de siempre. Una copia: el usuario real no se toca.
+    """
+    clone = copy.copy(user)
+    clone.last_login = None
+    return clone
+
+
+def make_reset_token(user):
+    return default_token_generator.make_token(_for_reset_token(user))
+
+
+def check_reset_token(user, token):
+    return default_token_generator.check_token(_for_reset_token(user), token)
+
+
 def tokens_for_user(user):
     """Genera el par de tokens JWT (access + refresh) para un usuario.
 
     Formato de respuesta compartido por todos los métodos de login
     (Google, email/contraseña, registro) para que el frontend maneje
     siempre la misma estructura sin importar cómo se autenticó.
+
+    También marca el último ingreso: ``UPDATE_LAST_LOGIN`` de simplejwt solo
+    lo hace su propia vista de login, y esta app usa las suyas, así que
+    ``last_login`` quedaba siempre vacío (Reportes daba 0 activos y todos
+    "nunca inició sesión"; 2026-11-19). Como en Django, un link de
+    "olvidé mi contraseña" NO se corta por entrar: ver ``_for_reset_token``.
     """
+    update_last_login(None, user)
     refresh = RefreshToken.for_user(user)
     return {
         "access": str(refresh.access_token),
@@ -513,9 +547,9 @@ def _send_verification_email(user, token):
     """Arma el link al frontend y envía el correo de verificación de email.
 
     A diferencia de ``PasswordResetRequestView._send_reset_email``, un fallo
-    de SMTP acá NO debe cortar el registro: la cuenta ya se creó y el usuario
-    tiene que poder loguearse igual (verificación suave, no bloqueante), así
-    que el envío queda envuelto en try/except.
+    de SMTP acá NO debe cortar el registro: la cuenta ya se creó, entra a la
+    pantalla "Confirmá tu email" y desde ahí puede pedir el correo de nuevo,
+    así que el envío queda envuelto en try/except.
     """
     verification_url = f"{settings.EMAIL_VERIFICATION_URL}?token={token}"
     try:
@@ -624,7 +658,7 @@ class RegisterView(APIView):
             last_name=last_name,
         )
 
-        # Verificación suave de email (solo cuentas email/contraseña; Google ya
+        # Verificación de email (solo cuentas email/contraseña; Google ya
         # confirma el email antes de llegar acá, ver GoogleAuthView).
         verification, _ = EmailVerification.objects.get_or_create(user=user)
         verification.refresh_token()
@@ -702,10 +736,11 @@ class PasswordResetRequestView(APIView):
     una cuenta, se le envía un correo con un link al frontend que lleva el
     ``uid`` y un ``token`` firmado.
 
-    El token lo genera ``default_token_generator`` de Django: no se persiste
-    en la base porque se deriva del hash de la contraseña actual + ``last_login``
-    + un timestamp. Consecuencias: caduca solo (``PASSWORD_RESET_TIMEOUT``) y se
-    invalida en cuanto la contraseña cambia, así que un link ya usado no sirve.
+    El token lo genera ``default_token_generator`` de Django, sin
+    ``last_login`` (``make_reset_token``): no se persiste en la base porque se
+    deriva del hash de la contraseña actual + el email + un timestamp.
+    Consecuencias: caduca solo (``PASSWORD_RESET_TIMEOUT``) y se invalida en
+    cuanto la contraseña cambia, así que un link ya usado no sirve.
 
     Body:      {"email": "..."}
     Respuesta: 200 SIEMPRE, exista o no la cuenta (evita enumerar usuarios).
@@ -755,7 +790,7 @@ class PasswordResetRequestView(APIView):
         vista quiere evitar.
         """
         uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        token = make_reset_token(user)
 
         # El link apunta al FRONTEND (frontend/reset-password.html), no a una
         # vista de Django: esa página toma uid+token de la
@@ -822,7 +857,7 @@ class PasswordResetConfirmView(APIView):
         # usuario válido, se responde con el mismo error genérico que un token
         # inválido para no dar pistas.
         user = self._get_user(uid)
-        if user is None or not default_token_generator.check_token(user, token):
+        if user is None or not check_reset_token(user, token):
             return Response(
                 {"detail": "El enlace de restablecimiento no es válido o expiró."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -885,8 +920,9 @@ class EmailVerificationConfirmView(APIView):
     """POST /api/v1/auth/verify-email/confirm/
 
     Confirma la verificación de email a partir del token que llega en el
-    link del correo (ver ``_send_verification_email``). Verificación SUAVE:
-    esta vista solo actualiza el estado, no bloquea nada por sí sola.
+    link del correo (ver ``_send_verification_email``). Hasta confirmarlo, la
+    cuenta solo puede ver su perfil, pedir el correo de nuevo y salir (ver
+    ``authentication.JWTAuthenticationWithPasswordPolicy``).
 
     Body:      {"token": "..."}
     Respuesta: 200 con un mensaje de éxito, o 400 si el token es inválido o expiró.
@@ -911,7 +947,7 @@ class EmailVerificationConfirmView(APIView):
 
         if verification.is_expired():
             return Response(
-                {"detail": "El enlace de verificación expiró. Pedí uno nuevo desde tu perfil."},
+                {"detail": "El enlace de verificación expiró. Entrá a tu cuenta y pedí uno nuevo."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

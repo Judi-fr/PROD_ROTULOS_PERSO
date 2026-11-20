@@ -2,7 +2,7 @@
 // roles.html, reportes.html, auditoria.html, pedidos_admin.html,
 // soporte_admin.html). Se carga como script clásico, después de config.js,
 // auth.js y assets/js/utils.js (getErrorMessage sale de ahí), y antes de
-// assets/js/admin_sidebar.js y del script propio de cada página — todas
+// assets/js/topbar.js y del script propio de cada página — todas
 // comparten el mismo scope global, así que estas funciones quedan
 // disponibles sin necesidad de exportarlas por window.
 
@@ -65,6 +65,17 @@ function translateRole(role) {
 // auditoria.js, pedidos_admin.js y soporte_admin.js para que se vea
 // consistente sin duplicar el paginador numerado completo de usuarios.js
 // (atado a currentPage/loadUsers, ese no se comparte).
+// Filas únicas de una tabla de administración: vacía (con el estado vacío de
+// la app, utils.js) o con un error (rojo de la paleta). Antes cada pantalla
+// escribía su texto gris suelto o un style="color:red".
+function adminEmptyRow(colspan, { icon = "list", title, text = "" }) {
+  return `<tr><td colspan="${colspan}" class="table-placeholder">${appEmptyState({ icon, title, text })}</td></tr>`;
+}
+
+function adminErrorRow(colspan, message) {
+  return `<tr><td colspan="${colspan}" class="table-placeholder table-error" role="alert">${escapeHtml(message || "No se pudo cargar. Probá de nuevo en un rato.")}</td></tr>`;
+}
+
 function renderSimplePager(containerId, infoId, pagination, noun, onPageChange) {
   const container = document.getElementById(containerId);
   const info = document.getElementById(infoId);
@@ -74,12 +85,15 @@ function renderSimplePager(containerId, infoId, pagination, noun, onPageChange) 
     return;
   }
   if (info) {
+    // Sin filas lo dice la tabla (estado vacío): no hace falta "Mostrando 0".
     info.textContent = pagination.count
       ? `Mostrando ${pagination.from}-${pagination.to} de ${pagination.count} ${noun}`
-      : `Mostrando 0 ${noun}`;
+      : "";
   }
   if (!container) return;
   container.innerHTML = "";
+  // Con una sola página, Anterior/Siguiente desactivados no dicen nada.
+  if ((pagination.total_pages || 1) <= 1) return;
   const prevBtn = document.createElement("button");
   prevBtn.type = "button";
   prevBtn.textContent = "Anterior";
@@ -145,10 +159,3 @@ async function loadAuditActionsCatalog() {
 function actionLabel(key) {
   return auditActionsCatalog.find((a) => a.key === key)?.label || key;
 }
-
-// Logout: invalida el refresh token en el backend, limpia tokens y redirige
-// (window.Auth.logout). El botón #logoutAdminBtn está en el topbar de todas
-// las páginas de administración, así que se conecta acá una sola vez.
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("logoutAdminBtn")?.addEventListener("click", () => window.Auth.logout());
-});

@@ -19,17 +19,17 @@
   </head>
   <body>
     <div class="layout">
-      <!-- SIDEBAR: renderizado por assets/js/admin_sidebar.js -->
-      <div id="adminSidebar" data-active="monitoring"></div>
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), la misma de todas las páginas. -->
+      <header class="topbar" id="appTopbar"></header>
       <main class="main">
-        <div class="topbar">
+        <div class="page-head">
           <div>
             <h1>Estado del sistema</h1>
             <p>Si algo de esto deja de funcionar, los administradores reciben un mail.</p>
           </div>
-          <div class="topbar-actions">
+          <div class="page-head-actions">
             <button class="btn btn-outline" id="refreshBtn" type="button">Actualizar</button>
-            <button class="btn btn-outline" id="logoutAdminBtn" type="button">Cerrar sesión</button>
           </div>
         </div>
 
@@ -64,7 +64,7 @@
     <script src="assets/js/auth.js"></script>
     <script src="assets/js/utils.js"></script>
     <script src="assets/js/admin_common.js"></script>
-    <script src="assets/js/admin_sidebar.js"></script>
+    <script src="assets/js/topbar.js"></script>
     <script src="assets/js/estado_sistema.js"></script>
   </body>
 </html>

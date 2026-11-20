@@ -206,11 +206,11 @@
         window.Auth.saveSession(data.user);
         document.getElementById('pageMessage').hidden = true;
 
-        // Aviso breve de verificación suave (ver EmailVerificationConfirmView
-        // en el backend): no bloquea el flujo, la redirección por rol sigue
-        // pasando igual que antes.
+        // Hasta abrir el enlace del correo no puede usar la app (el backend
+        // lo exige): va a la pantalla que se lo pide.
         if (data.user && data.user.email_verified === false) {
-          await appAlert('Te enviamos un correo para confirmar tu cuenta.', { tone: 'success' });
+          window.location.replace('confirmar_email.html');
+          return;
         }
 
         if (data.user && data.user.must_change_password) {

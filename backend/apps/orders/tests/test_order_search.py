@@ -54,3 +54,16 @@ class OrderSearchTests(APITestCase):
 
     def test_vacio_no_filtra(self):
         self.assertEqual(self.found("  "), {self.maria.pk, self.juan.pk})
+
+    def test_sin_tildes_ni_enes_encuentra_igual(self):
+        # QA en AWS (2026-11-20): "joaquin" no encontraba a "Joaquín".
+        address = Address.objects.create(user=self.biz, recipient_name="Lucía Peña", street="X", number="3", city="Salta")
+        lucia = Order.objects.create(user=self.biz, address=address, external_id="9003", external_number="503")
+        self.assertEqual(self.found("maria"), {self.maria.pk})
+        self.assertEqual(self.found("JUAN PEREZ"), {self.juan.pk})
+        self.assertEqual(self.found("lucia pena"), {lucia.pk})
+
+    def test_con_tilde_encuentra_lo_que_se_cargo_sin_tilde(self):
+        address = Address.objects.create(user=self.biz, recipient_name="Martin Gomez", street="X", number="4", city="Salta")
+        martin = Order.objects.create(user=self.biz, address=address, external_id="9004", external_number="504")
+        self.assertEqual(self.found("martín gómez"), {martin.pk})

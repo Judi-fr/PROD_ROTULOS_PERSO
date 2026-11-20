@@ -42,7 +42,7 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="password-reset-confirm",
     ),
-    # Verificación suave de email (solo cuentas email/contraseña, ver
+    # Verificación de email, obligatoria para usar la app (solo cuentas email/contraseña, ver
     # RegisterView): confirma el token del correo y permite reenviarlo.
     path(
         "verify-email/confirm/",

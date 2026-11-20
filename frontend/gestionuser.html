@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
-    <title>Gestión de usuarios</title>
+    <title>Usuarios</title>
     <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
     <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
     <meta name="theme-color" content="#308028" />
@@ -24,22 +24,22 @@
   </head>
   <body class="users-page">
     <div class="layout">
-      <!-- SIDEBAR: renderizado por assets/js/admin_sidebar.js -->
-      <div id="adminSidebar" data-active="users"></div>
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), la misma de todas las páginas. -->
+      <header class="topbar" id="appTopbar"></header>
 
       <!-- MAIN -->
       <main class="main">
-        <div class="topbar">
+        <div class="page-head">
           <div>
             <h1>Usuarios</h1>
             <p>Quién entra a la plataforma, con qué rol y si su cuenta está activa.</p>
           </div>
-          <div class="topbar-actions">
+          <div class="page-head-actions">
             <button class="btn btn-primary" id="openCreatePanel">
               <i class="ph ph-plus" aria-hidden="true"></i>
               Crear usuario
             </button>
-            <button class="btn btn-quiet" id="logoutAdminBtn" type="button">Cerrar sesión</button>
           </div>
         </div>
 
@@ -372,25 +372,24 @@
         </form>
       </div>
 
-      <!-- VIEW USER MODAL (solo lectura) -->
-      <div id="viewUserModal" class="admin-modal" style="display:none;">
-        <div class="admin-modal-box" role="dialog" aria-modal="true">
-          <div class="admin-modal-head">
-            <h3 class="admin-modal-title">Detalles del usuario</h3>
-            <button id="closeViewModal" type="button" class="admin-modal-close" aria-label="Cerrar">&times;</button>
-          </div>
-          <div id="viewUserContent" class="admin-modal-content"></div>
-          <div class="admin-modal-foot">
-            <button id="closeViewModalBtn" type="button" class="btn btn-outline">Cerrar</button>
-          </div>
+      <!-- Detalle de un usuario (solo lectura): el <dialog> de la app (ui.css,
+           .app-dialog), con Esc y el fondo para cerrar, como los demás. -->
+      <dialog id="viewUserModal" class="app-dialog admin-detail-dialog" aria-labelledby="viewUserTitle">
+        <div class="admin-modal-head">
+          <h3 class="admin-modal-title" id="viewUserTitle">Detalles del usuario</h3>
+          <button id="closeViewModal" type="button" class="admin-modal-close" aria-label="Cerrar"><i class="ph ph-x" aria-hidden="true"></i></button>
         </div>
-      </div>
+        <div id="viewUserContent" class="admin-modal-content"></div>
+        <div class="admin-modal-foot">
+          <button id="closeViewModalBtn" type="button" class="btn btn-outline">Cerrar</button>
+        </div>
+      </dialog>
 
       <script src="assets/js/config.js"></script>
       <script src="assets/js/auth.js"></script>
       <script src="assets/js/utils.js"></script>
       <script src="assets/js/admin_common.js"></script>
-      <script src="assets/js/admin_sidebar.js"></script>
+      <script src="assets/js/topbar.js"></script>
       <script src="assets/js/usuarios.js"></script>
     </div>
   </body>

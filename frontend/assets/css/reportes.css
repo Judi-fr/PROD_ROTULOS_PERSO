@@ -1,0 +1,112 @@
+/* Reportes (2026-11-19): números destacados, columnas por mes y barras, con el
+   mismo dibujo que el Inicio (dashboard.css). Lo dibuja report_charts.js. */
+
+/* --- Números destacados: una tira con divisiones finas ---------------------- */
+.report-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--line);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+.report-kpis:empty { display: none; }
+.report-kpi { display: flex; flex-direction: column; gap: 2px; padding: 16px 18px; background: var(--surface); min-width: 0; }
+.report-kpi-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.report-kpi-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border-radius: var(--radius-sm); background: var(--accent-50); color: var(--accent-600);
+}
+.report-kpi-icon .ph { font-size: 15px; }
+.report-kpi-label { color: var(--ink-2); font-size: var(--text-sm); font-weight: 600; }
+.report-kpi-value {
+  font-size: 2rem; font-weight: 600; line-height: 1.05; letter-spacing: -0.035em;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.report-kpi-hint { color: var(--muted); font-size: var(--text-sm); }
+.report-kpi.is-alert .report-kpi-icon { background: var(--danger-100); color: var(--danger-700); }
+.report-kpi.is-alert .report-kpi-value { color: var(--danger-700); }
+
+/* --- Tarjetas --------------------------------------------------------------- */
+.report-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+.report-card {
+  grid-column: span 6; min-width: 0; padding: 18px 20px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs);
+}
+.report-card.is-wide { grid-column: span 8; }
+.report-card.is-narrow { grid-column: span 4; }
+.report-card.is-full { grid-column: 1 / -1; }
+.report-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; margin: 0 0 12px; }
+.report-card-title { margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--ink); }
+.report-card-sub { margin: 2px 0 0; font-size: var(--text-sm); color: var(--muted); }
+.report-card .app-skeleton { margin: 8px 0; }
+
+@media (max-width: 1100px) {
+  .report-card, .report-card.is-wide, .report-card.is-narrow { grid-column: 1 / -1; }
+}
+
+/* --- Leyenda y columnas ---------------------------------------------------- */
+.report-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 4px; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--ink-2); }
+.report-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.report-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.report-key.is-accent { background: var(--accent-500); }
+.report-key.is-info { background: var(--info-500); }
+
+.report-chart-wrap { position: relative; }
+.report-chart { width: 100%; min-height: 190px; }
+.report-chart svg { display: block; overflow: visible; }
+.report-gridline { stroke: var(--n-150); stroke-width: 1; }
+.report-base { stroke: var(--line-strong); stroke-width: 1; }
+.report-axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.report-bar.is-accent { fill: var(--accent-500); }
+.report-bar.is-info { fill: var(--info-500); }
+.report-hit { fill: transparent; }
+.report-point { outline: none; }
+.report-point:hover .report-hit, .report-point:focus-visible .report-hit { fill: var(--n-50); }
+.report-point:focus-visible .report-hit { stroke: var(--accent-300); stroke-width: 1; }
+.report-tooltip {
+  position: absolute; top: 8px; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface);
+  box-shadow: var(--shadow-md); font-size: var(--text-sm); white-space: nowrap; pointer-events: none; z-index: 2;
+}
+.report-tooltip strong { color: var(--ink); }
+.report-tip-row { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.report-tip-row b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* La misma información en tabla, plegada. */
+.report-table { margin-top: 8px; font-size: var(--text-sm); }
+.report-table summary { cursor: pointer; color: var(--muted); width: fit-content; }
+.report-table summary:hover { color: var(--ink); }
+.report-table table { width: 100%; margin-top: 8px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.report-table th, .report-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; }
+.report-table th:first-child, .report-table td:first-child { text-align: left; }
+.report-table th { color: var(--muted); font-weight: 600; }
+
+/* --- Barras horizontales: el valor escrito al lado ------------------------- */
+.report-bars { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.report-bar-row { display: grid; grid-template-columns: minmax(80px, 34%) 1fr auto; align-items: center; gap: 10px; font-size: var(--text-sm); }
+.report-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.report-bar-track { height: 10px; border-radius: var(--radius-full); background: var(--n-100); overflow: hidden; }
+.report-bar-fill { display: block; height: 100%; width: var(--w, 0%); border-radius: var(--radius-full); background: var(--accent-500); }
+.report-bar-value { min-width: 2.5ch; text-align: right; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* --- Tablas de datos ------------------------------------------------------- */
+.report-table-scroll { overflow-x: auto; }
+.report-data { width: 100%; border-collapse: collapse; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.report-data th { padding: 0 10px 8px; color: var(--muted); font-weight: 600; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.report-data td { padding: 9px 10px; border-bottom: 1px solid var(--line); color: var(--ink); }
+.report-data tr:last-child td { border-bottom: 0; }
+.report-data .is-num { text-align: right; white-space: nowrap; }
+
+/* --- Sin datos ------------------------------------------------------------- */
+.report-empty {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 120px;
+  padding: 12px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md);
+  color: var(--muted); font-size: var(--text-sm); text-align: center;
+}
+.report-empty .ph { font-size: 18px; color: var(--n-400); }
+
+.reports-panel-note { margin: 0 0 14px; color: var(--muted); font-size: var(--text-sm); }

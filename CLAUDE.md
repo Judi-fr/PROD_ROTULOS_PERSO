@@ -58,19 +58,24 @@ source venv/bin/activate
 - Browser tests (`frontend/e2e/`, Playwright): `cd frontend/e2e && npm ci && npx playwright install chromium && npm test`
   (or `E2E_CHROME=/path/to/chrome` for an installed one). Own ports 8100/8101, so they run beside the dev servers; they bring up the API on their own
   SQLite (`seed_demo` + `seed_e2e.py`), mail to the console, log in `backend.log`. Each test is something that broke or
-  that the API can't show; stage `Browser` of the frontend pipeline runs them.
+  that the API can't show; job `e2e` of the GitHub CI runs them (failures upload the report and `backend.log` as artifact `e2e-fallas`).
 - Template thumbnails: `python manage.py generate_template_thumbnails [--all]` — fills `LabelTemplate.preview`
   for active templates that lack one (see "Template thumbnails" under Labels).
 - Lint: `flake8` (config in `backend/.flake8`). Frontend check: `node frontend/tools/check_frontend.mjs`.
-  Both run in CI (see "CI (Azure Pipelines)").
+  Both run in the GitHub CI (job `lint`).
 
 `DJANGO_SETTINGS_MODULE` selects `config.settings.dev` or `config.settings.prod`; both import from
 `config/settings/base.py`. `manage.py` defaults to `dev`.
 
 **CI** (`.github/workflows/ci.yml`, every push/PR to `main`): the suite runs against **Postgres 17**, not
 SQLite — an in-memory SQLite ignores things Postgres enforces (closing a connection inside a test's
-transaction was invisible locally and broke 13 tests there). It also builds the production images and
-runs `shellcheck` on the backup scripts. `tblib` is installed only in CI so a test failing in parallel
+transaction was invisible locally and broke 13 tests there). It installs `requirements-dev.txt` (so the
+scanning tests run with zxing-cpp), and in parallel runs `lint` (flake8 + `check_frontend.mjs`), `e2e` (the
+Playwright browser tests), builds the production images, runs `shellcheck` on the backup scripts and
+`agent-windows` builds `RotulosAgente.exe` on `windows-latest` (artifact `rotulos-agent-windows`; the API serves it
+only if it is in `backend/apps/printing/agent/dist/` when its image is built — whoever builds the server image puts
+it there). Lint, e2e and the .exe used to live only in the Azure pipelines, which don't trigger by themselves, so
+they never ran until 2026-11-20. `tblib` is installed only in CI so a test failing in parallel
 shows its real error instead of "cannot pickle 'traceback'".
 
 **Logging** is configured in `base.py`, not only in prod. Everything under the `apps.` namespace goes to
@@ -141,7 +146,7 @@ for every small thing ends up ignored), and the mail check never mails (it would
   Public `GET /api/v1/health/system/` (`config/health.py`): overall status + each check's status, **no
   details**, 503 only on `error`. It doesn't replace readiness: a dead worker is no reason to pull traffic
   from the API.
-- Screen `estado_sistema.html` + `assets/js/estado_sistema.js` (admin sidebar "Estado del sistema", dashboard
+- Screen `estado_sistema.html` + `assets/js/estado_sistema.js` (sidebar Administración → "Estado del sistema", dashboard
   menu `system_status`), refreshed every 30 s while visible.
 - **Planned, not done — external monitor** (when the user creates the account): point a free uptime
   service (UptimeRobot / Better Stack) at `https://<domain>/api/v1/health/system/` every 5 min, alerting on
@@ -315,7 +320,8 @@ and `/static` → 8000 and `/` → 8001 under one domain, so someone else's brow
 - `api/v1/` → `apps.orders.urls` (`addresses/`, `orders/` — list filters `?store=<id>|manual`,
   `?status=created,preparing`, `?date_from=`/`?date_to=` (YYYY-MM-DD, both inclusive, by creation
   date) and `?search=` (Mis pedidos' search box: every word must match the order number with or without
-  "#", our id, the recipient or the tracking number) —, `admin/orders/`, `orders/metrics/`, `orders/summary/` (the dashboard's "Hoy"),
+  "#", our id, the recipient — ignoring accents and ñ, `apps/common/text.accent_insensitive_regex` through
+  `__iregex`, so it works on SQLite and Postgres — or the tracking number) —, `admin/orders/`, `orders/metrics/`, `orders/summary/` (the dashboard's "Hoy"),
   `orders/manual/`, `orders/imports/...`, `orders/import-mappings/`)
 - `api/v1/audit/` → `apps.audit.urls` (`logs/`, `actions/`, `metrics/`)
 - `api/v1/documents/` → `apps.documents.urls` (generated batch output)
@@ -372,7 +378,8 @@ endpoint that silently accepted a reversed range.
 `spreadsheet.py` holds the downloadable-sheet rules every export follows: `csv_bytes(columns, rows)` (`;` + BOM,
 what Spanish Excel opens on double click), `xlsx_bytes(columns, rows, title)` (text forced to string) and
 `safe_cell` (values starting with `= + - @` neutralized — CSV injection). Used by the order export and the audit
-export. The comparison is always `__date__gte`/`__date__lte` on
+export. `text.py`: `fold` (no accents, ñ → n, casefold) and `accent_insensitive_regex` (order search, buyer stats).
+The comparison is always `__date__gte`/`__date__lte` on
 a `DateTimeField`: with a plain `__lte`, "up to the 24th" would exclude everything on the 24th except
 exact midnight. It reads `.get()`, so it takes query params or a JSON body dict (`batch_views` passes
 `filters` from the body).
@@ -385,8 +392,20 @@ exact midnight. It reads `.get()`, so it takes query params or a JSON body dict 
   `PasswordResetRequestView`/`Confirm`, `EmailVerificationConfirmView`/`Resend`, `ChangePasswordView`, plus
   `user_payload()`/`auth_response()` — every login endpoint returns the same
   `{access, refresh, user: {..., role, permissions}}` shape.
+- **Confirming the email is required (2026-11-18)**: an account created with the register form can log in but,
+  until it opens the email link, `JWTAuthenticationWithPasswordPolicy` answers 403 `{"code": "email_not_verified"}`
+  everywhere except `GET me/`, `POST verify-email/resend/`, `POST logout/` and public (AllowAny) views; `auth.js`
+  sends that 403 to `confirmar_email.html` (+ `assets/js/confirmar_email.js`: the address, "Ya lo confirmé",
+  "Mandármelo de nuevo", "Entrar con otra cuenta"), and login/register land there when `email_verified` is false.
+  `user_email_verified`: no `EmailVerification` row = verified, so old accounts, Google ones and the ones the admin
+  creates are not affected. Tests: `test_email_required.py`, e2e "una cuenta nueva no entra hasta confirmar el email".
 - Refresh tokens rotate and get blacklisted on rotation/logout (`SIMPLE_JWT` + `token_blacklist` app);
   password reset revokes all outstanding refresh tokens.
+- **`last_login` is set by `tokens_for_user`** (every login path: email, Google, register; 2026-11-19). simplejwt's
+  `UPDATE_LAST_LOGIN` only covers its own view, which this app doesn't use, so it was always empty and Reportes
+  showed 0 active users and everyone as "nunca inició sesión". Django's reset token hashes `last_login`, so the reset
+  link is made/checked on a copy of the user without it (`make_reset_token`/`check_reset_token`): a login after asking
+  for the mail must not kill the link (an account thief logging in would lock the owner out of recovery).
 - Password rules (`validate_password_strength`, `auth_views.py`): 8+ chars (Django's own minimum, so the screens say 8), one uppercase, one digit, plus
   Django's validators — enforced on register, admin-create, change-password, and reset-confirm.
 - **Login lockout is progressive (`LoginLockout`, 2026-10-30, migration `accounts/0036`)**: 3 wrong passwords in a row
@@ -433,8 +452,8 @@ exact midnight. It reads `.get()`, so it takes query params or a JSON body dict 
   height; `dashboard.js` picks the columns from the count (4 → 2×2, otherwise up to 3) and a short last row is
   centred; Administración is a full-width strip under the grid. Keep each section at three tools at most (Mi
   cuenta shows Equipo/Perfiles/Actividad to whoever manages the team, else shortcuts to `#perfil`/`#comercio`;
-  Ayuda: FAQ, write to support, notices). The same tools appear in that main screen's topbar (`data-links` items may carry
-  `"perm"`, which `topbar.js` checks against the stored session). `menu` is still sent (its tests and anything
+  Ayuda: FAQ, write to support, notices). Since 2026-11-19 they appear only in the sidebar (see "Sidebar navigation"),
+  no longer repeated in the topbar. `menu` is still sent (its tests and anything
   reading it). `onboarding(user)`: four first steps (store, business data, template, carrier) computed from
   the data of the current business, only for its OWNER who isn't the admin; "Ocultar" is per browser (localStorage). Icons:
   the backend still names each section's icon with its Material Design name (`mdi mdi-printer`…); `dashboard.js`
@@ -449,8 +468,8 @@ exact midnight. It reads `.get()`, so it takes query params or a JSON body dict 
 - **Own activity** (`GET /api/v1/team/activity/mine/`, `MyActivityView`, `users.me.view`, 2026-10-22): any member
   sees what THEY did in their current business (same rules as the team's Activity, `actor` forced to them); page
   `mi_actividad.html` + `assets/js/mi_actividad.js`, linked from Mi cuenta (topbar, and the dashboard card for whoever
-  doesn't manage the team). The admin sidebar's "Estado del sistema" gets a red/amber dot when `/health/system/` says
-  error/warning (`admin_sidebar.js`, at most once a minute per tab).
+  doesn't manage the team). The sidebar's "Estado del sistema" (and its Administración section) gets a red/amber dot when
+  `/health/system/` says error/warning (`app_sidebar.js`, at most once a minute per tab).
 - **Personal profile (`PersonalProfile`, `personal_profiles.py`, 2026-10-22)**: what each PERSON customizes about
   themself, not the business — `preferred_name` (shown as `display_name`, else first+last name, else email),
   `phone`, `job_title` and an own `photo` (file or data URL, 2 MB, cropped to a 256 px square JPEG without EXIF,
@@ -515,7 +534,7 @@ There is **no `role` field on `User`** — it's derived, never stored directly:
   (`documents.delete`, before part of "Imprimir rótulos"): existing profiles/members/pending invitations that
   printed got it; the suggested "Depósito" of NEW businesses doesn't (prints, doesn't delete).
   **The stored session refreshes its permissions**: `auth.js` re-reads `me/` in the background on page load (at
-  most every 2 min, `sessionStorage.userCheckedAt`) and fires `auth:user-updated` (the admin sidebar re-renders).
+  most every 2 min, `sessionStorage.userCheckedAt`) and fires `auth:user-updated` (the sidebar re-renders).
   Before, a role change in `roles.html` or a new permission only reached a browser after logging in again.
 
 ### Account data and global catalogs (T#351-356)
@@ -530,7 +549,7 @@ first save: `legal_name`, `tax_id` (CUIT, validated with AFIP's check digit — 
 `organizacion.html` (menu `account_settings`). **Since 2026-10-21 that page is "Mi cuenta"**: the person's own
 profile and password (`perfil.js`, endpoint `me/`) on top and the business data (`organizacion.js`, wrapped in
 its own scope because both scripts declared `API_BASE`/`apiFetch`) below, anchors `#perfil`/`#comercio`.
-`perfil.html` only redirects there (old links; the admin sidebar's "Ajustes" now points straight to it). Where it's used:
+`perfil.html` only redirects there (old links). Where it's used:
 - **Sender**: `label_rendering.sender_fields(owner, store)` — the store's sender, else the account's, else the
   store's name, else the legal name; address/phone the store's else the account's. Used by
   `build_label_context`, `build_shipment_context` (Tiendanube Labels API) and the pickup manifest
@@ -546,7 +565,7 @@ its own scope because both scripts declared `API_BASE`/`apiFetch`) below, anchor
 **Global catalogs, admin-managed (`catalogs.manage`, admin-only, migration `accounts/0024`).** Shared base
 `apps/common/catalogs.py` (`CatalogViewSet`): any authenticated user READS active entries, writing needs the
 permission, `?include_inactive=1` only for managers, delete = deactivate, audited `catalog.update` (category
-`catalogs`). Screen `catalogos.html` + `assets/js/catalogos.js` (admin sidebar "Catálogos").
+`catalogs`). Screen `catalogos.html` + `assets/js/catalogos.js` (sidebar Administración → "Catálogos").
 - `ManualCarrier` (`apps/carriers`, `/api/v1/carriers/manual-carriers/`): carriers WITHOUT API, with an
   optional `tracking_url_template` containing `{tracking}`. A name equal to an API carrier is refused. Every
   free-text carrier field (despachar, estado_pedidos, planilla, seguimientos, both dialogs in Mis pedidos) gets
@@ -581,6 +600,11 @@ a store between businesses was considered as a stage 2 and dropped (2026-10-23, 
   report: the owner person; the notice mail names the business), `business_display_name(user)` (label/manifest/
   export fallback when there is no sender or recipient name), `contact_email(user)` (admin serializers'
   `owner_email`/`user_email`), `team_of_data_user(user)`. Order metrics count businesses, not users.
+  `business_data_user(user)` (2026-11-20): where the ADMIN picks a person for something that belongs to a
+  business — the owner of an API key, an incoming or outgoing webhook (`integrations/serializers.BusinessOwnerMixin`)
+  and the manual order "a nombre de" (`orders/manual/` `user_id`) — it stores that person's business: their only open
+  one, or with several the only one they own; otherwise a 400 naming them. Before, the order landed on the person and
+  no business saw it, and outgoing webhooks never fired.
   `account.update` is audited against the team. A background label batch carries `view_all` from the requester
   (the document's user is the data user).
 - **Current business of a request**: the frontend sends `X-Team-Id` (per tab, see Frontend); `TeamCacheMiddleware`
@@ -728,7 +752,9 @@ Actividad (`team.manage`; their scripts return early without it) and **Estadíst
   period, grouped by `Order.carrier` ("Sin indicar" when empty), `shipped`, `delivered`, `avg_delivery_days`
   (delivered − shipped), `problems`/`problem_rate` (carrier shipment issue/returning), `cost_total`/`cost_avg` from
   non-cancelled shipments' `quoted_price` (strings, null when none). `buyers`: orders created in the period minus
-  cancelled, `total` and top 10 `states`/`cities` (grouped ignoring case and spaces). Tests:
+  cancelled, `total` and top 10 `states`/`cities` (grouped ignoring case, spaces and accents; a province
+  `carriers.common.province_code` recognizes is one row with its name — "CABA", "Capital Federal" and "Ciudad
+  Autónoma de Buenos Aires" are the same — and so is a city named like its own province). Tests:
   `apps/orders/tests/test_business_stats.py`.
 - Screen: period buttons (remembered in localStorage), dispatch as stat tiles, carriers as a table (several measures),
   buyers as single-series horizontal bars in the app green (no legend; the title says what is counted).
@@ -749,6 +775,9 @@ Actividad (`team.manage`; their scripts return early without it) and **Estadíst
   action, target=None, ..., changes=None)`, called explicitly from the views that need it (no signals).
   It wraps the insert in `transaction.atomic()` and swallows/logs any exception — a failed audit write must
   never break the calling request.
+- **The business's internal user never shows** (2026-11-20): `target_repr` goes through `clean_target_repr` when
+  saved (also the one a view builds, like `str(order)`, which carries `comercio-…@datos.invalid`) and again when shown
+  (admin list and export, team activity), for the rows saved before. A data user as `target` is named by its business.
 
 ### Orders (`apps/orders`)
 
@@ -807,7 +836,8 @@ Actividad (`team.manage`; their scripts return early without it) and **Estadíst
   the list; logic in `scan.find_orders`) maps what a camera or a handheld scanner reads on the label to orders: the
   barcode is `{{tracking}}` (carrier number, or our id zero-padded to 6), the QR `{{tracking_url}}` (carrier link, or
   our signed public link). Order: signed link → exact `tracking_url` → exact `tracking_number` → `external_number`
-  (and the id when ≥ 6 digits); `{matches: [...]}`, more than one = same number in two stores (the screen asks).
+  (and the id when ≥ 6 digits, or a shorter id of an order with no store number: "#8" is what the app shows for it);
+  `{matches: [...]}`, more than one = same number in two stores (the screen asks).
   Screen `escanear.html` + `assets/js/escanear.js` (topbar of Mis pedidos, function search): native `BarcodeDetector`,
   else `@zxing/browser@0.1.5` from jsDelivr loaded on demand (iPhone Safari); a scanner gun types + Enter into the
   same field. Mode "despachar" posts `/orders/<id>/ship/` after a 5 s `appUndoable`; repeated reads of the same
@@ -1901,12 +1931,12 @@ real account. Their Warehouse service (stock, order preparation) is another API,
 
 Plain multi-page app, one HTML file per screen, no framework/bundler. Admin pages
 (`gestionuser.html`/`roles.html`/`reportes.html`/`auditoria.html`/`pedidos_admin.html`/`soporte_admin.html`)
-share the same script order — `config.js`, `auth.js`, `utils.js`, `admin_common.js`, `admin_sidebar.js`,
+share the same script order — `config.js`, `auth.js`, `utils.js`, `admin_common.js`, `topbar.js`,
 then the page's own script — and each redirects to `dashboard.html` if the caller lacks that page's
 permission (UI-only gating; the backend re-checks every permission server-side). **They don't load Bootstrap**
 (removed 2026-10-21: it overrode the font and size of labels/selects/dates, which is why the user filter
 looked "raro"); `gestionuser.css` sets the app font on `body` and carries the few resets they took from it
-(`[hidden]`, `.nav { display: flex }`, ...). No page loads Bootstrap since 2026-10-26: the access screens
+(`[hidden]`, ...). No page loads Bootstrap since 2026-10-26: the access screens
 (`index.html`, `register.html`, `logoutpage.html`) share `assets/css/acceso.css` (split screen, labels above the
 fields, show/hide password via `data-reveal` in `utils.js`, errors inline in `#pageMessage` instead of a pop-up).
 In `gestionuser.html` "Crear usuario" is a centred window (`.create-panel` is the backdrop, Esc closes it).
@@ -1918,7 +1948,8 @@ last both ways. The bulk actions are a dark floating bar at the bottom (`.bulk-d
 "Exportar" is ONE button (2026-10-26; there were "Exportar", an .xlsx built in the browser from the ticked rows with
 SheetJS from a CDN, and "Exportar CSV" from the server): a small panel asks which users (the whole filtered list, or
 the ticked ones — preselected when there are) and the format, and the server builds both:
-`GET /users/export/?file_type=csv|xlsx` (csv by default and unchanged; xlsx via `apps.common.spreadsheet.xlsx_bytes`).
+`GET /users/export/?file_type=csv|xlsx` (csv by default and unchanged — comma, no BOM, pinned by `UserExportCsvTests`;
+xlsx via `apps.common.spreadsheet.xlsx_bytes`; the role column says "Administrador"/"Comerciante" since 2026-11-20).
 Redesigned the same day (`assets/css/gestionuser_page.css`, `body.users-page`, so the other admin pages that share
 `gestionuser.css` don't change): one search box (the table's), the four stat cards became one strip — the total
 with an active/inactive bar plus Activos/Inactivos/Bloqueados as buttons that set the status/locked filters
@@ -1974,22 +2005,43 @@ and the email moved under the name (no Email column; email order stays in "Orden
   table, provinces bars; only allowed blocks). `tiendas.html` is two columns: "Nueva tienda" + the stores on the
   left (`renderStorePicker`, `?tienda=<id>`), the connect steps or the chosen store's card on the right. Floating
   docks are offset by the sidebar in `ui.css`. Tests: `apps/accounts/tests/test_sidebar.py`.
-- `assets/js/topbar.js` — the shared top bar for the non-admin pages. Since 2026-10-26: "Panel" (home) and the
-  business switcher on the left, the page's `data-links` in the middle as light links, and an account menu on the
-  right (avatar → Mi cuenta, Mi actividad, Ayuda, Cerrar sesión). A link to `dashboard.html` or to something in the
-  account menu is not repeated among the page links. Under 960px the page links move to a second row that scrolls
-  sideways (they used to pile on top of each other). Above 960px, when they don't fit in the row (`fitLinks`, a
-  ResizeObserver) the bar gets `is-crowded` and they wrap onto a second row — before, they were cut ("Cola de
-  impresió"). The page declares only
-  `<header class="topbar" id="appTopbar" data-links='[{"href":"…","label":"…"}]'></header>`; the script
-  fills it from the stored session on load, and a page holding a fresh user calls
-  `window.AppTopbar.render(user)`. **The bar logs out by itself** (`logoutBtn` keeps its id, `stopImmediatePropagation`
-  so a page's old listener doesn't run twice): re-rendering with the fresh user replaced the button and the page's
-  listener was lost, so "Cerrar sesión" only worked sometimes. Styles in `ui.css` (`header.topbar.app-topbar`, more
-  specific than each page's `.topbar`). Since 2026-10-26 `dashboard.html` uses it too ("Administración" as a page link
-  with `perm: users.view`; `dashboard.js` renders it with the session user merged in, because the dashboard's user
-  has no permission list and a link with `perm` shows when the list is unknown). The admin pages keep their own
-  header from `admin_sidebar.js`.
+- `assets/js/topbar.js` — the shared top bar for the non-admin pages: on the left the menu button that opens the
+  sidebar and the brand (narrow screens only), on the right the notices bell and the account menu (avatar → Mi cuenta,
+  Mi actividad, Ayuda, Cerrar sesión). **No page links since 2026-11-19** (asked by the user, "unificar navegación"):
+  each page's `data-links` repeated what the sidebar already unfolds under its section, so they were removed from the
+  35 pages and from the script; navigation is the sidebar only. A page declares just
+  `<header class="topbar" id="appTopbar"></header>`; the script fills it from the stored session on load, and a page
+  holding a fresh user calls `window.AppTopbar.render(user)`. **The bar logs out by itself** (`logoutBtn` keeps its
+  id, `stopImmediatePropagation` so a page's old listener doesn't run twice): re-rendering with the fresh user replaced
+  the button and the page's listener was lost, so "Cerrar sesión" only worked sometimes. Styles in `ui.css`
+  (`header.topbar.app-topbar`, more specific than each page's `.topbar`). **The admin pages use it too since 2026-11-19**
+  (asked by the user, "panel admin al estilo nuevo"): their own dark menu (`admin_sidebar.js`) and per-page logout
+  button are gone; the platform administration is the sidebar's "Administración" section (`build_sidebar`: Usuarios,
+  Roles y permisos (`is_staff`), Comercios, Todos los pedidos, Reportes, Registros de auditoría, Mensajes de soporte, Comercios dados de baja,
+  Catálogos, Estado del sistema, each with its page's permission, so platform staff see only theirs; `place: main`).
+  The merchant sections of the sidebar need a current business. **Without one they show in grey (2026-11-19, user's
+  ask)**: `build_sidebar` still sends Pedidos, Imprimir, Diseño, Tiendas and Transportistas that the ROLE allows
+  (`_role_has_permission`, `MERCHANT_SECTIONS`) with `disabled: true`, no links and no badge, and "Mi comercio" points to
+  `comercio_inicio.html`; `app_sidebar.js` (`buildDisabledItem`) draws them grey with a lock and, on click, asks
+  "Para usar X primero necesitás un comercio" with "Crear o sumarme a un comercio" → `comercio_inicio.html`. Each admin page's heading is `.page-head`/`.page-head-actions` in
+  `gestionuser.css` (it was `.topbar`, which clashed with the shared bar).
+- **Platform summary, the admin's home (2026-11-19)**: `resumen_plataforma.html` + `assets/js/resumen_plataforma.js`, built
+  with the merchant home's pieces (`dashboard.css`, `dashboard_week.js`). `GET /api/v1/admin/overview/`
+  (`accounts/platform_overview_views.py`) answers `allowed` and only the blocks the caller may see, each with the
+  permission of the screen it opens: `people`/`businesses` (`users.view`; people exclude data users), `orders`
+  (`orders.view_all`: today, last 7 days, `week` like the summary, stores active/in error, carrier accounts deactivated
+  by an error; sample orders excluded), `support` (`support.view_all`: pending, in progress); none → 403. The system
+  status comes from `/health/system/`. Whoever has one of those permissions and NO business gets it as the sidebar's
+  Inicio (`dashboard.js` redirects there); with a business, Inicio is the merchant one and the summary is
+  Administración → Resumen. Tests: `apps/accounts/tests/test_platform_overview.py`.
+- **Comercios, the admin's list of open businesses (2026-11-19)**: `comercios.html` + `assets/js/comercios.js` +
+  `assets/css/comercios.css`, read-only, `users.view`. `GET /api/v1/teams/directory/?search=&sort=&problems=1&page=`
+  (`accounts/business_admin_views.py`, paginated like the user admin) answers per business: owner, members, stores
+  active/in error + platforms, orders total/30 days (no samples), last order, last activity (latest
+  `TeamMember.last_used_at`); `sort` name|created_at|orders_30d|last_activity (with `-`, empties last). Row click opens
+  the detail `GET /api/v1/teams/<id>/detail/` (members with role/profile/last login, stores with `last_error`, carrier
+  accounts) in an app `<dialog>`; changes still go through "Comercios del dueño" (`comercio_usuario.html`). Closed
+  businesses: 404 there, they live in `comercios_baja.html`. Tests: `apps/accounts/tests/test_admin_businesses.py`.
 - **Shared UI pieces (2026-10-21): `assets/css/ui.css` + the end of `utils.js`.** Every page links `ui.css` right
   after the favicon (`assets/images/favicon.svg`), before its own stylesheet. In it: the dialogs, the loading bars,
   the empty state, `.table-placeholder`, `button/input/select/textarea { font-family: inherit }` (buttons without
@@ -2157,7 +2209,13 @@ and the email moved under the name (no Email column; email order stays in "Orden
 - `reportes.html` shows one block at a time with tabs (Usuarios · Seguridad · Pedidos · Soporte y actividad, the
   last only with `support.view_all`/`audit.view`); the chosen tab lives in the `#hash`. Its "Actualizar" and the
   one in `estado_sistema.html` say "Actualizando…" and then when they finished — before, refreshing with nothing
-  changed looked like a dead button. The answers name buttons and sections as the
+  changed looked like a dead button. **Redone 2026-11-19**: each tab has the period's numbers on top
+  (`.report-kpis`) and cards below drawn by `assets/js/report_charts.js` (`window.ReportCharts`: `kpis`, `columns` =
+  SVG columns per month with tooltip, legend for 2 series, folded table and an empty state when the period is all
+  zeros; `bars` = horizontal bars with the value written; `table`), styles in `assets/css/reportes.css`. Same look as
+  the merchant home's week chart; one series in `--accent-500`, two in accent + `--info-500` (the pair validated
+  there). Months are built client-side (`periodMonths`), so a month the backend omits still shows as 0. Lockouts and
+  failed attempts moved from Usuarios to Seguridad. The answers name buttons and sections as the
   app shows them — **if one is renamed, fix the FAQ too**.
 - **Addresses are not a menu entry.** They have their own page, `direcciones.html` (full CRUD), reached from the
   new-order dialog ("Administrar direcciones") and the dashboard's function search; until 2026-10-26 they were a
@@ -2212,7 +2270,7 @@ and the email moved under the name (no Email column; email order stays in "Orden
 - **Brand: "Human Log · Rótulos"** (company · product, decided 2026-10-28). Access pages show the cropped Human Log
   logo (`humanlog-logo.png` / `humanlog-lockup.png`, cut from `LogoLogin.png`; `HLLogoFinal.jpg`, the globe one, is
   no longer used) + "Rótulos"; the shared topbar's home link is the app mark (`favicon.svg`) + "Rótulos" and
-  `topbar.js` appends " · Human Log Rótulos" to the tab title; the admin sidebar says "Rótulos / Administración";
+  `topbar.js` appends " · Human Log Rótulos" to the tab title; the admin pages use the same sidebar;
   mail subjects and the default sender say "Human Log · Rótulos". Since the 2026-10-29 redesign the app accent IS the
   logo green (see "Design system").
 - **Store connection picker (2026-11-06)**: `tiendas.html` first asks where the store is (`data-platform-pick` buttons,
@@ -2220,7 +2278,7 @@ and the email moved under the name (no Email column; email order stays in "Orden
 - **Manual orders (2026-11-06)**: a merchant loads one with "+ Nuevo pedido" in `pedidos.html`. `importar.html` shows
   "Alta manual" only with `orders.create_for_others` (admin) and is otherwise just "Importar pedidos".
 - **Narrow layouts (2026-11-06)**: `gestionuser.html` hides the two date columns up to 1380px and Pedidos between 901 and
-  980px instead of cutting text (sorting by them stays in Filtros), and the admin menu becomes a top strip under 900px; in `.filters-row` Desde and Hasta always share a row.
+  980px instead of cutting text (sorting by them stays in Filtros); in `.filters-row` Desde and Hasta always share a row.
 - **Templates are the main concept (2026-11-06)**: the dashboard's design card and `mis_plantillas.html`'s bar link only
   to templates. A template card
   says "Abrir" (own: edit, saved as a version) or "Usar como base" (a gallery one: saved as a copy), and opening an

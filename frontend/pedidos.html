@@ -26,8 +26,8 @@
   </head>
   <body data-requires="orders.view">
     <div class="layout">
-      <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
-      <header class="topbar" id="appTopbar" data-links='[{"href": "importar.html", "label": "Importar planilla", "perm": "orders.import"}, {"href": "exportar_pedidos.html", "label": "Exportar", "perm": "orders.export"}, {"href": "estado_pedidos.html", "label": "Cambiar estado", "perm": "orders.dispatch"}, {"href": "imprimir_rotulos.html", "label": "Imprimir rótulos", "perm": "labels.batch"}, {"href": "escanear.html", "label": "Escanear", "perm": "orders.dispatch"}, {"href": "dashboard.html", "label": "Volver al panel"}]'></header>
+      <!-- La barra la dibuja assets/js/topbar.js (avisos y cuenta; la navegación es la barra lateral). -->
+      <header class="topbar" id="appTopbar"></header>
 
       <main class="main orders-main">
         <!-- Título y las dos acciones de la página en una fila: antes las

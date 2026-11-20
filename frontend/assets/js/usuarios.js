@@ -152,7 +152,7 @@ async function loadUsers() {
     const message = err.isFilterValidationError
       ? err.message
       : "No se pudieron cargar los usuarios. Intentá de nuevo más tarde.";
-    tbody.innerHTML = `<tr><td colspan="8" class="table-placeholder table-error">${escapeHtml(message)}</td></tr>`;
+    tbody.innerHTML = adminErrorRow(8, message);
   }
 }
 
@@ -745,7 +745,7 @@ async function softDeleteUser(userId) {
 
 function closeViewModal() {
   const modal = document.getElementById("viewUserModal");
-  if (modal) modal.style.display = "none";
+  if (modal && modal.open) modal.close();
 }
 
 function openViewModal(userId) {
@@ -753,8 +753,8 @@ function openViewModal(userId) {
   const content = document.getElementById("viewUserContent");
   if (!modal || !content) return;
 
-  content.innerHTML = `<div style="text-align:center; color:var(--muted); padding:20px;"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></div>`;
-  modal.style.display = "flex";
+  content.innerHTML = `<div class="table-placeholder"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></div>`;
+  if (!modal.open) modal.showModal();
 
   apiFetch(`${API_URL}${userId}/`)
     .then(async (response) => {
@@ -1149,6 +1149,10 @@ const closeViewModalBtn = document.getElementById("closeViewModal");
 const closeViewModalBtn2 = document.getElementById("closeViewModalBtn");
 if (closeViewModalBtn) closeViewModalBtn.addEventListener("click", closeViewModal);
 if (closeViewModalBtn2) closeViewModalBtn2.addEventListener("click", closeViewModal);
+// Un clic en el fondo (fuera de la caja) también cierra, como los demás diálogos.
+document.getElementById("viewUserModal")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeViewModal();
+});
 
 // panel de crear usuario (queda igual)
 const panel = document.getElementById("createPanel");
@@ -1271,7 +1275,7 @@ async function handleAdminSubmit(e) {
 // INICIO: esta pantalla es exclusiva de quien puede gestionar usuarios. Sin
 // el permiso users.view, se redirige al dashboard (el perfil propio vive en
 // perfil.html, y Roles/Reportes/Auditoría/Soporte ya son páginas propias:
-// ver assets/js/admin_sidebar.js para el gateo de esos links).
+// ver la sección Administración de la barra lateral, dashboard_sections.build_sidebar).
 // ---------------------------------------------------------------------------
 function bootstrap() {
   if (!canViewUsers()) {

@@ -60,6 +60,10 @@
   let items = null;
   let counts = null;
   let currentUser = null;
+  // Estado de /health/system/ ("ok"/"warning"/"error"), solo para quien ve
+  // "Estado del sistema" en Administración.
+  let health = null;
+  let healthAsked = false;
   // Secciones que la persona abrió o cerró con la flechita (key → abierta).
   const choices = new Map();
 
@@ -84,7 +88,44 @@
     return i;
   }
 
+  // Una sección del comercio sin comercio elegido (build_sidebar la manda con
+  // `disabled`): se ve en gris y al tocarla explica que primero hay que crear
+  // un comercio o sumarse a uno, en vez de llevar a una pantalla que no anda.
+  function buildDisabledItem(item) {
+    const li = document.createElement("li");
+    li.className = "sidebar-item is-disabled";
+    const row = document.createElement("div");
+    row.className = "sidebar-row";
+    const link = document.createElement("a");
+    link.className = "sidebar-link";
+    link.href = "comercio_inicio.html";
+    link.setAttribute("aria-disabled", "true");
+    link.title = "Necesitás un comercio";
+    link.appendChild(icon(item.icon || "circle"));
+    const label = document.createElement("span");
+    label.className = "sidebar-label";
+    label.textContent = item.label;
+    link.appendChild(label);
+    const lock = icon("lock-simple");
+    lock.classList.add("sidebar-lock");
+    link.appendChild(lock);
+    link.addEventListener("click", async (event) => {
+      event.preventDefault();
+      setOpen(false);
+      // appConfirm vive en utils.js; sin él, directo a crear el comercio.
+      const go = typeof appConfirm !== "function" || await appConfirm(
+        `Para usar ${item.label} primero necesitás un comercio\n\nCreá el tuyo o sumate al de alguien con su código o una invitación. Después vas a poder usar todas las funciones.`,
+        { confirmLabel: "Crear o sumarme a un comercio", cancelLabel: "Ahora no" }
+      );
+      if (go) window.location.href = "comercio_inicio.html";
+    });
+    row.appendChild(link);
+    li.appendChild(row);
+    return li;
+  }
+
   function buildItem(item) {
+    if (item.disabled) return buildDisabledItem(item);
     const li = document.createElement("li");
     li.className = "sidebar-item";
     const active = isActive(item);
@@ -109,6 +150,7 @@
       count.setAttribute("aria-label", `${badge} pendientes`);
       link.appendChild(count);
     }
+    if ((item.links || []).some((entry) => pageOf(entry.url) === "estado_sistema.html")) addHealthDot(link);
     row.appendChild(link);
 
     // Las funciones de la sección: abiertas en la sección activa; cualquiera
@@ -138,6 +180,7 @@
         const anchor = document.createElement("a");
         anchor.href = entry.url;
         anchor.textContent = entry.label;
+        if (pageOf(entry.url) === "estado_sistema.html") addHealthDot(anchor);
         const same = entry.url.includes("?") || entry.url.includes("#") ? entry.url === full : pageOf(entry.url) === here();
         if (same) anchor.setAttribute("aria-current", "page");
         subLi.appendChild(anchor);
@@ -224,6 +267,42 @@
     updateBell();
   }
 
+  // Un punto rojo (error) o ámbar (advertencia) en "Estado del sistema" y en
+  // su sección cuando algo falla, así el admin no depende solo del mail de
+  // alerta. Lo hacía admin_sidebar.js (quitado 2026-11-19). La sonda pública
+  // /health/system/ no trae detalles; a lo sumo una vez por minuto.
+  function addHealthDot(node) {
+    if (!health || !health.status || !["error", "warning"].includes(health.status)) return;
+    const failing = Object.values(health.checks || {}).filter((value) => value === health.status).length;
+    const what = health.status === "error" ? "con error" : "con advertencia";
+    const label = `${failing || "Un"} chequeo${failing === 1 ? "" : "s"} ${what}`;
+    const dot = document.createElement("span");
+    dot.className = `sidebar-alert sidebar-alert-${health.status}`;
+    dot.title = label;
+    dot.setAttribute("aria-label", label);
+    node.appendChild(dot);
+  }
+
+  async function loadHealth() {
+    if (healthAsked) return;
+    const wanted = (items || []).some((item) => (item.links || []).some((entry) => pageOf(entry.url) === "estado_sistema.html"));
+    if (!wanted) return;
+    healthAsked = true;
+    const cached = readCache("appSidebarHealth", COUNTS_TTL_MS);
+    if (cached) {
+      health = cached;
+    } else {
+      try {
+        const response = await fetch(`${API}/health/system/`);
+        health = await response.json();
+        writeCache("appSidebarHealth", health);
+      } catch {
+        return;
+      }
+    }
+    draw();
+  }
+
   function ensureAside() {
     let aside = document.getElementById("appSidebar");
     if (!aside) {
@@ -264,6 +343,7 @@
     if (cached) {
       items = cached;
       draw();
+      loadHealth();
       return;
     }
     const data = await getJson(`${API}/auth/users/me/dashboard/`);
@@ -271,6 +351,7 @@
       items = data.sidebar;
       writeCache(key, items);
       draw();
+      loadHealth();
     }
   }
 

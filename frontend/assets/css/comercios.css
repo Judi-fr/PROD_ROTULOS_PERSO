@@ -1,0 +1,60 @@
+/* Comercios (comercios.html, comercios.js). La tabla y el paginador son los
+   de gestionuser.css; acá solo lo propio. */
+
+.biz-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.biz-search { flex: 1 1 280px; max-width: 420px; }
+.biz-problems { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--ink-2); cursor: pointer; }
+
+.biz-table { table-layout: auto; }
+.biz-table th.is-num, .biz-table td.is-num { text-align: right; white-space: nowrap; }
+.biz-table td { vertical-align: top; }
+
+/* Encabezados que ordenan: el texto es un botón, con la flecha del sentido. */
+.biz-sort { all: unset; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font: inherit; color: inherit; }
+.biz-sort::after { content: ""; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; opacity: 0; }
+.biz-sort[data-dir="ascending"]::after { border-bottom: 5px solid currentColor; opacity: 1; }
+.biz-sort[data-dir="descending"]::after { border-top: 5px solid currentColor; opacity: 1; }
+.biz-sort:hover { color: var(--ink); }
+.biz-sort:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; border-radius: 2px; }
+
+.biz-row { cursor: pointer; }
+.biz-row:hover td { background: var(--n-50); }
+.biz-row:focus-visible { outline: 2px solid var(--accent-500); outline-offset: -2px; }
+.biz-name { display: block; font-weight: 600; color: var(--ink); }
+.biz-owner { display: block; font-size: var(--text-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.biz-muted { color: var(--muted); font-size: var(--text-sm); }
+.biz-flag { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 8px; border-radius: var(--radius-full);
+  background: var(--danger-50); color: var(--danger-700); font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
+
+/* --- La ficha --------------------------------------------------------------- */
+.biz-dialog { width: min(620px, calc(100vw - 32px)); max-height: 88vh; }
+.biz-dialog[open] { display: flex; flex-direction: column; }
+.biz-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 22px 12px; border-bottom: 1px solid var(--line); }
+.biz-dialog-title { margin: 0; font-size: var(--text-lg); font-weight: 700; color: var(--ink); }
+.biz-dialog-sub { margin: 4px 0 0; font-size: var(--text-sm); color: var(--muted); }
+.biz-dialog-close { border: 0; background: transparent; width: 32px; height: 32px; border-radius: var(--radius-md); color: var(--muted); cursor: pointer; font-size: 18px; }
+.biz-dialog-close:hover { background: var(--n-100); color: var(--ink); }
+.biz-dialog-body { padding: 16px 22px 20px; overflow-y: auto; }
+.biz-dialog-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+.biz-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 0 0 18px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); background: var(--line); overflow: hidden; }
+.biz-stats div { padding: 10px 12px; background: var(--surface); }
+.biz-stats dt { font-size: var(--text-xs); color: var(--muted); }
+.biz-stats dd { margin: 2px 0 0; font-size: var(--text-lg); font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.biz-section + .biz-section { margin-top: 18px; }
+.biz-section h3 { margin: 0 0 8px; font-size: var(--text-sm); font-weight: 600; color: var(--ink-2); }
+.biz-list { margin: 0; padding: 0; list-style: none; }
+.biz-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: var(--text-sm); }
+.biz-list li:first-child { border-top: 0; }
+.biz-list li > span:first-child { display: flex; flex-direction: column; flex: 1 1 200px; min-width: 0; }
+.biz-tag { padding: 2px 8px; border-radius: var(--radius-full); background: var(--n-100); color: var(--ink-2); font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
+.biz-tag.is-owner, .biz-tag.is-active { background: var(--accent-50); color: var(--accent-700); }
+.biz-tag.is-error { background: var(--danger-50); color: var(--danger-700); }
+.biz-tag.is-revoked { background: var(--n-100); color: var(--muted); }
+.biz-error { flex-basis: 100%; color: var(--danger-700); font-size: var(--text-xs); }
+
+@media (max-width: 640px) {
+  .biz-stats { grid-template-columns: 1fr; }
+}

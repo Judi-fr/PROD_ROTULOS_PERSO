@@ -46,15 +46,32 @@ def _team_id(actor, target):
 
 
 INTERNAL_USER_IN_TEXT = re.compile(r"\s*\([^()]*@datos\.invalid\)")
+# El mismo usuario interno sin paréntesis: así quedaban las filas cuyo target
+# era el comercio mismo (los pedidos de ejemplo).
+INTERNAL_USER_ALONE = re.compile(r"[\w.+-]+@datos\.invalid")
 
 
 def clean_target_repr(text):
     """Saca del texto el usuario interno de un comercio (``comercio-…@datos.invalid``).
 
     El ``__str__`` de pedidos y lotes incluye el mail del dueño de la fila, que
-    desde los equipos es ese usuario interno: nadie tiene que verlo.
+    desde los equipos es ese usuario interno: nadie tiene que verlo. Se aplica
+    al guardar y al mostrar, porque hay filas viejas que ya lo traen.
     """
-    return INTERNAL_USER_IN_TEXT.sub("", text or "")
+    text = INTERNAL_USER_IN_TEXT.sub("", text or "")
+    return INTERNAL_USER_ALONE.sub("", text).strip()
+
+
+def _target_text(target):
+    """Cómo se nombra ``target`` en la auditoría: el usuario interno de un
+    comercio, por el nombre del comercio."""
+    from django.contrib.auth import get_user_model
+
+    from apps.accounts.teams import business_display_name, team_of_data_user
+
+    if isinstance(target, get_user_model()) and team_of_data_user(target) is not None:
+        return business_display_name(target)
+    return str(target)
 
 
 def record(
@@ -98,7 +115,9 @@ def record(
         if target is not None:
             target_type = target_type or target.__class__.__name__.lower()
             target_id = target_id or str(getattr(target, "pk", "") or "")
-            target_repr = target_repr or clean_target_repr(str(target))
+            target_repr = target_repr or _target_text(target)
+        # También el que viene armado: las vistas pasan str(pedido), que lo trae.
+        target_repr = clean_target_repr(target_repr)
 
         # ``atomic()`` (savepoint si ya hay una transacción abierta, p. ej. la
         # que envuelve cada test) evita que un fallo acá deje inutilizable la

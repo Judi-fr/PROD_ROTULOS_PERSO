@@ -17,6 +17,8 @@ from .team_views import (
     AdminTeamReopenView,
     AdminUserTeamView,
 )
+from .business_admin_views import AdminBusinessDetailView, AdminBusinessListView
+from .platform_overview_views import PlatformOverviewView
 from .user_admin_views import UserAdminViewSet
 
 router = SimpleRouter()
@@ -25,7 +27,10 @@ router.register(r"users", UserAdminViewSet, basename="user")
 urlpatterns = [
     # El comercio de un usuario (comercios con equipo, apps/accounts/teams.py).
     path("users/<int:pk>/team/", AdminUserTeamView.as_view(), name="user-team"),
+    path("admin/overview/", PlatformOverviewView.as_view(), name="admin-overview"),
     path("teams/", AdminTeamListView.as_view(), name="admin-teams"),
+    path("teams/directory/", AdminBusinessListView.as_view(), name="admin-teams-directory"),
+    path("teams/<int:pk>/detail/", AdminBusinessDetailView.as_view(), name="admin-team-detail"),
     path("teams/closed/", AdminClosedTeamListView.as_view(), name="admin-teams-closed"),
     path("teams/<int:pk>/reopen/", AdminTeamReopenView.as_view(), name="admin-team-reopen"),
     path("teams/profiles/", AdminTeamProfilesView.as_view(), name="admin-team-profiles"),

@@ -39,11 +39,15 @@ EXPOSE 8000
 # esto solo pesa donde nadie lo define (la task definition de ECS).
 ENV DJANGO_SETTINGS_MODULE=config.settings.prod
 
-# Comando por defecto: migrar, crear la tabla de caché y servir con gunicorn.
-# Lo usa ECS, que corre la imagen tal cual: sin esto, cada despliegue con
-# migraciones nuevas dejaba la API rota hasta correrlas a mano. Los
+# Comando por defecto: los mismos pasos que el servicio `api` de
+# docker-compose.prod.yml (migrar, tabla de caché, archivos estáticos y
+# miniaturas de las plantillas) y después gunicorn. Lo usa ECS, que corre la
+# imagen tal cual: sin esto, cada despliegue con migraciones nuevas dejaba la
+# API rota hasta correrlas a mano, el admin de Django salía sin estilos (sin
+# collectstatic) y la galería de plantillas sin miniaturas. Las miniaturas no
+# frenan el arranque: una que no se puede dibujar se avisa en el log. Los
 # docker-compose lo sobreescriben (runserver en dev; en prod su propio
-# comando, que ya migra). Con más de una réplica las migraciones correrían
-# en paralelo: ahí pasan a ser un paso aparte del despliegue.
+# comando). Con más de una réplica las migraciones correrían en paralelo: ahí
+# pasan a ser un paso aparte del despliegue.
 # `exec` deja a gunicorn como PID 1, para que reciba el SIGTERM de ECS.
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py createcachetable && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 150"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py createcachetable && python manage.py collectstatic --noinput && python manage.py generate_template_thumbnails && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 150"]
