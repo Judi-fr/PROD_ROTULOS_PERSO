@@ -58,19 +58,22 @@ source venv/bin/activate
 - Browser tests (`frontend/e2e/`, Playwright): `cd frontend/e2e && npm ci && npx playwright install chromium && npm test`
   (or `E2E_CHROME=/path/to/chrome` for an installed one). Own ports 8100/8101, so they run beside the dev servers; they bring up the API on their own
   SQLite (`seed_demo` + `seed_e2e.py`), mail to the console, log in `backend.log`. Each test is something that broke or
-  that the API can't show; stage `Browser` of the frontend pipeline runs them.
+  that the API can't show; job `e2e` of the GitHub CI runs them (failures upload the report and `backend.log` as artifact `e2e-fallas`).
 - Template thumbnails: `python manage.py generate_template_thumbnails [--all]` — fills `LabelTemplate.preview`
   for active templates that lack one (see "Template thumbnails" under Labels).
 - Lint: `flake8` (config in `backend/.flake8`). Frontend check: `node frontend/tools/check_frontend.mjs`.
-  Both run in CI (see "CI (Azure Pipelines)").
+  Both run in the GitHub CI (job `lint`).
 
 `DJANGO_SETTINGS_MODULE` selects `config.settings.dev` or `config.settings.prod`; both import from
 `config/settings/base.py`. `manage.py` defaults to `dev`.
 
 **CI** (`.github/workflows/ci.yml`, every push/PR to `main`): the suite runs against **Postgres 17**, not
 SQLite — an in-memory SQLite ignores things Postgres enforces (closing a connection inside a test's
-transaction was invisible locally and broke 13 tests there). It also builds the production images and
-runs `shellcheck` on the backup scripts. `tblib` is installed only in CI so a test failing in parallel
+transaction was invisible locally and broke 13 tests there). It installs `requirements-dev.txt` (so the
+scanning tests run with zxing-cpp), and in parallel runs `lint` (flake8 + `check_frontend.mjs`), `e2e` (the
+Playwright browser tests), builds the production images and runs `shellcheck` on the backup scripts. Lint and
+e2e used to live only in the Azure pipelines, which don't trigger by themselves, so they never ran until
+2026-11-20. `tblib` is installed only in CI so a test failing in parallel
 shows its real error instead of "cannot pickle 'traceback'".
 
 **Logging** is configured in `base.py`, not only in prod. Everything under the `apps.` namespace goes to
