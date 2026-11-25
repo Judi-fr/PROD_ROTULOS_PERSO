@@ -18,6 +18,7 @@ from apps.audit.services import record
 from apps.common.date_filters import date_range_q
 from apps.common.spreadsheet import safe_cell, xlsx_bytes
 
+from .sessions import revoke_all
 from .models import LoginLockout, Team
 from .pagination import UserAdminPagination
 from .permissions_map import DEFAULT_ROLE, LEGACY_ROLE_ALIASES, get_effective_role, user_has_permission
@@ -191,6 +192,16 @@ class UserAdminViewSet(viewsets.ModelViewSet):
 
     # --- Filtros de seguridad (lockout) --------------------------------------
 
+    def _get_mfa_filter(self):
+        """``mfa=1|0``: con o sin la verificación en dos pasos activa."""
+        raw = self.request.query_params.get("mfa", "").strip().lower()
+        enabled = Q(mfa__enabled_at__isnull=False)
+        if raw in ("1", "true"):
+            return enabled
+        if raw in ("0", "false"):
+            return ~enabled
+        return Q()
+
     def _get_locked_filter(self):
         """``locked=true/false``: independiente de ``status`` (Active/Inactive)."""
         raw = self.request.query_params.get("locked", "").strip().lower()
@@ -306,7 +317,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         # pueden multiplicar filas antes de agregar.
         # Los pedidos son de los comercios (cuelgan de su usuario de datos):
         # se cuentan los de los comercios de los que es dueño.
-        queryset = super().get_queryset().annotate(
+        queryset = super().get_queryset().select_related("mfa").annotate(
             orders_count=Count("owned_teams__data_user__orders", distinct=True),
             last_order_at=Max("owned_teams__data_user__orders__created_at"),
         )
@@ -321,6 +332,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             & self._get_locked_filter()
             & self._get_failed_attempts_filter()
             & self._get_auth_method_filter()
+            & self._get_mfa_filter()
         )
         if filters:
             queryset = queryset.filter(filters).distinct()
@@ -436,6 +448,71 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             )
         return None
 
+    @staticmethod
+    def _close_sessions_if_deactivated(instance, before):
+        """Desactivar a alguien lo deja afuera ya: se cierran sus sesiones
+        (sessions.py), no solo se le niega el próximo ingreso."""
+        if before.get("is_active") and not instance.is_active:
+            revoke_all(instance, reason="deactivated")
+
+    @action(detail=True, methods=["post"], url_path="revoke-sessions")
+    def revoke_sessions(self, request, *args, **kwargs):
+        """POST /api/v1/users/<id>/revoke-sessions/ — cierra todas las sesiones
+        de una persona sin desactivarla (cuenta sospechosa)."""
+        self._require_permission("users.edit")
+        instance = self.get_object()
+        if self._is_self_target(instance):
+            return Response(
+                {"detail": "Para cerrar tus propias sesiones usá Seguridad."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        closed = revoke_all(instance, reason="admin")
+        record(
+            request,
+            category="auth",
+            action="auth.session_revoke",
+            target=instance,
+            target_type="user",
+            target_repr=instance.email,
+            changes={"closed": {"from": None, "to": closed}},
+        )
+        return Response({"closed": closed})
+
+    @action(detail=True, methods=["post"], url_path="reset-2fa")
+    def reset_2fa(self, request, *args, **kwargs):
+        """POST /api/v1/users/<id>/reset-2fa/ — quien perdió el celular y los
+        códigos de recuperación: le quita la verificación en dos pasos, le
+        cierra las sesiones y le avisa por mail."""
+        from . import mfa
+        from .security_mail import mfa_disabled_mail
+        from .security_models import MfaRecoveryCode, UserMfa
+
+        self._require_permission("users.edit")
+        instance = self.get_object()
+        if self._is_self_target(instance):
+            return Response(
+                {"detail": "La tuya se desactiva desde Seguridad, con un código."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not mfa.mfa_enabled(instance):
+            return Response(
+                {"detail": "No tiene la verificación en dos pasos activa."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        UserMfa.objects.filter(user=instance).delete()
+        MfaRecoveryCode.objects.filter(user=instance).delete()
+        revoke_all(instance, reason="mfa_admin_reset")
+        record(
+            request,
+            category="auth",
+            action="auth.mfa_admin_reset",
+            target=instance,
+            target_type="user",
+            target_repr=instance.email,
+        )
+        mfa_disabled_mail(instance, by_admin=True)
+        return Response({"detail": "Listo: ya puede entrar solo con su contraseña o Google."})
+
     def destroy(self, request, *args, **kwargs):
         """Desactiva por defecto; ?permanent=true elimina de forma irreversible."""
         self._require_permission("users.deactivate")
@@ -488,6 +565,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         else:
             instance.is_active = False
             instance.save(update_fields=["is_active"])
+            revoke_all(instance, reason="deactivated")
             record(
                 request,
                 category="users",
@@ -510,6 +588,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         before = self._user_audit_snapshot(instance)
         response = super().update(request, *args, **kwargs)
         instance.refresh_from_db()
+        self._close_sessions_if_deactivated(instance, before)
         self._log_user_update(request, instance, before, self._user_audit_snapshot(instance))
         return response
 
@@ -523,6 +602,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         before = self._user_audit_snapshot(instance)
         response = super().partial_update(request, *args, **kwargs)
         instance.refresh_from_db()
+        self._close_sessions_if_deactivated(instance, before)
         self._log_user_update(request, instance, before, self._user_audit_snapshot(instance))
         return response
 
@@ -599,6 +679,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
                 if instance.is_active:
                     instance.is_active = False
                     instance.save(update_fields=["is_active"])
+                    revoke_all(instance, reason="deactivated")
                     record(
                         request, category="users", action="user.deactivate", target=instance,
                         target_type="user", target_repr=instance.email,

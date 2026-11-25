@@ -5,6 +5,17 @@ from django.urls import path
 from .account_settings_views import AccountSettingsView
 from .dashboard_views import DashboardView
 from .profile_views import ProfileView
+from .security_views import (
+    MfaConfirmView,
+    MfaDisableView,
+    MfaReauthEmailView,
+    MfaRecoveryCodesView,
+    MfaResendView,
+    MfaSetupView,
+    MfaStatusView,
+    MfaVerifyView,
+)
+from .security_views import SessionListView, SessionPingView, SessionRevokeOthersView, SessionRevokeView
 from .support_views import SupportMessageView
 from .role_permission_views import (
     PermissionCatalogView,
@@ -75,4 +86,20 @@ urlpatterns = [
     # revoca el anterior.
     # Body: {"refresh": "<JWT>"}  ->  {"access": "<JWT nuevo>", "refresh": "..."}
     path("refresh/", CookieTokenRefreshView.as_view(), name="token-refresh"),
+    # Segundo paso de un ingreso (mfa.py, login_flow.py): públicas, se
+    # autentican con el mfa_token que devolvió el login.
+    path("2fa/verify/", MfaVerifyView.as_view(), name="mfa-verify"),
+    path("2fa/resend/", MfaResendView.as_view(), name="mfa-resend"),
+    # Activarla y administrarla (seguridad.html).
+    path("2fa/", MfaStatusView.as_view(), name="mfa-status"),
+    path("2fa/setup/", MfaSetupView.as_view(), name="mfa-setup"),
+    path("2fa/confirm/", MfaConfirmView.as_view(), name="mfa-confirm"),
+    path("2fa/reauth-email/", MfaReauthEmailView.as_view(), name="mfa-reauth-email"),
+    path("2fa/disable/", MfaDisableView.as_view(), name="mfa-disable"),
+    path("2fa/recovery-codes/", MfaRecoveryCodesView.as_view(), name="mfa-recovery-codes"),
+    # Sesiones abiertas de la propia cuenta (seguridad.html, sessions.py).
+    path("sessions/", SessionListView.as_view(), name="session-list"),
+    path("sessions/ping/", SessionPingView.as_view(), name="session-ping"),
+    path("sessions/revoke-others/", SessionRevokeOthersView.as_view(), name="session-revoke-others"),
+    path("sessions/<uuid:session_id>/revoke/", SessionRevokeView.as_view(), name="session-revoke"),
 ]

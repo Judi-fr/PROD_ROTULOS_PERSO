@@ -378,3 +378,13 @@ def account_settings_for(user):
 
 # Comercios con equipo (dueño + empleados): ver team_models.py y teams.py.
 from .team_models import Team, TeamInvitation, TeamJoinRequest, TeamMember, TeamProfile  # noqa: E402,F401
+
+# Seguridad de la cuenta (sesiones, segundo paso, cambio de email): ver security_models.py.
+from .security_models import (  # noqa: E402,F401
+    EmailChangeRequest,
+    KnownDevice,
+    MfaEmailCode,
+    MfaRecoveryCode,
+    UserMfa,
+    SessionRecord,
+)

@@ -51,6 +51,10 @@
               <button type="button" class="access-reveal" data-reveal="password" aria-pressed="false">Ver</button>
             </div>
           </div>
+          <label class="access-check">
+            <input type="checkbox" id="rememberMe">
+            <span>Mantener la sesión iniciada <small>(no la marques en una computadora compartida)</small></span>
+          </label>
           <p id="pageMessage" class="page-message" role="alert" hidden></p>
           <button type="submit" class="access-submit">Entrar</button>
         </form>
@@ -73,45 +77,13 @@
     // GOOGLE_CLIENT_ID (backend/.env).
     const GOOGLE_CLIENT_ID = '639018151961-c7mc5vsqfhpv3i208ok7a93647tlh1mf.apps.googleusercontent.com';
 
-    // A dónde entra después de loguearse. Primero lo que quedó a medio hacer
-    // (instalar la app, imprimir desde Tiendanube, sumarse a un comercio);
-    // después ?next=, la página que pidió sin sesión (por ejemplo Ayuda desde
-    // Términos), solo si es una página de esta misma carpeta: un ?next= con
-    // otro sitio no puede usarse para mandar a alguien afuera tras el login.
-    function landingPage(isAdmin, user) {
-      // Sin confirmar el email no puede usar la app: primero eso.
-      if (user && user.email_verified === false) return 'confirmar_email.html';
-      if (localStorage.getItem('pendingTiendanubePrint')) {
-        return localStorage.getItem('pendingTiendanubePage') || 'imprimir_tiendanube.html';
-      }
-      if (localStorage.getItem('pendingStoreClaim')) return 'tiendas.html';
-      if (localStorage.getItem('pendingJoinCode')) {
-        return 'unirse.html?code=' + encodeURIComponent(localStorage.getItem('pendingJoinCode'));
-      }
-      const next = new URLSearchParams(window.location.search).get('next') || '';
-      if (/^[a-z0-9_-]+\.html(#[a-z0-9_-]*)?$/i.test(next) && !/^(index|register|logoutpage)\.html/i.test(next)) {
-        return next;
-      }
-      return isAdmin ? 'gestionuser.html' : 'dashboard.html';
-    }
-
-    // Mismo shape de respuesta que login/register manual (auth_response del
-    // backend), así que guardar quién es y la redirección por rol son
-    // idénticos a los del form de usuario/contraseña. Los tokens no pasan por
-    // acá: el backend los dejó en cookies HttpOnly.
+    // Entró: se guarda quién es (los tokens ya quedaron en cookies HttpOnly)
+    // y va a donde corresponda (authLandingPage, utils.js). Si la cuenta pide
+    // el código del segundo paso, sigue en verificar_ingreso.html.
     function handleAuthSuccess(data) {
+      if (startMfaChallenge(data, rememberChoice())) return;
       window.Auth.saveSession(data.user);
-      if (data.user && data.user.must_change_password) {
-        window.location.replace('cambiar-password.html');
-        return;
-      }
-      const role = String((data.user && data.user.role) || '').toLowerCase();
-      const isAdmin = Boolean((data.user && data.user.is_staff) || role === 'admin');
-      // Si venía de instalar la app en su tienda sin sesión (tiendas.js guardó
-      // el enlace de vinculación), vuelve a terminar ese paso.
-      // Lo mismo si venía de "Imprimir rótulos" en las acciones masivas de
-        // Tiendanube (assets/js/tiendanube/imprimir_tiendanube.js guardó los pedidos elegidos).
-        window.location.replace(landingPage(isAdmin, data.user));
+      window.location.replace(authLandingPage(data.user));
     }
 
     // Callback de Google Identity Services: response.credential es el ID
@@ -123,7 +95,7 @@
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ credential: response.credential })
+          body: JSON.stringify({ credential: response.credential, remember: rememberChoice() })
         }));
 
         const data = await apiResponse.json().catch(() => ({}));
@@ -136,6 +108,23 @@
       } catch (error) {
         showMessage(error.message || 'No se pudo iniciar sesión con Google.');
       }
+    }
+
+    // "Mantener la sesión iniciada": si está marcada la sesión dura 30 días; si
+    // no, se cierra al cerrar el navegador o tras 30 minutos sin usarla (vale
+    // también para Google). Se recuerda solo la preferencia, nunca el email.
+    const rememberBox = document.getElementById('rememberMe');
+    try { rememberBox.checked = localStorage.getItem('rememberMe') === '1'; } catch (e) { /* sin storage */ }
+    rememberBox.addEventListener('change', function () {
+      try { localStorage.setItem('rememberMe', rememberBox.checked ? '1' : '0'); } catch (e) { /* sin storage */ }
+    });
+    function rememberChoice() {
+      return rememberBox.checked;
+    }
+
+    // Volvió por inactividad (auth.js): se lo decimos en vez de mostrar el login mudo.
+    if (new URLSearchParams(window.location.search).get('motivo') === 'inactividad') {
+      showMessage('Cerramos tu sesión porque pasó un rato sin usarla. Entrá de nuevo.', 'info');
     }
 
     window.onload = function () {
@@ -167,7 +156,7 @@
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ email, password })
+          body: JSON.stringify({ email, password, remember: rememberChoice() })
         }));
 
         const data = await response.json().catch(() => ({}));
@@ -176,27 +165,7 @@
           throw new Error(data.detail || 'El email o la contraseña no son correctos.');
         }
 
-        window.Auth.saveSession(data.user);
-
-        // Cambio de contraseña obligatorio pendiente (admin creó la cuenta sin
-        // password, o la marcó manualmente): el backend lo hace cumplir en
-        // cualquier otro endpoint (403), pero acá se redirige de una para no
-        // esperar al primer llamado bloqueado.
-        if (data.user && data.user.must_change_password) {
-          window.location.replace('cambiar-password.html');
-          return;
-        }
-
-        // El backend es la autoridad real de permisos; el front solo elige la
-        // pantalla de aterrizaje. Admin (grupo admin o is_staff) entra directo
-        // a la gestión de usuarios; el resto va a su panel (dashboard.html).
-        const role = String((data.user && data.user.role) || '').toLowerCase();
-        const isAdmin = Boolean((data.user && data.user.is_staff) || role === 'admin');
-        // Si venía de instalar la app en su tienda sin sesión (tiendas.js guardó
-        // el enlace de vinculación), vuelve a terminar ese paso.
-        // Lo mismo si venía de "Imprimir rótulos" en las acciones masivas de
-        // Tiendanube (assets/js/tiendanube/imprimir_tiendanube.js guardó los pedidos elegidos).
-        window.location.replace(landingPage(isAdmin, data.user));
+        handleAuthSuccess(data);
       } catch (error) {
         showMessage(error.message || 'El email o la contraseña no son correctos.');
       }

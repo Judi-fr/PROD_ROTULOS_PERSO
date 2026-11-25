@@ -109,6 +109,13 @@
   // cookies ya las dejó el navegador; acá solo se guarda quién es.
   function saveSession(user) {
     const value = JSON.stringify(user || {});
+    // Entrar (o volver a cargar quién es) cuenta como actividad: si no, una
+    // marca vieja de la sesión anterior la cerraría por inactividad al toque.
+    try {
+      localStorage.setItem("lastActivityAt", String(Date.now()));
+    } catch {
+      // Sin storage, la pestaña cuenta sola.
+    }
     writeStorage(sessionStorage, "user", value);
     localStorage.setItem("user", value);
     // El comercio que el backend resolvió para esta pestaña.
@@ -259,7 +266,7 @@
   // si cambiaron se avisa con "auth:user-updated" (la barra del admin se
   // redibuja). En el login y el registro no: ahí no hay sesión que refrescar.
   const USER_REFRESH_MS = 2 * 60 * 1000;
-  const NO_REFRESH_PAGES = /\/(index|register|logoutpage)\.html$|\/$/;
+  const NO_REFRESH_PAGES = /\/(index|register|logoutpage|verificar_ingreso)\.html$|\/$/;
 
   function refreshStoredUser() {
     if (!hasSession() || NO_REFRESH_PAGES.test(window.location.pathname)) return;
@@ -297,6 +304,131 @@
     apiFetch,
     TEAM_START_URL,
   };
+
+  // ---- Cierre por inactividad (sesiones sin "Mantener la sesión iniciada") ----
+  // La actividad es de la PERSONA (clic, tecla, scroll, toque), no de las
+  // pantallas que se refrescan solas. Se comparte entre pestañas por
+  // localStorage: usar la app en una pestaña mantiene viva la sesión en todas.
+  // Un minuto antes se avisa; al llegar al límite se cierra la sesión. El
+  // backend lo hace cumplir también (sessions.py), con unos minutos de margen.
+  const PING_URL = `${AUTH_BASE}/sessions/ping/`;
+  const ACTIVITY_KEY = "lastActivityAt";
+  const PING_KEY = "lastSessionPingAt";
+  const MARK_EVERY_MS = 15 * 1000;
+  const PING_EVERY_MS = 5 * 60 * 1000;
+  const IDLE_CHECK_MS = 15 * 1000;
+  let lastMark = 0;
+  let idleDialog = null;
+
+  function readNumber(key) {
+    try {
+      return Number(localStorage.getItem(key) || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  function writeNumber(key, value) {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch {
+      // Sin storage la pestaña cuenta sola.
+    }
+  }
+
+  function idleLimitMs() {
+    const user = getCurrentUser();
+    if (!user || user.session_remember !== false) return 0;
+    return Math.max(2, Number(user.session_idle_minutes) || 30) * 60 * 1000;
+  }
+
+  function markActivity() {
+    const now = Date.now();
+    if (now - lastMark < MARK_EVERY_MS) return;
+    lastMark = now;
+    writeNumber(ACTIVITY_KEY, now);
+    if (idleLimitMs() && now - readNumber(PING_KEY) > PING_EVERY_MS) {
+      writeNumber(PING_KEY, now);
+      apiFetch(PING_URL, { method: "POST" }).catch(() => {});
+    }
+  }
+
+  function closeIdleDialog() {
+    if (idleDialog) {
+      idleDialog.close();
+      idleDialog.remove();
+      idleDialog = null;
+    }
+  }
+
+  function showIdleWarning() {
+    if (idleDialog) return;
+    idleDialog = document.createElement("dialog");
+    idleDialog.className = "app-dialog";
+    idleDialog.setAttribute("aria-labelledby", "idleDialogTitle");
+    const body = document.createElement("div");
+    body.className = "app-dialog-body";
+    const title = document.createElement("h2");
+    title.id = "idleDialogTitle";
+    title.className = "app-dialog-title";
+    title.textContent = "Tu sesión se va a cerrar en 1 minuto";
+    const text = document.createElement("p");
+    text.className = "app-dialog-text";
+    text.textContent = "Pasó un rato sin que uses la app. Si seguís acá, tocá el botón.";
+    const actions = document.createElement("div");
+    actions.className = "app-dialog-actions";
+    const stay = document.createElement("button");
+    stay.type = "button";
+    stay.className = "btn btn-primary";
+    stay.textContent = "Seguir conectado";
+    stay.addEventListener("click", () => {
+      lastMark = 0;
+      writeNumber(PING_KEY, 0);
+      markActivity();
+      closeIdleDialog();
+    });
+    body.append(title, text);
+    actions.append(stay);
+    idleDialog.append(body, actions);
+    idleDialog.addEventListener("cancel", (event) => event.preventDefault());
+    document.body.append(idleDialog);
+    idleDialog.showModal();
+  }
+
+  async function idleLogout() {
+    closeIdleDialog();
+    try {
+      await fetch(LOGOUT_URL, withSession({ method: "POST" }));
+    } catch {
+      // Igual se limpia lo local: el backend la cierra por su cuenta.
+    }
+    clearSession();
+    window.location.replace(`${INDEX_URL}?motivo=inactividad`);
+  }
+
+  function checkIdle() {
+    const limit = idleLimitMs();
+    if (!limit || !hasSession()) return;
+    const idle = Date.now() - (readNumber(ACTIVITY_KEY) || Date.now());
+    if (idle >= limit) {
+      idleLogout();
+    } else if (idle >= limit - 60 * 1000) {
+      showIdleWarning();
+    } else {
+      closeIdleDialog();
+    }
+  }
+
+  if (!NO_REFRESH_PAGES.test(window.location.pathname)) {
+    if (!readNumber(ACTIVITY_KEY)) writeNumber(ACTIVITY_KEY, Date.now());
+    ["click", "keydown", "scroll", "touchstart"].forEach((type) =>
+      window.addEventListener(type, markActivity, { passive: true, capture: true })
+    );
+    window.addEventListener("storage", (event) => {
+      if (event.key === ACTIVITY_KEY) checkIdle();
+    });
+    setInterval(checkIdle, IDLE_CHECK_MS);
+  }
 
   refreshStoredUser();
 })();

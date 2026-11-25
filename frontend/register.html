@@ -95,6 +95,8 @@
     // backend): el endpoint de Google hace get_or_create, así que este mismo
     // callback sirve para "iniciar sesión" y para "crear cuenta" con Google.
     function handleAuthSuccess(data) {
+      // Una cuenta de Google que ya existe y pide el código del segundo paso.
+      if (startMfaChallenge(data, null)) return;
       window.Auth.saveSession(data.user);
       if (data.user && data.user.must_change_password) {
         window.location.replace('cambiar-password.html');

@@ -11,6 +11,7 @@ haya autenticado el usuario:
 import copy
 import hashlib
 import re
+from datetime import timedelta
 from math import ceil
 
 from django.conf import settings
@@ -31,22 +32,24 @@ from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import AuthenticationFailed, ValidationError as DRFValidationError
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-from rest_framework_simplejwt.token_blacklist.models import (
-    BlacklistedToken,
-    OutstandingToken,
-)
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings as jwt_settings
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.common.mail import branded_html
 from apps.audit.services import record
 
 from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_from_request, wants_cookies
+from .login_flow import finish_login, parse_remember
+from .sessions import active_session, revoke_all, revoke_session, session_fields, touch
 from .models import EmailVerification, LoginLockout, user_email_verified
 
 User = get_user_model()
+
+SESSION_CLOSED_MSG = "La sesión se cerró: volvé a iniciar sesión."
 
 
 def normalize_email(raw):
@@ -206,6 +209,9 @@ def user_payload(user, picture="", request=None):
         "team": team_payload(user),
         # Todos sus comercios, para el selector de arriba.
         "teams": teams_payload(user),
+        # La sesión de este navegador: el frontend cierra por inactividad solo
+        # las que no son "Recordarme" (sessions.py).
+        **session_fields(request),
     }
 
 
@@ -360,9 +366,10 @@ class ChangePasswordView(APIView):
             target_repr=request.user.email,
         )
 
-        # Cambiar la contraseña no cierra sesiones por diseño acá (el access
-        # JWT sigue válido hasta expirar). Solo se revocan los refresh en el
-        # flujo de reset por email (posible cuenta comprometida).
+        # Cierra las demás sesiones (y sus refresh, también los viejos sin
+        # sid): si alguien más tenía la contraseña, queda afuera. Esta sigue.
+        current_sid = request.auth.get("sid") if request.auth is not None else None
+        revoke_all(request.user, except_sid=current_sid, reason="password")
         return Response({"detail": "Contraseña actualizada correctamente."})
 
 
@@ -428,20 +435,15 @@ class GoogleAuthView(APIView):
             user.set_unusable_password()
             user.save(update_fields=["password"])
 
-        record(
-            request,
-            actor=user,
-            category="auth",
-            action="auth.login_success",
-            target=user,
-            target_type="user",
-            target_repr=user.email,
-            actor_email=user.email,
-        )
-
         # URL pública del avatar en el CDN de Google. No se persiste:
         # Google puede rotarla, así que se refresca en cada login.
-        return auth_response(user, picture=claims.get("picture", ""), request=request)
+        return finish_login(
+            request,
+            user,
+            remember=parse_remember(request.data.get("remember")),
+            method="google",
+            picture=claims.get("picture", ""),
+        )
 
 
 class LoginView(APIView):
@@ -529,18 +531,9 @@ class LoginView(APIView):
         if lockout is not None:
             lockout.register_success()
 
-        record(
-            request,
-            actor=user,
-            category="auth",
-            action="auth.login_success",
-            target=user,
-            target_type="user",
-            target_repr=user.email,
-            actor_email=user.email,
+        return finish_login(
+            request, user, remember=parse_remember(request.data.get("remember")), method="password"
         )
-
-        return auth_response(user, request=request)
 
 
 def _send_verification_email(user, token):
@@ -664,15 +657,15 @@ class RegisterView(APIView):
         verification.refresh_token()
         _send_verification_email(user, verification.token)
 
-        response = Response(
-            {
-                "detail": "Cuenta creada con éxito.",
-                **tokens_for_user(user),
-                "user": user_payload(user, request=request),
-            },
-            status=status.HTTP_201_CREATED,
+        return finish_login(
+            request,
+            user,
+            remember=parse_remember(request.data.get("remember")),
+            method="register",
+            extra={"detail": "Cuenta creada con éxito."},
+            status_code=status.HTTP_201_CREATED,
+            audit=False,
         )
-        return deliver_tokens(request, response)
 
 
 class LogoutView(APIView):
@@ -700,7 +693,11 @@ class LogoutView(APIView):
             )
         try:
             # blacklist() requiere la app token_blacklist y sus migraciones.
-            RefreshToken(refresh).blacklist()
+            token = RefreshToken(refresh)
+            token.blacklist()
+            session = active_session(token.get("sid"))
+            if session is not None and session.user_id == request.user.pk:
+                revoke_session(session, "logout")
         except TokenError:
             # Token inválido, expirado o ya revocado: el objetivo (que no
             # sirva) ya está cumplido, así que se responde igual como éxito.
@@ -717,16 +714,9 @@ class LogoutView(APIView):
 
 
 def blacklist_all_refresh_tokens(user):
-    """Revoca TODOS los refresh tokens vigentes del usuario.
-
-    Se usa al resetear la contraseña: si la cuenta pudo haber sido
-    comprometida, cambiar la contraseña no debe dejar sesiones abiertas con
-    los refresh viejos. Recorre los OutstandingToken (los que emitió
-    SimpleJWT) y los manda a la blacklist; los que ya estaban revocados se
-    ignoran gracias a get_or_create.
-    """
-    for token in OutstandingToken.objects.filter(user=user):
-        BlacklistedToken.objects.get_or_create(token=token)
+    """Revoca TODAS las sesiones y refresh tokens vigentes del usuario. Queda
+    por compatibilidad: el trabajo lo hace ``sessions.revoke_all``."""
+    revoke_all(user, reason="revoked")
 
 
 class PasswordResetRequestView(APIView):
@@ -891,7 +881,7 @@ class PasswordResetConfirmView(APIView):
         # Cambiar la contraseña ya invalida futuros tokens de reset (el
         # generator depende del hash), pero NO cierra las sesiones activas: se
         # revocan los refresh vigentes por si la cuenta estaba comprometida.
-        blacklist_all_refresh_tokens(user)
+        revoke_all(user, reason="password_reset")
 
         record(
             request,
@@ -983,12 +973,49 @@ class EmailVerificationResendView(APIView):
         return Response({"detail": "Te reenviamos el email de verificación."})
 
 
+class SessionTokenRefreshSerializer(TokenRefreshSerializer):
+    """La rotación de simplejwt, con dos reglas de las sesiones (sessions.py):
+    un refresh de una sesión cerrada (o vencida por inactividad) no sirve, y
+    el refresh nuevo conserva la vida de su sesión (30 días con "Recordarme")
+    en vez de volver a los 7 días del default."""
+
+    def validate(self, attrs):
+        refresh = self.token_class(attrs["refresh"])
+        sid = refresh.get("sid")
+        session = None
+        if sid:
+            session = active_session(sid)
+            if session is None:
+                raise InvalidToken({"detail": SESSION_CLOSED_MSG, "code": "session_closed"})
+        user_id = refresh.payload.get(jwt_settings.USER_ID_CLAIM)
+        user = User.objects.filter(**{jwt_settings.USER_ID_FIELD: user_id}).first() if user_id else None
+        if user is None or not jwt_settings.USER_AUTHENTICATION_RULE(user):
+            raise AuthenticationFailed(self.error_messages["no_active_account"], "no_active_account")
+
+        data = {"access": str(refresh.access_token)}
+        refresh.blacklist()
+        refresh.set_jti()
+        life = refresh.get("life")
+        refresh.set_exp(lifetime=timedelta(seconds=life)) if life else refresh.set_exp()
+        refresh.set_iat()
+        refresh.outstand()
+        data["refresh"] = str(refresh)
+
+        if session is not None:
+            request = self.context.get("request")
+            touch(session, activity=bool(request is not None and request.data.get("active") is True))
+        self.remember = refresh.get("remember")
+        return data
+
+
 class CookieTokenRefreshView(TokenRefreshView):
     """POST /api/v1/auth/refresh/ — el ``TokenRefreshView`` de simplejwt
     (rotación + blacklist, ver ``SIMPLE_JWT``) que además toma el refresh de su
     cookie cuando el cuerpo no lo trae, y en modo cookie devuelve los tokens
     nuevos en cookies. Si el refresh ya no sirve, borra las cookies: así el
     navegador no sigue mandando una sesión muerta."""
+
+    serializer_class = SessionTokenRefreshSerializer
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data={"refresh": refresh_from_request(request)})
@@ -999,7 +1026,11 @@ class CookieTokenRefreshView(TokenRefreshView):
         except (InvalidToken, DRFValidationError) as error:
             failure = error
         else:
-            return deliver_tokens(request, Response(serializer.validated_data, status=status.HTTP_200_OK))
+            return deliver_tokens(
+                request,
+                Response(serializer.validated_data, status=status.HTTP_200_OK),
+                remember=getattr(serializer, "remember", None),
+            )
         if wants_cookies(request):
             return clear_auth_cookies(
                 Response(

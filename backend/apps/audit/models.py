@@ -43,6 +43,16 @@ class AuditLog(models.Model):
         AUTH_LOGOUT = "auth.logout", "Logout"
         AUTH_PASSWORD_CHANGE = "auth.password_change", "Cambio de contraseña"
         AUTH_PASSWORD_RESET = "auth.password_reset", "Restablecimiento de contraseña"
+        AUTH_PASSWORD_SET = "auth.password_set", "Contraseña creada"
+        AUTH_EMAIL_CHANGE = "auth.email_change", "Cambio de email"
+        AUTH_SESSION_REVOKE = "auth.session_revoke", "Sesión cerrada"
+        AUTH_NEW_DEVICE = "auth.new_device", "Ingreso desde un navegador nuevo"
+        AUTH_MFA_ENABLE = "auth.mfa_enable", "Verificación en dos pasos activada"
+        AUTH_MFA_DISABLE = "auth.mfa_disable", "Verificación en dos pasos desactivada"
+        AUTH_MFA_ADMIN_RESET = "auth.mfa_admin_reset", "Verificación en dos pasos quitada por un administrador"
+        AUTH_MFA_FAILED = "auth.mfa_failed", "Código de verificación incorrecto"
+        AUTH_RECOVERY_CODE_USED = "auth.recovery_code_used", "Código de recuperación usado"
+        AUTH_RECOVERY_CODES_REGENERATED = "auth.recovery_codes_regenerated", "Códigos de recuperación nuevos"
         # users
         USER_CREATE = "user.create", "Usuario creado"
         USER_UPDATE = "user.update", "Usuario actualizado"
@@ -140,6 +150,16 @@ class AuditLog(models.Model):
         Action.AUTH_LOGOUT: Category.AUTH,
         Action.AUTH_PASSWORD_CHANGE: Category.AUTH,
         Action.AUTH_PASSWORD_RESET: Category.AUTH,
+        Action.AUTH_PASSWORD_SET: Category.AUTH,
+        Action.AUTH_EMAIL_CHANGE: Category.AUTH,
+        Action.AUTH_SESSION_REVOKE: Category.AUTH,
+        Action.AUTH_NEW_DEVICE: Category.AUTH,
+        Action.AUTH_MFA_ENABLE: Category.AUTH,
+        Action.AUTH_MFA_DISABLE: Category.AUTH,
+        Action.AUTH_MFA_ADMIN_RESET: Category.AUTH,
+        Action.AUTH_MFA_FAILED: Category.AUTH,
+        Action.AUTH_RECOVERY_CODE_USED: Category.AUTH,
+        Action.AUTH_RECOVERY_CODES_REGENERATED: Category.AUTH,
         Action.USER_CREATE: Category.USERS,
         Action.USER_UPDATE: Category.USERS,
         Action.USER_DEACTIVATE: Category.USERS,

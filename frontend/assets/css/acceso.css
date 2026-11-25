@@ -191,6 +191,29 @@ body.access-page {
   position: relative;
 }
 
+/* "Mantener la sesión iniciada" */
+.access-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.access-check input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  flex: none;
+}
+
+.access-check small {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
 .access-field input {
   width: 100%;
   height: 44px;

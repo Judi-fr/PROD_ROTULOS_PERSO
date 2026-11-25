@@ -1345,6 +1345,8 @@ const IN_PAGE_TOOLS = [
   { label: "Nuevo pedido a mano", url: "pedidos.html#nuevo", section: "Pedidos", perm: "orders.create_manual" },
   { label: "Mis direcciones", url: "direcciones.html", section: "Pedidos", perm: "addresses.manage" },
   { label: "Cambiar mi contraseña", url: "organizacion.html#perfil", section: "Mi cuenta", perm: null },
+  { label: "Seguridad de la cuenta", url: "seguridad.html", section: "Mi cuenta", perm: null },
+  { label: "Sesiones abiertas (cerrar sesión en otros dispositivos)", url: "seguridad.html#sesiones", section: "Mi cuenta", perm: null },
   { label: "Datos del comercio", url: "equipo.html#datos", section: "Mi comercio", perm: null },
   { label: "Estadísticas del comercio", url: "equipo.html#estadisticas", section: "Mi comercio", perm: "stats.dispatch" },
   { label: "Crear o sumarme a otro comercio", url: "comercio_inicio.html", section: "Mi cuenta", perm: null },
@@ -1452,4 +1454,66 @@ async function renderSampleOrdersNotice(container, { onChange } = {}) {
     container.appendChild(button);
   }
   container.hidden = false;
+}
+
+// ---- Después de entrar ---------------------------------------------------
+// A dónde va alguien que acaba de entrar (login, Google, verificar_ingreso).
+// Primero lo que quedó a medio hacer (instalar la app, imprimir desde
+// Tiendanube, sumarse a un comercio); después ?next=, la página que pidió sin
+// sesión, solo si es una página de esta misma carpeta (un ?next= con otro
+// sitio no puede usarse para mandar a alguien afuera tras el login).
+function authLandingPage(user, search = window.location.search) {
+  if (user && user.must_change_password) return "cambiar-password.html";
+  // Sin confirmar el email no puede usar la app: primero eso.
+  if (user && user.email_verified === false) return "confirmar_email.html";
+  if (localStorage.getItem("pendingTiendanubePrint")) {
+    return localStorage.getItem("pendingTiendanubePage") || "imprimir_tiendanube.html";
+  }
+  if (localStorage.getItem("pendingStoreClaim")) return "tiendas.html";
+  if (localStorage.getItem("pendingJoinCode")) {
+    return "unirse.html?code=" + encodeURIComponent(localStorage.getItem("pendingJoinCode"));
+  }
+  const next = new URLSearchParams(search || "").get("next") || "";
+  if (/^[a-z0-9_-]+\.html(#[a-z0-9_-]*)?$/i.test(next) && !/^(index|register|logoutpage)\.html/i.test(next)) {
+    return next;
+  }
+  const role = String((user && user.role) || "").toLowerCase();
+  const isAdmin = Boolean((user && user.is_staff) || role === "admin");
+  return isAdmin ? "gestionuser.html" : "dashboard.html";
+}
+
+// La cuenta tiene la verificación en dos pasos: el login no entregó la sesión
+// sino un desafío. Se guarda en ESTA pestaña (nunca en la URL) y se sigue en
+// verificar_ingreso.html. Devuelve true si había desafío.
+function startMfaChallenge(data, remember) {
+  if (!data || !data.mfa_required) return false;
+  try {
+    sessionStorage.setItem(
+      "mfaChallenge",
+      JSON.stringify({
+        mfa_token: data.mfa_token,
+        method: data.method,
+        email_hint: data.email_hint || "",
+        remember: remember ?? null,
+        search: window.location.search,
+      })
+    );
+  } catch {
+    // Sin sessionStorage no hay cómo seguir: la página del código lo dice.
+  }
+  window.location.replace("verificar_ingreso.html");
+  return true;
+}
+
+// Copia un texto al portapapeles y avisa en #pageMessage (o pide copiarlo a
+// mano si el navegador no deja, por ejemplo en http sin localhost).
+async function copyText(text, successMessage = "Copiado.") {
+  try {
+    await navigator.clipboard.writeText(text);
+    showMessage(successMessage, "success");
+    return true;
+  } catch {
+    await appPrompt("Copialo desde acá:", text);
+    return false;
+  }
 }

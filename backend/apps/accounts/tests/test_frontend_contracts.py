@@ -53,3 +53,36 @@ class PlatformPickerTests(SimpleTestCase):
         blocks = set(re.findall(r'\bdata-platform="([\w-]+)"', html))
         self.assertTrue(picks)
         self.assertEqual(picks, blocks)
+
+
+class AccountSecurityPagesTests(SimpleTestCase):
+    """Recordarme y Seguridad (2026-11-25): lo que el backend espera del
+    frontend por nombre."""
+
+    def test_security_page_and_remember_checkbox_exist(self):
+        login = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="rememberMe"', login)
+        self.assertIn("remember: rememberChoice()", login)
+        security = (FRONTEND / "seguridad.html").read_text(encoding="utf-8")
+        self.assertIn('data-requires="users.me.view"', security)
+        self.assertIn("seguridad.html", (FRONTEND / "assets/js/topbar.js").read_text(encoding="utf-8"))
+
+    def test_auth_js_pings_the_session_endpoint_that_exists(self):
+        from django.urls import reverse
+
+        self.assertEqual(reverse("session-ping"), "/api/v1/auth/sessions/ping/")
+        self.assertIn("/sessions/ping/", (FRONTEND / "assets/js/auth.js").read_text(encoding="utf-8"))
+
+    def test_mfa_pages_exist(self):
+        verify = (FRONTEND / "verificar_ingreso.html").read_text(encoding="utf-8")
+        self.assertIn('autocomplete="one-time-code"', verify)
+        self.assertIn("assets/js/verificar_ingreso.js", verify)
+        script = (FRONTEND / "assets/js/verificar_ingreso.js").read_text(encoding="utf-8")
+        self.assertIn("/auth/2fa/verify/", script)
+        self.assertIn("/auth/2fa/resend/", script)
+        for page in ("index.html", "register.html"):
+            self.assertIn("startMfaChallenge(", (FRONTEND / page).read_text(encoding="utf-8"), page)
+        security = (FRONTEND / "assets/js/seguridad.js").read_text(encoding="utf-8")
+        for path in ("setup/", "confirm/", "disable/", "recovery-codes/", "reauth-email/"):
+            self.assertIn(f'"{path}"', security)
+        self.assertIn("reset-2fa/", (FRONTEND / "assets/js/usuarios.js").read_text(encoding="utf-8"))

@@ -163,7 +163,11 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/min",
         "user": "1000/min",
-        "login": "5/min",
+        "login": env("LOGIN_THROTTLE_RATE", default="5/min"),
+        # Segundo paso: escribir el código (además cuenta para el bloqueo de la
+        # cuenta, ver LoginLockout) y pedir que lo manden de nuevo por email.
+        "mfa_verify": "10/min",
+        "mfa_email": "3/min",
         # El agente de impresión consulta cada pocos segundos (apps.printing).
         "print_agent": "240/min",
         # Pedir/confirmar reset de contraseña: frena el email bombing a una
@@ -530,6 +534,14 @@ SIMPLE_JWT = {
     "UPDATE_LAST_LOGIN": True,
 }
 
+# Sesiones con nombre y "Recordarme" (apps/accounts/sessions.py).
+# Con "Mantener la sesión iniciada": el refresh dura AUTH_REMEMBER_DAYS y no se
+# cierra por inactividad. Sin marcarla: cookie de sesión, el token vence a las
+# AUTH_SESSION_HOURS y la sesión se cierra tras AUTH_IDLE_MINUTES sin uso.
+AUTH_REMEMBER_DAYS = env.int("AUTH_REMEMBER_DAYS", default=30)
+AUTH_SESSION_HOURS = env.int("AUTH_SESSION_HOURS", default=12)
+AUTH_IDLE_MINUTES = env.int("AUTH_IDLE_MINUTES", default=30)
+
 # Tokens del frontend web en cookies HttpOnly (apps/accounts/auth_cookies.py,
 # donde está explicada cada decisión). Secure por defecto salvo en DEBUG, que
 # corre por HTTP; en un server de prueba por HTTP plano, AUTH_COOKIE_SECURE=False.
@@ -724,3 +736,10 @@ INTEGRATIONS_ALLOW_PRIVATE_HOSTS = env.bool("INTEGRATIONS_ALLOW_PRIVATE_HOSTS", 
 NOTICES_RECENT_DAYS = env.int("NOTICES_RECENT_DAYS", default=3)
 NOTICES_MAIL_RETRY_SECONDS = env.int("NOTICES_MAIL_RETRY_SECONDS", default=600)
 NOTICES_MAIL_ENABLED = env.bool("NOTICES_MAIL_ENABLED", default=True)
+
+# Verificación en dos pasos (apps/accounts/mfa.py).
+MFA_TOKEN_MAX_AGE_SECONDS = env.int("MFA_TOKEN_MAX_AGE_SECONDS", default=300)
+MFA_EMAIL_CODE_MINUTES = env.int("MFA_EMAIL_CODE_MINUTES", default=10)
+MFA_TRUST_DAYS = env.int("MFA_TRUST_DAYS", default=30)
+MFA_RECOVERY_CODES = env.int("MFA_RECOVERY_CODES", default=10)
+AUTH_DEVICE_COOKIE_DAYS = env.int("AUTH_DEVICE_COOKIE_DAYS", default=365)

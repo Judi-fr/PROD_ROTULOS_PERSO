@@ -10,6 +10,9 @@ export EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 export DJANGO_SETTINGS_MODULE=config.settings.dev
 export SECRET_KEY="${SECRET_KEY:-solo-para-pruebas-de-navegador}"
 export NOTICES_MAIL_ENABLED=False
+# Varias pruebas entran y salen: el límite de logins por IP (5/min en serio)
+# se sube solo para esta base de pruebas.
+export LOGIN_THROTTLE_RATE=60/min
 "$PYTHON" manage.py migrate --noinput >/dev/null
 "$PYTHON" manage.py seed_demo >/dev/null
 "$PYTHON" manage.py shell < ../frontend/e2e/seed_e2e.py >/dev/null

@@ -15,7 +15,7 @@ API) o, si no vino, de la cookie HttpOnly del frontend web (ver
 ``auth_cookies.py``).
 """
 
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
@@ -24,6 +24,9 @@ from rest_framework.permissions import AllowAny
 
 from .auth_cookies import access_cookie_name, wants_cookies
 from .models import PasswordChangeRequirement, user_email_verified
+from .sessions import active_session
+
+SESSION_CLOSED_MSG = "La sesión se cerró: volvé a iniciar sesión."
 
 # Endpoints alcanzables aunque el usuario tenga must_change_password=True:
 # el propio cambio de contraseña, ver el propio perfil (para no romper la
@@ -74,6 +77,14 @@ class JWTAuthenticationWithPasswordPolicy(JWTAuthentication):
             return None
 
         user, validated_token = result
+        # Sesión cerrada (desde "Sesiones abiertas", por el admin, por cambio
+        # de contraseña o por inactividad): ese navegador queda afuera ya, no
+        # cuando venza su access. En una vista pública (login, refresh) se
+        # ignora, como una cookie vencida: no tiene que trabar volver a entrar.
+        if not self._session_is_open(request, validated_token):
+            if _view_is_public(request):
+                return None
+            raise AuthenticationFailed({"detail": SESSION_CLOSED_MSG, "code": "session_closed"})
         if user_must_change_password(user):
             if (request.method, request.path) not in _ALLOWED_WHILE_PENDING:
                 raise PermissionDenied(
@@ -93,6 +104,22 @@ class JWTAuthenticationWithPasswordPolicy(JWTAuthentication):
         ):
             raise PermissionDenied({"detail": EMAIL_NOT_VERIFIED_MSG, "code": "email_not_verified"})
         return result
+
+    @staticmethod
+    def _session_is_open(request, validated_token):
+        sid = validated_token.get("sid")
+        if not sid:
+            # Token de antes de las sesiones: vale hasta vencer.
+            return True
+        cached = getattr(request, "_rotulos_session_checked", None)
+        if cached is not None and cached[0] == sid:
+            return cached[1]
+        session = active_session(sid)
+        is_open = session is not None
+        if session is not None:
+            request._rotulos_session = session
+        request._rotulos_session_checked = (sid, is_open)
+        return is_open
 
     def _authenticate_cookie(self, request):
         raw = request.COOKIES.get(access_cookie_name())

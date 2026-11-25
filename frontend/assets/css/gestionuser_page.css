@@ -439,6 +439,16 @@
   color: var(--muted);
 }
 
+/* Verificación en dos pasos activada (seguridad.html). */
+.user-mfa {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--success-700);
+}
+
 /* Roles: una pastilla con un punto del color, más tranquila que el fondo
    lleno; el color sigue diciendo administrador / personal / comerciante. */
 .users-page .badge {

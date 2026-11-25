@@ -36,6 +36,7 @@
   // El menú de la cuenta: lo personal, fuera de las acciones de la página.
   const ACCOUNT_LINKS = [
     { href: "organizacion.html", label: "Mi cuenta" },
+    { href: "seguridad.html", label: "Seguridad" },
     { href: "mi_actividad.html", label: "Mi actividad" },
     { href: "ayuda.html", label: "Ayuda" },
   ];
