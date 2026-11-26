@@ -9,7 +9,7 @@ google-auth==2.38.0
 requests==2.33.0
 Pillow==13.0.0
 reportlab==5.0.1
-pypdf==6.21.2
+pypdf==6.21.4
 # Miniaturas PNG de las plantillas (rasteriza el PDF del render; trae su binario, sin paquetes del sistema)
 pypdfium2==4.30.1
 openpyxl==3.1.5
