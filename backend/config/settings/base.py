@@ -282,6 +282,11 @@ DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL", default="Human Log · Rótulos <no-reply@rotulos.local>"
 )
 
+# Quién recibe un aviso por mail de cada mensaje del form de contacto
+# ("Ayuda/Soporte"), separados por coma. Vacío = ninguno: el mensaje igual se
+# guarda en la bandeja de Soporte del admin (apps/accounts/support_mail.py).
+SUPPORT_NOTIFY_EMAILS = env.list("SUPPORT_NOTIFY_EMAILS", default=[])
+
 # Base del frontend (SPA) para armar links que van en los correos, p. ej. el
 # de reset apunta a {FRONTEND_URL}/reset-password.html?uid=...&token=...
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
