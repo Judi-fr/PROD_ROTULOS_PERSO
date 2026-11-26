@@ -123,7 +123,14 @@ DATABASES = {
 # Django REST Framework
 # ---------------------------------------------------------------------------
 
+# Cuántos proxies NUESTROS hay delante de la API (balanceador de AWS, Caddy):
+# de X-Forwarded-For solo valen las entradas que agregaron ellos
+# (apps/common/net.py). 0 = ninguno: el encabezado se ignora (desarrollo).
+TRUSTED_PROXIES = env.int("TRUSTED_PROXIES", default=0)
+
 REST_FRAMEWORK = {
+    # La misma regla que apps/common/net.py para los límites por IP.
+    "NUM_PROXIES": TRUSTED_PROXIES,
     "EXCEPTION_HANDLER": "config.errors.api_exception_handler",
     # Toda la API se autentica con JWT (djangorestframework-simplejwt).
     # El frontend manda el access token en el header:

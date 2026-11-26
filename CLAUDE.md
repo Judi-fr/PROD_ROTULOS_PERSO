@@ -529,6 +529,11 @@ Spec `docs/superpowers/specs/2026-11-25-recordarme-y-2fa-design.md`, plan `docs/
   database (`F()`), so parallel requests can't slip past the limits. Superseded email-change links stay (expired) so
   the 5/day cap counts them.
 - `LOGIN_THROTTLE_RATE` (default 5/min) is configurable; the e2e backend raises it.
+- **Client IP behind proxies (`apps/common/net.client_ip`, 2026-11-26)**: only the last `TRUSTED_PROXIES` entries of
+  `X-Forwarded-For` are ours; the client IP is the one our outermost proxy added. `base.py` sets DRF's `NUM_PROXIES` to
+  the same value so throttles and the audit see the same IP; dev default 0 (header ignored), `prod.py` default 1 (AWS
+  load balancer or Caddy). Before, the audit took the FIRST entry (client-forged) and throttles used the whole header,
+  so changing it per request dodged every per-IP limit.
 
 ### Roles & permissions (`apps/accounts`)
 

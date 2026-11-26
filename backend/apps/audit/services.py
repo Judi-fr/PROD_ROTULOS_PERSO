@@ -13,19 +13,17 @@ import re
 
 from django.db import transaction
 
+from apps.common.net import client_ip
+
 from .models import AuditLog
 
 logger = logging.getLogger(__name__)
 
 
 def _extract_ip(request):
-    if request is None:
-        return None
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
-        # El primer valor de la cadena es el cliente original.
-        return forwarded.split(",")[0].strip() or None
-    return request.META.get("REMOTE_ADDR") or None
+    # La IP real detrás de nuestros proxies (apps.common.net): nunca la
+    # primera de X-Forwarded-For, que la puede inventar el cliente.
+    return client_ip(request)
 
 
 def _extract_user_agent(request):
