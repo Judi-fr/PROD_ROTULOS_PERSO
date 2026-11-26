@@ -571,6 +571,27 @@ class ChangeEmailView(_OwnAccountView):
         return Response(EMAIL_CHANGE_SENT, status=status.HTTP_202_ACCEPTED)
 
 
+def _own_sid(request, user):
+    """El sid de la sesión de ESTE navegador si es de ``user`` (vista pública:
+    se lee de sus cookies, validando la firma)."""
+    from rest_framework_simplejwt.settings import api_settings as jwt_settings
+    from rest_framework_simplejwt.state import token_backend
+
+    from .auth_cookies import access_cookie_name, refresh_cookie_name
+
+    for name in (refresh_cookie_name(), access_cookie_name()):
+        raw = request.COOKIES.get(name)
+        if not raw:
+            continue
+        try:
+            payload = token_backend.decode(raw, verify=True)
+        except Exception:  # noqa: BLE001 — cookie vencida o rota
+            continue
+        if str(payload.get(jwt_settings.USER_ID_CLAIM)) == str(user.pk) and payload.get("sid"):
+            return payload["sid"]
+    return None
+
+
 class ConfirmEmailChangeView(APIView):
     """POST /api/v1/auth/me/change-email/confirm/ {token} — el enlace del
     mail. Público: el token es la prueba (largo, de un solo uso, vence)."""
@@ -580,7 +601,7 @@ class ConfirmEmailChangeView(APIView):
     throttle_scope = "mfa_verify"
 
     def post(self, request):
-        from django.db import transaction
+        from django.db import IntegrityError, transaction
 
         from .models import EmailVerification
         from .security_mail import _mask, email_changed_old_mail
@@ -605,12 +626,18 @@ class ConfirmEmailChangeView(APIView):
             old_email = user.email
             user.email = change.new_email
             user.username = change.new_email
-            user.save(update_fields=["email", "username"])
+            try:
+                with transaction.atomic():
+                    user.save(update_fields=["email", "username"])
+            except IntegrityError:
+                # Alguien se registró con ese email justo ahora.
+                return invalid
             change.confirmed_at = timezone.now()
             change.save(update_fields=["confirmed_at"])
             # Abrir el enlace prueba que el email nuevo es suyo.
             EmailVerification.objects.filter(user=user, is_verified=False).update(is_verified=True, verified_at=timezone.now())
-        revoke_all(user, reason="email_change")
+        # Se cierran las DEMÁS sesiones; la de este navegador, si es suya, sigue.
+        revoke_all(user, except_sid=_own_sid(request, user), reason="email_change")
         record(
             request,
             actor=user,

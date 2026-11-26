@@ -41,6 +41,22 @@
           <p class="access-secondary">
             <button type="button" class="access-link access-link-button" id="resendBtn">Mandármelo de nuevo</button>
           </p>
+          <details class="access-fix-email" id="fixEmail">
+            <summary class="access-link">¿Escribiste mal tu email?</summary>
+            <!-- Backend: POST /api/v1/auth/me/change-email/ (security_views.ChangeEmailView): el enlace va al
+                 email nuevo y abrirlo también lo confirma. -->
+            <form id="fixEmailForm" class="access-form" novalidate>
+              <div class="access-field">
+                <label for="fixEmailNew">El email correcto</label>
+                <input type="email" id="fixEmailNew" autocomplete="email" required>
+              </div>
+              <div class="access-field">
+                <label for="fixEmailPassword">Tu contraseña</label>
+                <input type="password" id="fixEmailPassword" autocomplete="current-password" required>
+              </div>
+              <button type="submit" class="btn btn-outline">Mandar el enlace al email correcto</button>
+            </form>
+          </details>
           <p class="access-secondary">
             <button type="button" class="access-link access-link-button" id="otherAccountBtn">Entrar con otra cuenta</button>
           </p>

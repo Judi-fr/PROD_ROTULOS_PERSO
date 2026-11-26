@@ -455,12 +455,19 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         if before.get("is_active") and not instance.is_active:
             revoke_all(instance, reason="deactivated")
 
+    def _protect_platform_admin(self, instance):
+        """El personal de la plataforma (un rol propio con ``users.edit``) no le
+        saca la protección al admin: solo otro admin puede."""
+        if get_effective_role(instance) == "admin" and get_effective_role(self.request.user) != "admin":
+            raise PermissionDenied("Solo un administrador puede hacer esto con la cuenta de otro administrador.")
+
     @action(detail=True, methods=["post"], url_path="revoke-sessions")
     def revoke_sessions(self, request, *args, **kwargs):
         """POST /api/v1/users/<id>/revoke-sessions/ — cierra todas las sesiones
         de una persona sin desactivarla (cuenta sospechosa)."""
         self._require_permission("users.edit")
         instance = self.get_object()
+        self._protect_platform_admin(instance)
         if self._is_self_target(instance):
             return Response(
                 {"detail": "Para cerrar tus propias sesiones usá Seguridad."},
@@ -489,6 +496,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
 
         self._require_permission("users.edit")
         instance = self.get_object()
+        self._protect_platform_admin(instance)
         if self._is_self_target(instance):
             return Response(
                 {"detail": "La tuya se desactiva desde Seguridad, con un código."},

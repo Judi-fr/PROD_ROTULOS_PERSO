@@ -674,45 +674,62 @@ class RegisterView(APIView):
 class LogoutView(APIView):
     """POST /api/v1/auth/logout/
 
-    Cierra la sesión revocando el refresh token: lo manda a la blacklist para
-    que no pueda volver a usarse en /refresh/ aunque todavía no haya expirado.
-    El access token que ya esté en circulación sigue siendo válido hasta que
-    expire (vida corta, 15 min) — es la naturaleza de los JWT stateless.
+    Cierra la sesión: manda el refresh a la blacklist y cierra su sesión con
+    nombre (``SessionRecord``), así ese navegador queda afuera aunque todavía
+    tenga un access vigente (``authentication.py`` rechaza un sid cerrado).
 
-    Requiere estar autenticado (access válido en el header o en su cookie) y
-    mandar el refresh a revocar en el body — o tenerlo en su cookie, que es el
-    caso del frontend web. Siempre borra las cookies de sesión.
+    Funciona SIN un access vigente (por eso es pública): el cierre por
+    inactividad llega cuando el access de 15 minutos ya venció, y antes eso
+    respondía 401 sin cerrar nada. Lo que la identifica es el refresh, del
+    cuerpo o de su cookie; con la cookie hace falta el header
+    ``X-Auth-Mode`` (otro sitio no puede mandarlo). Un refresh ya rotado o en
+    la blacklist igual sirve para saber QUÉ sesión cerrar (su firma se valida).
 
     Body:      {"refresh": "<JWT>"} (opcional con cookies)
     Respuesta: 205 Reset Content
     """
 
+    permission_classes = [AllowAny]
+
     def post(self, request):
+        from rest_framework_simplejwt.state import token_backend
+
+        from .security_models import SessionRecord
+
+        from_body = bool(request.data.get("refresh"))
         refresh = refresh_from_request(request)
-        if not refresh:
+        if not refresh or (not from_body and not wants_cookies(request)):
             return Response(
                 {"detail": "Falta el campo 'refresh' (token a revocar)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            # blacklist() requiere la app token_blacklist y sus migraciones.
-            token = RefreshToken(refresh)
-            token.blacklist()
-            session = active_session(token.get("sid"))
-            if session is not None and session.user_id == request.user.pk:
-                revoke_session(session, "logout")
+            RefreshToken(refresh).blacklist()
         except TokenError:
-            # Token inválido, expirado o ya revocado: el objetivo (que no
-            # sirva) ya está cumplido, así que se responde igual como éxito.
+            # Ya rotado, vencido o revocado: no sirve más, que es el objetivo.
             pass
-        record(
-            request,
-            category="auth",
-            action="auth.logout",
-            target=request.user,
-            target_type="user",
-            target_repr=request.user.email,
-        )
+        try:
+            payload = token_backend.decode(refresh, verify=True)
+        except Exception:  # noqa: BLE001 — firma inválida o vencido: nada que cerrar
+            payload = {}
+        user = request.user if request.user.is_authenticated else None
+        user_id = payload.get(jwt_settings.USER_ID_CLAIM)
+        if user is None and user_id:
+            user = User.objects.filter(**{jwt_settings.USER_ID_FIELD: user_id}).first()
+        session = SessionRecord.objects.filter(pk=payload.get("sid")).first() if payload.get("sid") else None
+        if session is not None and user is not None and session.user_id == user.pk:
+            revoke_session(session, "logout")
+        if user is not None:
+            record(
+                request,
+                actor=user,
+                category="auth",
+                action="auth.logout",
+                target=user,
+                target_type="user",
+                target_repr=user.email,
+                actor_email=user.email,
+            )
         return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
 
 
@@ -996,18 +1013,26 @@ class SessionTokenRefreshSerializer(TokenRefreshSerializer):
         if user is None or not jwt_settings.USER_AUTHENTICATION_RULE(user):
             raise AuthenticationFailed(self.error_messages["no_active_account"], "no_active_account")
 
-        data = {"access": str(refresh.access_token)}
         refresh.blacklist()
+        request = self.context.get("request")
+        if session is None:
+            # Un refresh de antes de las sesiones (sin sid): pasa a ser una
+            # sesión con nombre, mantenida como siempre (7 días, sin cierre por
+            # inactividad). Así aparece en "Sesiones abiertas" y se puede cerrar.
+            from .sessions import start_session
+
+            session = start_session(user, request, remember=True, method="password")
+            refresh["sid"] = str(session.id)
+            refresh["remember"] = None
+            refresh["life"] = int(jwt_settings.REFRESH_TOKEN_LIFETIME.total_seconds())
         refresh.set_jti()
         life = refresh.get("life")
         refresh.set_exp(lifetime=timedelta(seconds=life)) if life else refresh.set_exp()
         refresh.set_iat()
         refresh.outstand()
-        data["refresh"] = str(refresh)
+        data = {"access": str(refresh.access_token), "refresh": str(refresh)}
 
-        if session is not None:
-            request = self.context.get("request")
-            touch(session, activity=bool(request is not None and request.data.get("active") is True))
+        touch(session, activity=bool(request is not None and request.data.get("active") is True))
         self.remember = refresh.get("remember")
         return data
 

@@ -490,10 +490,14 @@ Spec `docs/superpowers/specs/2026-11-25-recordarme-y-2fa-design.md`, plan `docs/
   access (plus `remember` and `life`, the refresh lifetime in seconds, which `SessionTokenRefreshSerializer` keeps on
   rotation — simplejwt's `set_exp()` would fall back to 7 days). `JWTAuthenticationWithPasswordPolicy` rejects a closed
   sid at once (401 `session_closed`; ignored on public views so a stale cookie never blocks logging in). Tokens without
-  `sid` (older ones, tests using `RefreshToken.for_user`) keep working until they expire. `revoke_all(user,
+  `sid` (older ones, tests using `RefreshToken.for_user`) still authenticate; on their first rotation they become a
+  named, remembered session (so they show in "Sesiones abiertas" and can be closed). `logout/` is public: it identifies
+  the session by the refresh (body, or its cookie WITH `X-Auth-Mode`), even an already rotated one, so the idle logout
+  works after the 15-min access expired. `revoke_all(user,
   except_sid=...)` closes sessions AND blacklists the other sessions' refresh tokens (it reads the sid from the stored
   `OutstandingToken.token`, which `tokens_for_session` rewrites after adding the claims). Password change/reset, email
-  change, 2FA disable, admin deactivation/`revoke-sessions/` all call it; a lockout does NOT (anyone could log a merchant
+  change (keeps the confirming browser's own session), 2FA disable, admin deactivation/`revoke-sessions/` all call it
+  (platform staff can't use `revoke-sessions/`/`reset-2fa/` on an admin); a lockout does NOT (anyone could log a merchant
   out by mistyping their password).
 - **"Mantener la sesión iniciada"** (`remember` in login/Google bodies): true = 30 days (`AUTH_REMEMBER_DAYS`); false =
   session cookie, 12 h token (`AUTH_SESSION_HOURS`) and closed after `AUTH_IDLE_MINUTES` (30) without use; absent (API

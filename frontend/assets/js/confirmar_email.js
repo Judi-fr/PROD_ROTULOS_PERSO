@@ -76,4 +76,31 @@
     if (document.visibilityState === "visible") checkVerified().catch(() => {});
   });
   checkVerified().catch(() => {});
+  // "¿Escribiste mal tu email?": el enlace va al email corregido; abrirlo
+  // cambia el email de la cuenta y la deja confirmada.
+  const fixForm = document.getElementById("fixEmailForm");
+  if (fixForm) {
+    fixForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const newEmail = document.getElementById("fixEmailNew").value.trim();
+      const password = document.getElementById("fixEmailPassword").value;
+      if (!newEmail || !password) {
+        showMessage("Escribí el email correcto y tu contraseña.");
+        return;
+      }
+      try {
+        const response = await window.Auth.apiFetch(`${API}/me/change-email/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_email: newEmail, password }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(getErrorMessage(data, "No se pudo pedir el cambio."));
+        document.getElementById("fixEmailPassword").value = "";
+        showMessage(`Listo: si ${newEmail} está disponible, te llega ahí un enlace. Abrilo y tu cuenta queda con ese email, confirmada.`, "success");
+      } catch (error) {
+        if (!error.isSessionExpired) showMessage(error.message);
+      }
+    });
+  }
 })();

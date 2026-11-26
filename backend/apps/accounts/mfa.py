@@ -96,9 +96,15 @@ def totp_verify(config: UserMfa, code, *, pending: bool = False) -> bool:
         if config.last_totp_step is not None and step <= config.last_totp_step:
             continue
         if hmac.compare_digest(_hotp(secret, step), code):
-            UserMfa.objects.filter(pk=config.pk).update(last_totp_step=step)
+            # El paso se "gasta" en la base con un update condicional: dos
+            # pedidos con el mismo código al mismo tiempo no pasan los dos.
+            from django.db.models import Q
+
+            claimed = UserMfa.objects.filter(
+                Q(last_totp_step__isnull=True) | Q(last_totp_step__lt=step), pk=config.pk
+            ).update(last_totp_step=step)
             config.last_totp_step = step
-            return True
+            return claimed == 1
     return False
 
 

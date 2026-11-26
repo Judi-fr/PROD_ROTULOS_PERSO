@@ -437,3 +437,17 @@ a.access-submit:hover { color: var(--n-0); }
   border-radius: var(--radius-md);
   box-shadow: 0 0 0 2px var(--accent-500);
 }
+
+/* "¿Escribiste mal tu email?" (confirmar_email.html). */
+.access-fix-email {
+  margin-top: 8px;
+}
+
+.access-fix-email summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.access-fix-email .access-form {
+  margin-top: 12px;
+}

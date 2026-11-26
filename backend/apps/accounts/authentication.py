@@ -46,6 +46,9 @@ _ALLOWED_WHILE_PENDING = {
 # confirmar el enlace, refresh, seguimiento público...) no se tocan.
 _ALLOWED_WHILE_UNVERIFIED = {
     ("GET", "/api/v1/auth/me/"),
+    # Corregir un email mal escrito: el enlace va al email nuevo, así que
+    # abrirlo también lo confirma (security_views.ConfirmEmailChangeView).
+    ("POST", "/api/v1/auth/me/change-email/"),
     ("POST", "/api/v1/auth/verify-email/resend/"),
     ("POST", "/api/v1/auth/logout/"),
 }
