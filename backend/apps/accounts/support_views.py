@@ -27,6 +27,7 @@ from apps.common.date_filters import date_range_q
 from .models import SupportMessage
 from .pagination import UserAdminPagination
 from .role_permissions import HasRolePermission
+from .support_mail import notify_new_support_message
 
 
 class SupportMessageSerializer(serializers.ModelSerializer):
@@ -71,6 +72,7 @@ class SupportMessageView(generics.ListCreateAPIView):
             target_type="support_message",
             target_repr=f"{instance.user.email}: {instance.subject}",
         )
+        notify_new_support_message(instance)
 
 
 class AdminSupportMessageSerializer(serializers.ModelSerializer):
