@@ -42,7 +42,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.common.mail import branded_html
 from apps.audit.services import record
 
-from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_from_request, wants_cookies
+from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_cookie_name, refresh_from_request, wants_cookies
 from .login_flow import finish_login, parse_remember
 from .security_mail import password_changed_mail
 from .sessions import active_session, previous_login, revoke_all, revoke_session, session_fields, touch
@@ -678,11 +678,11 @@ class LogoutView(APIView):
     nombre (``SessionRecord``), así ese navegador queda afuera aunque todavía
     tenga un access vigente (``authentication.py`` rechaza un sid cerrado).
 
-    Funciona SIN un access vigente (por eso es pública): el cierre por
-    inactividad llega cuando el access de 15 minutos ya venció, y antes eso
-    respondía 401 sin cerrar nada. Lo que la identifica es el refresh, del
-    cuerpo o de su cookie; con la cookie hace falta el header
-    ``X-Auth-Mode`` (otro sitio no puede mandarlo). Un refresh ya rotado o en
+    Desde el navegador funciona SIN un access vigente (por eso es pública): el
+    cierre por inactividad llega cuando el access de 15 minutos ya venció, y
+    antes eso respondía 401 sin cerrar nada. Ese camino es la cookie del
+    refresh + el header ``X-Auth-Mode`` (otro sitio no puede mandarlo); un
+    cliente de la API sigue necesitando su access. Un refresh ya rotado o en
     la blacklist igual sirve para saber QUÉ sesión cerrar (su firma se valida).
 
     Body:      {"refresh": "<JWT>"} (opcional con cookies)
@@ -696,9 +696,16 @@ class LogoutView(APIView):
 
         from .security_models import SessionRecord
 
-        from_body = bool(request.data.get("refresh"))
+        # Sin un access vigente solo vale el camino del navegador: el refresh en
+        # su cookie + el header X-Auth-Mode (otro sitio no puede mandarlo). Un
+        # cliente de la API sin autenticar sigue recibiendo 401, como siempre.
+        if not request.user.is_authenticated and not (wants_cookies(request) and request.COOKIES.get(refresh_cookie_name())):
+            return Response(
+                {"detail": "Las credenciales de autenticación no se proveyeron."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
         refresh = refresh_from_request(request)
-        if not refresh or (not from_body and not wants_cookies(request)):
+        if not refresh:
             return Response(
                 {"detail": "Falta el campo 'refresh' (token a revocar)."},
                 status=status.HTTP_400_BAD_REQUEST,

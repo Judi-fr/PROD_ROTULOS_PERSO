@@ -75,7 +75,7 @@ class SecurityMinorsTests(APITestCase):
         self.client.post(LOGIN, {"email": "ana@example.com", "password": PASSWORD, "remember": True}, format="json", **COOKIE)
         self.client.cookies.pop("rotulos_access")
         response = self.client.post("/api/v1/auth/logout/", format="json")
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 401)
         self.assertTrue(SessionRecord.objects.get().is_active)
 
     # 4. Con el email sin confirmar se puede corregir un email mal escrito.
