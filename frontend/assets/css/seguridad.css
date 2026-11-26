@@ -1,0 +1,218 @@
+/* Seguridad de la cuenta (seguridad.html). Solo lo propio de esta página: el
+   resto (tarjetas, botones, mensajes) viene de ui.css/base.css/app.css. */
+
+.security-main {
+  max-width: var(--page-form);
+}
+
+.security-help {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.session-item:first-child {
+  border-top: 0;
+}
+
+.session-item > .ph {
+  font-size: 22px;
+  color: var(--n-400);
+  flex: none;
+}
+
+.session-item.is-current > .ph {
+  color: var(--accent-500);
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-info strong {
+  font-size: var(--text-base);
+}
+
+.session-meta {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.session-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-50);
+  color: var(--accent-700);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* ---- Verificación en dos pasos ---- */
+.mfa-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--success-50);
+  color: var(--success-700);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.mfa-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.mfa-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mfa-choice:hover,
+.mfa-choice:focus-visible {
+  border-color: var(--accent-500);
+  box-shadow: var(--ring);
+}
+
+.mfa-choice .ph {
+  font-size: 22px;
+  color: var(--accent-500);
+}
+
+.mfa-choice span {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.mfa-setup,
+.mfa-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mfa-steps {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+.mfa-steps code {
+  font-family: "Geist Mono", monospace;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.mfa-qr {
+  display: block;
+  margin: 8px 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  image-rendering: pixelated;
+}
+
+.mfa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mfa-status {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+}
+
+.mfa-code-grid {
+  list-style: none;
+  margin: 14px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.mfa-code-grid li {
+  padding: 8px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  font-family: "Geist Mono", monospace;
+  font-size: var(--text-base);
+  text-align: center;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-600);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---- Actividad de seguridad ---- */
+.security-log {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.security-log th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.security-log td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.security-log tr.is-alert td:nth-child(2) {
+  color: var(--danger-700);
+  font-weight: 600;
+}
+
+.security-main .table-scroll {
+  overflow-x: auto;
+}

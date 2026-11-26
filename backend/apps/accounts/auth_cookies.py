@@ -68,7 +68,10 @@ def _cookie_options(path):
     }
 
 
-def set_auth_cookies(response, *, access=None, refresh=None):
+def set_auth_cookies(response, *, access=None, refresh=None, remember=None):
+    """``remember``: True = la cookie del refresh dura AUTH_REMEMBER_DAYS;
+    False = cookie de sesión (el navegador la borra al cerrarse); None = la
+    vida del token, como siempre."""
     if access:
         response.set_cookie(
             access_cookie_name(),
@@ -80,10 +83,18 @@ def set_auth_cookies(response, *, access=None, refresh=None):
         response.set_cookie(
             refresh_cookie_name(),
             refresh,
-            max_age=int(jwt_settings.REFRESH_TOKEN_LIFETIME.total_seconds()),
+            max_age=_refresh_max_age(remember),
             **_cookie_options(settings.AUTH_COOKIE_REFRESH_PATH),
         )
     return response
+
+
+def _refresh_max_age(remember):
+    if remember is False:
+        return None
+    if remember is True:
+        return settings.AUTH_REMEMBER_DAYS * 24 * 3600
+    return int(jwt_settings.REFRESH_TOKEN_LIFETIME.total_seconds())
 
 
 def clear_auth_cookies(response):
@@ -97,13 +108,13 @@ def clear_auth_cookies(response):
     return response
 
 
-def deliver_tokens(request, response):
+def deliver_tokens(request, response, *, remember=None):
     """En modo cookie, pasa ``access``/``refresh`` del cuerpo de ``response``
     a cookies y los quita del cuerpo. Sin el header, no toca nada."""
     if not wants_cookies(request) or not isinstance(getattr(response, "data", None), dict):
         return response
     tokens = {key: response.data.pop(key) for key in TOKEN_KEYS if key in response.data}
-    set_auth_cookies(response, **tokens)
+    set_auth_cookies(response, remember=remember, **tokens)
     return response
 
 

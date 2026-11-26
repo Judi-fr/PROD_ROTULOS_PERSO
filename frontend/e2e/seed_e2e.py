@@ -15,4 +15,6 @@ owner = User.objects.get(username="demo@rotulos.local")
 employee, _ = add_employee(owner, "e2e-empleado@rotulos.local", profile="Depósito")
 employee.set_password(PASSWORD)
 employee.save()
+# Para la verificación en dos pasos (acceso.spec.js): una cuenta que nadie más usa.
+User.objects.create_user("e2e-2pasos@rotulos.local", "e2e-2pasos@rotulos.local", PASSWORD)
 print(Team.objects.count())

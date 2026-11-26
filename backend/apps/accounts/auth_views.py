@@ -8,12 +8,15 @@ haya autenticado el usuario:
     {"access": "<JWT>", "refresh": "<JWT>", "user": {...}}
 """
 
+import copy
 import hashlib
 import re
+from datetime import timedelta
 from math import ceil
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
@@ -29,22 +32,25 @@ from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import AuthenticationFailed, ValidationError as DRFValidationError
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-from rest_framework_simplejwt.token_blacklist.models import (
-    BlacklistedToken,
-    OutstandingToken,
-)
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings as jwt_settings
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.common.mail import branded_html
 from apps.audit.services import record
 
-from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_from_request, wants_cookies
+from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_cookie_name, refresh_from_request, wants_cookies
+from .login_flow import finish_login, parse_remember
+from .security_mail import password_changed_mail
+from .sessions import active_session, previous_login, revoke_all, revoke_session, session_fields, touch
 from .models import EmailVerification, LoginLockout, user_email_verified
 
 User = get_user_model()
+
+SESSION_CLOSED_MSG = "La sesión se cerró: volvé a iniciar sesión."
 
 
 def normalize_email(raw):
@@ -120,13 +126,45 @@ class EmailVerificationHourlyThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
+def _for_reset_token(user):
+    """El usuario tal como lo ve el token de "olvidé mi contraseña": sin
+    ``last_login``.
+
+    Django mete el último ingreso en el hash, así que un login después de
+    pedir el mail invalidaría el link. Desde que el login guarda
+    ``last_login`` (2026-11-19) eso dejaría a la víctima sin poder recuperar
+    la cuenta mientras quien se la robó siga entrando. Sin él, el link sigue
+    siendo de un solo uso (cambia la contraseña) y vence solo
+    (``PASSWORD_RESET_TIMEOUT``); para una cuenta que nunca entró es el mismo
+    token de siempre. Una copia: el usuario real no se toca.
+    """
+    clone = copy.copy(user)
+    clone.last_login = None
+    return clone
+
+
+def make_reset_token(user):
+    return default_token_generator.make_token(_for_reset_token(user))
+
+
+def check_reset_token(user, token):
+    return default_token_generator.check_token(_for_reset_token(user), token)
+
+
 def tokens_for_user(user):
     """Genera el par de tokens JWT (access + refresh) para un usuario.
 
     Formato de respuesta compartido por todos los métodos de login
     (Google, email/contraseña, registro) para que el frontend maneje
     siempre la misma estructura sin importar cómo se autenticó.
+
+    También marca el último ingreso: ``UPDATE_LAST_LOGIN`` de simplejwt solo
+    lo hace su propia vista de login, y esta app usa las suyas, así que
+    ``last_login`` quedaba siempre vacío (Reportes daba 0 activos y todos
+    "nunca inició sesión"; 2026-11-19). Como en Django, un link de
+    "olvidé mi contraseña" NO se corta por entrar: ver ``_for_reset_token``.
     """
+    update_last_login(None, user)
     refresh = RefreshToken.for_user(user)
     return {
         "access": str(refresh.access_token),
@@ -172,6 +210,10 @@ def user_payload(user, picture="", request=None):
         "team": team_payload(user),
         # Todos sus comercios, para el selector de arriba.
         "teams": teams_payload(user),
+        # La sesión de este navegador: el frontend cierra por inactividad solo
+        # las que no son "Recordarme" (sessions.py).
+        **session_fields(request),
+        "previous_login": previous_login(user, request),
     }
 
 
@@ -326,9 +368,11 @@ class ChangePasswordView(APIView):
             target_repr=request.user.email,
         )
 
-        # Cambiar la contraseña no cierra sesiones por diseño acá (el access
-        # JWT sigue válido hasta expirar). Solo se revocan los refresh en el
-        # flujo de reset por email (posible cuenta comprometida).
+        # Cierra las demás sesiones (y sus refresh, también los viejos sin
+        # sid): si alguien más tenía la contraseña, queda afuera. Esta sigue.
+        current_sid = request.auth.get("sid") if request.auth is not None else None
+        revoke_all(request.user, except_sid=current_sid, reason="password")
+        password_changed_mail(request.user, "change")
         return Response({"detail": "Contraseña actualizada correctamente."})
 
 
@@ -394,20 +438,15 @@ class GoogleAuthView(APIView):
             user.set_unusable_password()
             user.save(update_fields=["password"])
 
-        record(
-            request,
-            actor=user,
-            category="auth",
-            action="auth.login_success",
-            target=user,
-            target_type="user",
-            target_repr=user.email,
-            actor_email=user.email,
-        )
-
         # URL pública del avatar en el CDN de Google. No se persiste:
         # Google puede rotarla, así que se refresca en cada login.
-        return auth_response(user, picture=claims.get("picture", ""), request=request)
+        return finish_login(
+            request,
+            user,
+            remember=parse_remember(request.data.get("remember")),
+            method="google",
+            picture=claims.get("picture", ""),
+        )
 
 
 class LoginView(APIView):
@@ -495,27 +534,18 @@ class LoginView(APIView):
         if lockout is not None:
             lockout.register_success()
 
-        record(
-            request,
-            actor=user,
-            category="auth",
-            action="auth.login_success",
-            target=user,
-            target_type="user",
-            target_repr=user.email,
-            actor_email=user.email,
+        return finish_login(
+            request, user, remember=parse_remember(request.data.get("remember")), method="password"
         )
-
-        return auth_response(user, request=request)
 
 
 def _send_verification_email(user, token):
     """Arma el link al frontend y envía el correo de verificación de email.
 
     A diferencia de ``PasswordResetRequestView._send_reset_email``, un fallo
-    de SMTP acá NO debe cortar el registro: la cuenta ya se creó y el usuario
-    tiene que poder loguearse igual (verificación suave, no bloqueante), así
-    que el envío queda envuelto en try/except.
+    de SMTP acá NO debe cortar el registro: la cuenta ya se creó, entra a la
+    pantalla "Confirmá tu email" y desde ahí puede pedir el correo de nuevo,
+    así que el envío queda envuelto en try/except.
     """
     verification_url = f"{settings.EMAIL_VERIFICATION_URL}?token={token}"
     try:
@@ -624,40 +654,56 @@ class RegisterView(APIView):
             last_name=last_name,
         )
 
-        # Verificación suave de email (solo cuentas email/contraseña; Google ya
+        # Verificación de email (solo cuentas email/contraseña; Google ya
         # confirma el email antes de llegar acá, ver GoogleAuthView).
         verification, _ = EmailVerification.objects.get_or_create(user=user)
         verification.refresh_token()
         _send_verification_email(user, verification.token)
 
-        response = Response(
-            {
-                "detail": "Cuenta creada con éxito.",
-                **tokens_for_user(user),
-                "user": user_payload(user, request=request),
-            },
-            status=status.HTTP_201_CREATED,
+        return finish_login(
+            request,
+            user,
+            remember=parse_remember(request.data.get("remember")),
+            method="register",
+            extra={"detail": "Cuenta creada con éxito."},
+            status_code=status.HTTP_201_CREATED,
+            audit=False,
         )
-        return deliver_tokens(request, response)
 
 
 class LogoutView(APIView):
     """POST /api/v1/auth/logout/
 
-    Cierra la sesión revocando el refresh token: lo manda a la blacklist para
-    que no pueda volver a usarse en /refresh/ aunque todavía no haya expirado.
-    El access token que ya esté en circulación sigue siendo válido hasta que
-    expire (vida corta, 15 min) — es la naturaleza de los JWT stateless.
+    Cierra la sesión: manda el refresh a la blacklist y cierra su sesión con
+    nombre (``SessionRecord``), así ese navegador queda afuera aunque todavía
+    tenga un access vigente (``authentication.py`` rechaza un sid cerrado).
 
-    Requiere estar autenticado (access válido en el header o en su cookie) y
-    mandar el refresh a revocar en el body — o tenerlo en su cookie, que es el
-    caso del frontend web. Siempre borra las cookies de sesión.
+    Desde el navegador funciona SIN un access vigente (por eso es pública): el
+    cierre por inactividad llega cuando el access de 15 minutos ya venció, y
+    antes eso respondía 401 sin cerrar nada. Ese camino es la cookie del
+    refresh + el header ``X-Auth-Mode`` (otro sitio no puede mandarlo); un
+    cliente de la API sigue necesitando su access. Un refresh ya rotado o en
+    la blacklist igual sirve para saber QUÉ sesión cerrar (su firma se valida).
 
     Body:      {"refresh": "<JWT>"} (opcional con cookies)
     Respuesta: 205 Reset Content
     """
 
+    permission_classes = [AllowAny]
+
     def post(self, request):
+        from rest_framework_simplejwt.state import token_backend
+
+        from .security_models import SessionRecord
+
+        # Sin un access vigente solo vale el camino del navegador: el refresh en
+        # su cookie + el header X-Auth-Mode (otro sitio no puede mandarlo). Un
+        # cliente de la API sin autenticar sigue recibiendo 401, como siempre.
+        if not request.user.is_authenticated and not (wants_cookies(request) and request.COOKIES.get(refresh_cookie_name())):
+            return Response(
+                {"detail": "Las credenciales de autenticación no se proveyeron."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
         refresh = refresh_from_request(request)
         if not refresh:
             return Response(
@@ -665,34 +711,39 @@ class LogoutView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            # blacklist() requiere la app token_blacklist y sus migraciones.
             RefreshToken(refresh).blacklist()
         except TokenError:
-            # Token inválido, expirado o ya revocado: el objetivo (que no
-            # sirva) ya está cumplido, así que se responde igual como éxito.
+            # Ya rotado, vencido o revocado: no sirve más, que es el objetivo.
             pass
-        record(
-            request,
-            category="auth",
-            action="auth.logout",
-            target=request.user,
-            target_type="user",
-            target_repr=request.user.email,
-        )
+        try:
+            payload = token_backend.decode(refresh, verify=True)
+        except Exception:  # noqa: BLE001 — firma inválida o vencido: nada que cerrar
+            payload = {}
+        user = request.user if request.user.is_authenticated else None
+        user_id = payload.get(jwt_settings.USER_ID_CLAIM)
+        if user is None and user_id:
+            user = User.objects.filter(**{jwt_settings.USER_ID_FIELD: user_id}).first()
+        session = SessionRecord.objects.filter(pk=payload.get("sid")).first() if payload.get("sid") else None
+        if session is not None and user is not None and session.user_id == user.pk:
+            revoke_session(session, "logout")
+        if user is not None:
+            record(
+                request,
+                actor=user,
+                category="auth",
+                action="auth.logout",
+                target=user,
+                target_type="user",
+                target_repr=user.email,
+                actor_email=user.email,
+            )
         return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
 
 
 def blacklist_all_refresh_tokens(user):
-    """Revoca TODOS los refresh tokens vigentes del usuario.
-
-    Se usa al resetear la contraseña: si la cuenta pudo haber sido
-    comprometida, cambiar la contraseña no debe dejar sesiones abiertas con
-    los refresh viejos. Recorre los OutstandingToken (los que emitió
-    SimpleJWT) y los manda a la blacklist; los que ya estaban revocados se
-    ignoran gracias a get_or_create.
-    """
-    for token in OutstandingToken.objects.filter(user=user):
-        BlacklistedToken.objects.get_or_create(token=token)
+    """Revoca TODAS las sesiones y refresh tokens vigentes del usuario. Queda
+    por compatibilidad: el trabajo lo hace ``sessions.revoke_all``."""
+    revoke_all(user, reason="revoked")
 
 
 class PasswordResetRequestView(APIView):
@@ -702,10 +753,11 @@ class PasswordResetRequestView(APIView):
     una cuenta, se le envía un correo con un link al frontend que lleva el
     ``uid`` y un ``token`` firmado.
 
-    El token lo genera ``default_token_generator`` de Django: no se persiste
-    en la base porque se deriva del hash de la contraseña actual + ``last_login``
-    + un timestamp. Consecuencias: caduca solo (``PASSWORD_RESET_TIMEOUT``) y se
-    invalida en cuanto la contraseña cambia, así que un link ya usado no sirve.
+    El token lo genera ``default_token_generator`` de Django, sin
+    ``last_login`` (``make_reset_token``): no se persiste en la base porque se
+    deriva del hash de la contraseña actual + el email + un timestamp.
+    Consecuencias: caduca solo (``PASSWORD_RESET_TIMEOUT``) y se invalida en
+    cuanto la contraseña cambia, así que un link ya usado no sirve.
 
     Body:      {"email": "..."}
     Respuesta: 200 SIEMPRE, exista o no la cuenta (evita enumerar usuarios).
@@ -755,7 +807,7 @@ class PasswordResetRequestView(APIView):
         vista quiere evitar.
         """
         uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        token = make_reset_token(user)
 
         # El link apunta al FRONTEND (frontend/reset-password.html), no a una
         # vista de Django: esa página toma uid+token de la
@@ -822,7 +874,7 @@ class PasswordResetConfirmView(APIView):
         # usuario válido, se responde con el mismo error genérico que un token
         # inválido para no dar pistas.
         user = self._get_user(uid)
-        if user is None or not default_token_generator.check_token(user, token):
+        if user is None or not check_reset_token(user, token):
             return Response(
                 {"detail": "El enlace de restablecimiento no es válido o expiró."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -856,7 +908,8 @@ class PasswordResetConfirmView(APIView):
         # Cambiar la contraseña ya invalida futuros tokens de reset (el
         # generator depende del hash), pero NO cierra las sesiones activas: se
         # revocan los refresh vigentes por si la cuenta estaba comprometida.
-        blacklist_all_refresh_tokens(user)
+        revoke_all(user, reason="password_reset")
+        password_changed_mail(user, "reset")
 
         record(
             request,
@@ -885,8 +938,9 @@ class EmailVerificationConfirmView(APIView):
     """POST /api/v1/auth/verify-email/confirm/
 
     Confirma la verificación de email a partir del token que llega en el
-    link del correo (ver ``_send_verification_email``). Verificación SUAVE:
-    esta vista solo actualiza el estado, no bloquea nada por sí sola.
+    link del correo (ver ``_send_verification_email``). Hasta confirmarlo, la
+    cuenta solo puede ver su perfil, pedir el correo de nuevo y salir (ver
+    ``authentication.JWTAuthenticationWithPasswordPolicy``).
 
     Body:      {"token": "..."}
     Respuesta: 200 con un mensaje de éxito, o 400 si el token es inválido o expiró.
@@ -911,7 +965,7 @@ class EmailVerificationConfirmView(APIView):
 
         if verification.is_expired():
             return Response(
-                {"detail": "El enlace de verificación expiró. Pedí uno nuevo desde tu perfil."},
+                {"detail": "El enlace de verificación expiró. Entrá a tu cuenta y pedí uno nuevo."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -947,12 +1001,57 @@ class EmailVerificationResendView(APIView):
         return Response({"detail": "Te reenviamos el email de verificación."})
 
 
+class SessionTokenRefreshSerializer(TokenRefreshSerializer):
+    """La rotación de simplejwt, con dos reglas de las sesiones (sessions.py):
+    un refresh de una sesión cerrada (o vencida por inactividad) no sirve, y
+    el refresh nuevo conserva la vida de su sesión (30 días con "Recordarme")
+    en vez de volver a los 7 días del default."""
+
+    def validate(self, attrs):
+        refresh = self.token_class(attrs["refresh"])
+        sid = refresh.get("sid")
+        session = None
+        if sid:
+            session = active_session(sid)
+            if session is None:
+                raise InvalidToken({"detail": SESSION_CLOSED_MSG, "code": "session_closed"})
+        user_id = refresh.payload.get(jwt_settings.USER_ID_CLAIM)
+        user = User.objects.filter(**{jwt_settings.USER_ID_FIELD: user_id}).first() if user_id else None
+        if user is None or not jwt_settings.USER_AUTHENTICATION_RULE(user):
+            raise AuthenticationFailed(self.error_messages["no_active_account"], "no_active_account")
+
+        refresh.blacklist()
+        request = self.context.get("request")
+        if session is None:
+            # Un refresh de antes de las sesiones (sin sid): pasa a ser una
+            # sesión con nombre, mantenida como siempre (7 días, sin cierre por
+            # inactividad). Así aparece en "Sesiones abiertas" y se puede cerrar.
+            from .sessions import start_session
+
+            session = start_session(user, request, remember=True, method="password")
+            refresh["sid"] = str(session.id)
+            refresh["remember"] = None
+            refresh["life"] = int(jwt_settings.REFRESH_TOKEN_LIFETIME.total_seconds())
+        refresh.set_jti()
+        life = refresh.get("life")
+        refresh.set_exp(lifetime=timedelta(seconds=life)) if life else refresh.set_exp()
+        refresh.set_iat()
+        refresh.outstand()
+        data = {"access": str(refresh.access_token), "refresh": str(refresh)}
+
+        touch(session, activity=bool(request is not None and request.data.get("active") is True))
+        self.remember = refresh.get("remember")
+        return data
+
+
 class CookieTokenRefreshView(TokenRefreshView):
     """POST /api/v1/auth/refresh/ — el ``TokenRefreshView`` de simplejwt
     (rotación + blacklist, ver ``SIMPLE_JWT``) que además toma el refresh de su
     cookie cuando el cuerpo no lo trae, y en modo cookie devuelve los tokens
     nuevos en cookies. Si el refresh ya no sirve, borra las cookies: así el
     navegador no sigue mandando una sesión muerta."""
+
+    serializer_class = SessionTokenRefreshSerializer
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data={"refresh": refresh_from_request(request)})
@@ -963,7 +1062,11 @@ class CookieTokenRefreshView(TokenRefreshView):
         except (InvalidToken, DRFValidationError) as error:
             failure = error
         else:
-            return deliver_tokens(request, Response(serializer.validated_data, status=status.HTTP_200_OK))
+            return deliver_tokens(
+                request,
+                Response(serializer.validated_data, status=status.HTTP_200_OK),
+                remember=getattr(serializer, "remember", None),
+            )
         if wants_cookies(request):
             return clear_auth_cookies(
                 Response(

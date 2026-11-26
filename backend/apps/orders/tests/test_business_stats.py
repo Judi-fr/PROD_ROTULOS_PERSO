@@ -170,6 +170,29 @@ class BuyerStatsTests(StatsFixtures):
         self.assertEqual(buyers["cities"][0], {"name": "Rosario", "state": "Santa Fe", "count": 3})
         self.assertEqual(buyers["cities"][1]["count"], 2)
 
+    def test_la_misma_provincia_escrita_distinto_cuenta_una_sola_vez(self):
+        # QA en AWS (2026-11-20): "CABA" y "Ciudad Autónoma de Buenos Aires"
+        # salían como dos provincias y dos ciudades.
+        for name in ("Ciudad Autónoma de Buenos Aires", "CABA", "Capital Federal"):
+            self.order(created=ago(days=1), city=name, state=name)
+        self.order(created=ago(days=1), city="Córdoba", state="Córdoba")
+        self.order(created=ago(days=1), city="cordoba", state="CORDOBA")
+        buyers = self.stats()["buyers"]
+        self.assertEqual(
+            buyers["states"],
+            [{"name": "Ciudad Autónoma de Buenos Aires", "count": 3}, {"name": "Córdoba", "count": 2}],
+        )
+        self.assertEqual(
+            [(row["name"], row["count"]) for row in buyers["cities"]],
+            [("Ciudad Autónoma de Buenos Aires", 3), ("Córdoba", 2)],
+        )
+
+    def test_una_ciudad_capital_de_otra_provincia_no_se_confunde_con_caba(self):
+        self.order(created=ago(days=1), city="Capital", state="Córdoba")
+        self.order(created=ago(days=1), city="CABA", state="CABA")
+        cities = self.stats()["buyers"]["cities"]
+        self.assertEqual(sorted(row["name"] for row in cities), ["Capital", "Ciudad Autónoma de Buenos Aires"])
+
 
 class StatsScopeTests(StatsFixtures):
     def test_otro_comercio_no_cuenta(self):

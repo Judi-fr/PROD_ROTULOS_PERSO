@@ -113,6 +113,9 @@ class UserAdminSerializer(serializers.ModelSerializer):
     # pero evita un AttributeError si algún día se instancia a mano).
     orders_count = serializers.IntegerField(read_only=True, default=None)
     last_order_at = serializers.DateTimeField(read_only=True, default=None)
+    # Verificación en dos pasos (mfa.py): solo si está activa y con qué método.
+    mfa_enabled = serializers.SerializerMethodField()
+    mfa_method = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -144,6 +147,8 @@ class UserAdminSerializer(serializers.ModelSerializer):
             "must_change_password",
             "orders_count",
             "last_order_at",
+            "mfa_enabled",
+            "mfa_method",
         ]
         read_only_fields = [
             "id",
@@ -172,6 +177,23 @@ class UserAdminSerializer(serializers.ModelSerializer):
 
     def get_role_key(self, obj):
         return get_user_role(obj)
+
+    @staticmethod
+    def _mfa(obj):
+        from .security_models import UserMfa
+
+        try:
+            config = obj.mfa
+        except UserMfa.DoesNotExist:
+            return None
+        return config if config.enabled else None
+
+    def get_mfa_enabled(self, obj):
+        return self._mfa(obj) is not None
+
+    def get_mfa_method(self, obj):
+        config = self._mfa(obj)
+        return config.method if config else None
 
     def get_role_label(self, obj):
         return get_user_role(obj).capitalize()
@@ -575,6 +597,9 @@ class ProfileSerializer(serializers.ModelSerializer):
 
         data["team"] = team_payload(instance)
         data["teams"] = teams_payload(instance)
+        from .sessions import previous_login
+
+        data["previous_login"] = previous_login(instance, self.context.get("request"))
         return data
 
     def update(self, instance, validated_data):

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Confirmar tu nuevo email · Human Log Rótulos</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/acceso.css" />
+  </head>
+  <body class="access-page">
+    <!-- Se abre desde el enlace del mail que llega al email NUEVO, sin sesión:
+         el token del enlace es la prueba (security_views.ConfirmEmailChangeView). -->
+    <div class="access-layout">
+      <aside class="access-aside" aria-hidden="true">
+        <img src="assets/images/rotulo-ejemplo.png" alt="" width="900" height="1350" />
+        <p class="access-aside-text">Los pedidos de tu tienda entran solos: imprimí los rótulos y despachá con tu transportista <strong>desde un solo lugar</strong>.</p>
+      </aside>
+      <main class="access-main">
+        <div class="access-card">
+          <div class="access-brand"><img src="assets/images/humanlog-logo.png" alt="Human Log" /><span>Rótulos</span></div>
+          <h1>Confirmar tu nuevo email</h1>
+          <p class="access-lead" id="changeLead">Estamos confirmando el enlace que abriste desde tu correo.</p>
+          <p id="pageMessage" class="page-message" role="status" hidden></p>
+          <a class="access-submit" href="index.html">Ir a iniciar sesión</a>
+        </div>
+      </main>
+    </div>
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/confirmar_cambio_email.js"></script>
+  </body>
+</html>

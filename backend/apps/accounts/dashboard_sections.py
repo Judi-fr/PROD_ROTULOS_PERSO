@@ -13,7 +13,7 @@ equipo, ver ``permissions_map.user_has_permission``). El ``menu`` plano de
 
 from __future__ import annotations
 
-from .permissions_map import get_effective_role, user_has_permission
+from .permissions_map import _role_has_permission, get_effective_role, user_has_permission
 
 
 def _links(user, candidates):
@@ -105,12 +105,16 @@ def build_sections(user):
             "admin", "Administración", "mdi mdi-shield-account-outline", "gestionuser.html",
             "Usuarios, roles, auditoría, soporte y estado del sistema.",
             [
-                ("Auditoría", "auditoria.html", "audit.view"),
+                ("Registros de auditoría", "auditoria.html", "audit.view"),
                 ("Soporte", "soporte_admin.html", "support.view_all"),
                 ("Estado del sistema", "estado_sistema.html", "monitoring.view"),
             ],
         )
     return sections
+
+
+# Las secciones que son trabajo de un comercio: sin uno elegido van en gris.
+MERCHANT_SECTIONS = ("orders", "print", "design", "stores", "carriers")
 
 
 def build_sidebar(user):
@@ -125,17 +129,37 @@ def build_sidebar(user):
     (``main`` arriba, ``bottom`` al pie). Como las secciones, todo filtrado por
     permiso acá: el frontend solo lo dibuja.
     """
-    can = lambda permission: user_has_permission(user, permission)  # noqa: E731
+    from .teams import membership
+
+    # Las secciones del trabajo del comercio piden uno elegido. Un comerciante
+    # sin comercio ya no tiene esos permisos, pero el admin los tiene todos:
+    # sin esto veía Pedidos, Imprimir... y cada uno lo mandaba a crear un
+    # comercio (2026-11-19, al pasar la administración a esta barra).
+    has_team = membership(user) is not None
+    can = lambda permission: has_team and user_has_permission(user, permission)  # noqa: E731
+    # Sin comercio, las secciones del comercio se muestran igual pero en gris
+    # (``disabled``): las que su rol permitiría, sin funciones ni números, y al
+    # tocarlas la barra avisa que primero hay que crear un comercio o sumarse
+    # a uno (2026-11-19, pedido del usuario). Con comercio, lo de siempre.
+    show = can if has_team else (lambda permission: _role_has_permission(user, permission))  # noqa: E731
     items = []
 
     def add(key, label, icon, url, links, match=(), badge=None, place="main"):
+        disabled = not has_team and key in MERCHANT_SECTIONS
         items.append({
-            "key": key, "label": label, "icon": icon, "url": url, "links": _links(user, links),
-            "match": list(match), "badge": badge, "place": place,
+            "key": key, "label": label, "icon": icon, "url": url,
+            "links": [] if disabled else _links(user, links),
+            "match": list(match), "badge": None if disabled else badge, "place": place,
+            "disabled": disabled,
         })
 
-    add("home", "Inicio", "house-simple", "dashboard.html", [])
-    if can("orders.view"):
+    # Quien administra y no está en ningún comercio tiene por Inicio el
+    # resumen de la plataforma (el panel del comerciante no tendría nada).
+    overview = any(user_has_permission(user, key) for key in ("users.view", "orders.view_all", "support.view_all"))
+    home_overview = overview and not has_team
+    add("home", "Inicio", "house-simple", "resumen_plataforma.html" if home_overview else "dashboard.html", [],
+        match=("dashboard.html",) if home_overview else ())
+    if show("orders.view"):
         add(
             "orders", "Pedidos", "package", "pedidos.html",
             [
@@ -149,9 +173,9 @@ def build_sidebar(user):
                    "envios_andreani.html", "importar_empretienda.html"),
             badge="orders",
         )
-    if can("labels.batch") or can("documents.view"):
+    if show("labels.batch") or show("documents.view"):
         add(
-            "print", "Imprimir", "printer", "imprimir_rotulos.html" if can("labels.batch") else "documentos.html",
+            "print", "Imprimir", "printer", "imprimir_rotulos.html" if show("labels.batch") else "documentos.html",
             [
                 ("Imprimir rótulos", "imprimir_rotulos.html", "labels.batch"),
                 ("Documentos", "documentos.html", "documents.view"),
@@ -160,7 +184,7 @@ def build_sidebar(user):
             ],
             badge="print" if can("labels.batch") else None,
         )
-    if can("labels.view"):
+    if show("labels.view"):
         add(
             "design", "Diseño de rótulos", "squares-four", "mis_plantillas.html",
             [
@@ -170,13 +194,13 @@ def build_sidebar(user):
             ],
             match=("editor_rotulos.html", "versiones_plantilla.html"),
         )
-    if can("stores.manage"):
+    if show("stores.manage"):
         add(
             "stores", "Tiendas", "storefront", "tiendas.html",
             [("Rótulos pedidos por la tienda", "rotulos_tienda.html", "orders.view")],
             match=("integraciones.html",),
         )
-    if can("carriers.manage"):
+    if show("carriers.manage"):
         from apps.carriers.providers import all_providers
 
         carriers = [(provider.name, f"transportista.html?carrier={provider.code}", None) for provider in all_providers()]
@@ -198,7 +222,10 @@ def build_sidebar(user):
     business = [row for row in business if row[0] == "Datos del comercio"
                 or (row[0] == "Estadísticas" and stats)
                 or (row[0] in ("Miembros y perfiles", "Actividad") and can("team.manage"))]
-    add("business", "Mi comercio", "users-three", "equipo.html", business,
+    if not has_team:
+        business = []
+    # Sin comercio, "Mi comercio" es donde se crea uno o se suma a uno.
+    add("business", "Mi comercio", "users-three", "equipo.html" if has_team else "comercio_inicio.html", business,
         match=("perfiles_equipo.html", "actividad_equipo.html", "comercio_inicio.html", "invitaciones.html"))
     add(
         "help", "Ayuda", "lifebuoy", "ayuda.html",
@@ -210,8 +237,32 @@ def build_sidebar(user):
         match=("notificaciones.html",),
         place="bottom",
     )
-    if get_effective_role(user) == "admin":
-        add("admin", "Administración", "shield-check", "gestionuser.html", [], place="bottom")
+    # La administración de la plataforma es una sección más (2026-11-19): antes
+    # sus páginas tenían su propio menú (admin_sidebar.js) y otro aspecto. La ve
+    # el admin y el personal de la plataforma con alguna de sus pantallas; cada
+    # una con el mismo permiso que pide su página. Roles es IsAdminUser.
+    admin_links = _links(user, [
+        ("Usuarios", "gestionuser.html", "users.view"),
+        ("Comercios", "comercios.html", "users.view"),
+        ("Todos los pedidos", "pedidos_admin.html", "orders.view_all"),
+        ("Reportes", "reportes.html", "reports.view"),
+        ("Registros de auditoría", "auditoria.html", "audit.view"),
+        ("Mensajes de soporte", "soporte_admin.html", "support.view_all"),
+        ("Comercios dados de baja", "comercios_baja.html", "users.view"),
+        ("Catálogos", "catalogos.html", "catalogs.manage"),
+        ("Estado del sistema", "estado_sistema.html", "monitoring.view"),
+    ])
+    if user.is_staff:
+        admin_links.insert(1, {"label": "Roles y permisos", "url": "roles.html"})
+    # Con un comercio, el Inicio es el del comercio: el resumen va acá.
+    if overview and has_team:
+        admin_links.insert(0, {"label": "Resumen", "url": "resumen_plataforma.html"})
+    if admin_links:
+        items.append({
+            "key": "admin", "label": "Administración", "icon": "shield-check", "url": admin_links[0]["url"],
+            "links": admin_links, "match": ["comercio_usuario.html"], "badge": None,
+            "place": "main", "disabled": False,
+        })
     return items
 
 

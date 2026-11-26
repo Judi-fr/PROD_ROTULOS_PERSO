@@ -62,6 +62,7 @@ let currentLastLoginTo = "";
 let currentNeverLoggedIn = false;
 let currentInactiveDays = "";
 let currentLocked = "all";
+let currentMfa = "all";
 let currentFailedAttempts = "all";
 let currentAuthMethod = "all";
 let currentOrderingField = "id";
@@ -87,6 +88,7 @@ function buildQueryString(baseUrl = API_URL, { includePage = true } = {}) {
   if (currentNeverLoggedIn) params.set("never_logged_in", "true");
   if (currentInactiveDays) params.set("inactive_days", currentInactiveDays);
   if (currentLocked && currentLocked !== "all") params.set("locked", currentLocked);
+  if (currentMfa && currentMfa !== "all") params.set("mfa", currentMfa);
   if (currentFailedAttempts && currentFailedAttempts !== "all") {
     params.set("failed_attempts", currentFailedAttempts);
   }
@@ -152,7 +154,7 @@ async function loadUsers() {
     const message = err.isFilterValidationError
       ? err.message
       : "No se pudieron cargar los usuarios. Intentá de nuevo más tarde.";
-    tbody.innerHTML = `<tr><td colspan="8" class="table-placeholder table-error">${escapeHtml(message)}</td></tr>`;
+    tbody.innerHTML = adminErrorRow(8, message);
   }
 }
 
@@ -195,6 +197,7 @@ function renderUsers(users) {
           <div class="user-ident">
             <span class="user-name" title="${escapeHtml(u.display_name || u.email)}">${escapeHtml(u.display_name || u.email)}</span>
             ${u.display_name && u.display_name !== u.email ? `<span class="user-email" title="${escapeHtml(u.email || "")}">${escapeHtml(u.email || "")}</span>` : ""}
+            ${u.mfa_enabled ? `<span class="user-mfa" title="Verificación en dos pasos activada (${u.mfa_method === "email" ? "código por email" : "app autenticadora"})"><i class="ph ph-shield-check" aria-hidden="true"></i>2 pasos</span>` : ""}
           </div>
         </div>
       </td>
@@ -215,6 +218,8 @@ function renderUsers(users) {
             <div class="sep"></div>
             ${canReactivateUsers && u.can_reactivate ? `<a href="#" class="reactivate-user" data-reactivate-id="${u.id}"><i class="ph ph-arrows-clockwise" aria-hidden="true"></i>Reactivar</a>` : ""}
             ${canUnlockUsers && u.is_locked ? `<a href="#" class="unlock-user" data-unlock-id="${u.id}"><i class="ph ph-lock-key-open" aria-hidden="true"></i>Desbloquear</a>` : ""}
+            ${canEditUsers && u.mfa_enabled && Number(u.id) !== currentUserId ? `<a href="#" class="reset-mfa" data-reset-mfa-id="${u.id}"><i class="ph ph-shield-slash" aria-hidden="true"></i>Quitar verificación en dos pasos</a>` : ""}
+            ${canEditUsers && Number(u.id) !== currentUserId ? `<a href="#" class="revoke-sessions" data-revoke-id="${u.id}"><i class="ph ph-sign-out" aria-hidden="true"></i>Cerrar sus sesiones</a>` : ""}
             ${deleteAction}
           </div>
         </div>
@@ -537,6 +542,7 @@ function activeFilterCount() {
     currentNeverLoggedIn,
     Boolean(currentInactiveDays),
     currentLocked !== "all",
+    currentMfa !== "all",
     currentFailedAttempts !== "all",
     currentAuthMethod !== "all",
   ].filter(Boolean).length;
@@ -631,8 +637,72 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     const userId = parseInt(unlockLink.dataset.unlockId, 10);
     if (userId) unlockUser(userId);
+    return;
+  }
+
+  const resetMfaLink = e.target.closest(".reset-mfa");
+  if (resetMfaLink) {
+    e.preventDefault();
+    const userId = parseInt(resetMfaLink.dataset.resetMfaId, 10);
+    if (userId) resetUserMfa(userId);
+    return;
+  }
+
+  const revokeLink = e.target.closest(".revoke-sessions");
+  if (revokeLink) {
+    e.preventDefault();
+    const userId = parseInt(revokeLink.dataset.revokeId, 10);
+    if (userId) revokeUserSessions(userId);
   }
 });
+
+// Perdió el celular y los códigos de recuperación: el admin le quita la
+// verificación en dos pasos (POST /users/<id>/reset-2fa/, users.edit). Queda en
+// la auditoría, se le cierran las sesiones y le llega un mail.
+async function resetUserMfa(userId) {
+  const user = lastUsers.find((u) => Number(u.id) === userId);
+  const userName = user ? user.display_name || user.email : `#${userId}`;
+  const confirmed = await appConfirm(
+    `¿Quitarle la verificación en dos pasos a "${userName}"?\n\nHacelo solo si confirmaste que es la persona (perdió el celular y los códigos). Va a poder entrar solo con su contraseña o Google, le cerramos las sesiones y le avisamos por mail.`,
+    { confirmLabel: "Quitar verificación", danger: true }
+  );
+  if (!confirmed) return;
+  try {
+    const response = await apiFetch(`${API_URL}${userId}/reset-2fa/`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getErrorMessage(data, "No se pudo quitar la verificación."));
+    appAlert(`Listo: "${userName}" ya no tiene la verificación en dos pasos.`, { tone: "success" });
+    loadUsers();
+  } catch (err) {
+    if (err.isSessionExpired) return;
+    appAlert(err.message || "No se pudo quitar la verificación.");
+  }
+}
+
+// Cuenta sospechosa: le cierra todas las sesiones sin desactivarla
+// (POST /users/<id>/revoke-sessions/, users.edit). Tiene que volver a entrar.
+async function revokeUserSessions(userId) {
+  const user = lastUsers.find((u) => Number(u.id) === userId);
+  const userName = user ? user.display_name || user.email : `#${userId}`;
+  const confirmed = await appConfirm(
+    `¿Cerrar todas las sesiones de "${userName}"?\n\nVa a tener que volver a entrar en todas sus computadoras y celulares. La cuenta sigue activa.`,
+    { confirmLabel: "Cerrar sesiones", danger: true }
+  );
+  if (!confirmed) return;
+  try {
+    const response = await apiFetch(`${API_URL}${userId}/revoke-sessions/`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getErrorMessage(data, "No se pudieron cerrar las sesiones."));
+    const closed = Number(data.closed || 0);
+    appAlert(
+      closed ? `Cerramos ${closed === 1 ? "1 sesión" : `${closed} sesiones`} de "${userName}".` : `"${userName}" no tenía sesiones abiertas.`,
+      { tone: "success" }
+    );
+  } catch (err) {
+    if (err.isSessionExpired) return;
+    appAlert(err.message || "No se pudieron cerrar las sesiones.");
+  }
+}
 
 async function reactivateUser(userId) {
   const user = lastUsers.find((u) => Number(u.id) === userId);
@@ -745,7 +815,7 @@ async function softDeleteUser(userId) {
 
 function closeViewModal() {
   const modal = document.getElementById("viewUserModal");
-  if (modal) modal.style.display = "none";
+  if (modal && modal.open) modal.close();
 }
 
 function openViewModal(userId) {
@@ -753,8 +823,8 @@ function openViewModal(userId) {
   const content = document.getElementById("viewUserContent");
   if (!modal || !content) return;
 
-  content.innerHTML = `<div style="text-align:center; color:var(--muted); padding:20px;"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></div>`;
-  modal.style.display = "flex";
+  content.innerHTML = `<div class="table-placeholder"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></div>`;
+  if (!modal.open) modal.showModal();
 
   apiFetch(`${API_URL}${userId}/`)
     .then(async (response) => {
@@ -1013,6 +1083,7 @@ const lastLoginToFilter = document.getElementById("userLastLoginTo");
 const neverLoggedInFilter = document.getElementById("userNeverLoggedIn");
 const inactiveDaysFilter = document.getElementById("userInactiveDays");
 const lockedFilter = document.getElementById("userLockedFilter");
+const mfaFilter = document.getElementById("userMfaFilter");
 const failedAttemptsFilter = document.getElementById("userFailedAttemptsFilter");
 const authMethodFilter = document.getElementById("userAuthMethodFilter");
 const orderingFieldFilter = document.getElementById("userOrderingField");
@@ -1035,6 +1106,7 @@ bindAdvancedFilter(lastLoginToFilter, () => (currentLastLoginTo = lastLoginToFil
 bindAdvancedFilter(neverLoggedInFilter, () => (currentNeverLoggedIn = neverLoggedInFilter.checked));
 bindAdvancedFilter(inactiveDaysFilter, () => (currentInactiveDays = inactiveDaysFilter.value.trim()));
 bindAdvancedFilter(lockedFilter, () => (currentLocked = lockedFilter.value));
+bindAdvancedFilter(mfaFilter, () => (currentMfa = mfaFilter.value));
 bindAdvancedFilter(failedAttemptsFilter, () => (currentFailedAttempts = failedAttemptsFilter.value));
 bindAdvancedFilter(authMethodFilter, () => (currentAuthMethod = authMethodFilter.value));
 bindAdvancedFilter(orderingFieldFilter, () => {
@@ -1094,6 +1166,7 @@ if (clearUserFiltersBtn) {
     currentNeverLoggedIn = false;
     currentInactiveDays = "";
     currentLocked = "all";
+    currentMfa = "all";
     currentFailedAttempts = "all";
     currentAuthMethod = "all";
     currentOrderingField = "id";
@@ -1106,6 +1179,7 @@ if (clearUserFiltersBtn) {
     if (neverLoggedInFilter) neverLoggedInFilter.checked = false;
     if (inactiveDaysFilter) inactiveDaysFilter.value = "";
     if (lockedFilter) lockedFilter.value = "all";
+    if (mfaFilter) mfaFilter.value = "all";
     if (failedAttemptsFilter) failedAttemptsFilter.value = "all";
     if (authMethodFilter) authMethodFilter.value = "all";
     if (orderingFieldFilter) orderingFieldFilter.value = "id";
@@ -1149,6 +1223,10 @@ const closeViewModalBtn = document.getElementById("closeViewModal");
 const closeViewModalBtn2 = document.getElementById("closeViewModalBtn");
 if (closeViewModalBtn) closeViewModalBtn.addEventListener("click", closeViewModal);
 if (closeViewModalBtn2) closeViewModalBtn2.addEventListener("click", closeViewModal);
+// Un clic en el fondo (fuera de la caja) también cierra, como los demás diálogos.
+document.getElementById("viewUserModal")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeViewModal();
+});
 
 // panel de crear usuario (queda igual)
 const panel = document.getElementById("createPanel");
@@ -1271,7 +1349,7 @@ async function handleAdminSubmit(e) {
 // INICIO: esta pantalla es exclusiva de quien puede gestionar usuarios. Sin
 // el permiso users.view, se redirige al dashboard (el perfil propio vive en
 // perfil.html, y Roles/Reportes/Auditoría/Soporte ya son páginas propias:
-// ver assets/js/admin_sidebar.js para el gateo de esos links).
+// ver la sección Administración de la barra lateral, dashboard_sections.build_sidebar).
 // ---------------------------------------------------------------------------
 function bootstrap() {
   if (!canViewUsers()) {

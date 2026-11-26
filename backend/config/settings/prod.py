@@ -114,3 +114,8 @@ SECURE_PROXY_SSL_HEADER = (
 _PROD_LOG_LEVEL = env("LOG_LEVEL", default="WARNING")  # noqa: F405
 LOGGING["loggers"]["apps"]["level"] = _PROD_LOG_LEVEL  # noqa: F405
 LOGGING["loggers"]["django"]["level"] = _PROD_LOG_LEVEL  # noqa: F405
+
+# En producción la API siempre está detrás de UN proxy (el balanceador de AWS,
+# o Caddy en docker-compose.prod.yml). Cambialo en el .env si hay más.
+TRUSTED_PROXIES = env.int("TRUSTED_PROXIES", default=1)  # noqa: F405
+REST_FRAMEWORK["NUM_PROXIES"] = TRUSTED_PROXIES  # noqa: F405

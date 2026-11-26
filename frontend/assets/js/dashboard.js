@@ -551,6 +551,12 @@ async function loadDashboard() {
     const data = await response.json();
     // Sin comercio no hay nada del trabajo del comercio: a crear uno o
     // sumarse. El admin entra igual (la administración no necesita comercio).
+    // Quien administra la plataforma (admin o su personal) tiene por Inicio el
+    // resumen de la plataforma (build_sidebar).
+    if (!data.team && Array.isArray(data.sidebar) && data.sidebar.some((item) => item.key === "home" && item.url === "resumen_plataforma.html")) {
+      window.location.replace("resumen_plataforma.html");
+      return;
+    }
     if (!data.team && !(data.user && data.user.is_admin)) {
       window.location.replace("comercio_inicio.html");
       return;
@@ -596,3 +602,26 @@ if (!hasSession()) {
   if (!el) return;
   el.textContent = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
 })();
+
+// "Tu ingreso anterior: ayer 18:40, Chrome en Windows · Ver actividad"
+// (previous_login, del ingreso actual). Ayuda a notar uno que no fue uno.
+function renderPreviousLogin(user) {
+  const el = document.getElementById("previousLogin");
+  const previous = user && user.previous_login;
+  if (!el || !previous || !previous.at) return;
+  const when = new Date(previous.at);
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const time = when.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+  let day = when.toLocaleDateString("es-AR", { day: "numeric", month: "long" });
+  if (when.toDateString() === today.toDateString()) day = "hoy";
+  else if (when.toDateString() === yesterday.toDateString()) day = "ayer";
+  el.textContent = `Tu ingreso anterior: ${day} ${time}, ${previous.browser} · `;
+  const link = document.createElement("a");
+  link.href = "seguridad.html#actividad";
+  link.textContent = "Ver actividad";
+  el.append(link);
+  el.hidden = false;
+}
+
+renderPreviousLogin(getCurrentUser());

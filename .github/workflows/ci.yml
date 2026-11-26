@@ -1,12 +1,24 @@
 # CI: corre en cada push y en cada pull request contra main.
 #
-# Tres trabajos en paralelo, cada uno atrapa una clase distinta de error:
+# Seis trabajos en paralelo, cada uno atrapa una clase distinta de error:
 #   - tests:   la suite de Django contra Postgres 17, el mismo motor y versión
 #              que producción (SQLite deja pasar errores que Postgres no).
+#   - lint:    flake8 (solo errores reales, ver backend/.flake8) y el chequeo del
+#              frontend (JS que compila, enlaces que existen, elementos que la
+#              página usa y no tiene: frontend/tools/check_frontend.mjs).
+#   - e2e:     las pruebas de navegador (frontend/e2e): Chromium hace clic en la
+#              app contra una API levantada con su propia base.
 #   - docker:  construye las imágenes de docker-compose.prod.yml. Un Dockerfile
 #              roto no lo ve ningún test, y se descubre recién en el servidor.
 #   - scripts: shellcheck sobre los scripts de backup/restore, que corren en
 #              producción sin que nadie los mire hasta el día que hacen falta.
+#   - agent-windows: arma RotulosAgente.exe (el agente de impresión para
+#              Windows) y lo deja como artefacto "rotulos-agent-windows". La
+#              API lo sirve si está en backend/apps/printing/agent/dist/ al
+#              armar su imagen; si no, "Descargar para Windows" da error.
+#
+# Lint, e2e y el .exe estaban solo en los pipelines de Azure (backend/ y
+# frontend/azure-pipelines.yml), que no se disparan solos: no corrían nunca.
 name: CI
 
 on:
@@ -64,7 +76,9 @@ jobs:
         with:
           python-version: "3.13"   # la misma que backend/Dockerfile
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
       # Las mismas fuentes que instala la imagen de producción: los tests del
       # render PNG las usan.
@@ -72,9 +86,11 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
 
       - name: Dependencias
+        # requirements-dev.txt y no requirements.txt: trae zxing-cpp, sin el que
+        # los tests de escaneo (labels/tests/test_scanning.py) se saltean.
         # tblib no es de producción: sin él, un test que falla en paralelo
         # tira "cannot pickle 'traceback'" y esconde el error real.
-        run: pip install -r requirements.txt tblib
+        run: pip install -r requirements-dev.txt tblib
 
       - name: Chequeo de Django
         run: python manage.py check
@@ -85,6 +101,83 @@ jobs:
 
       - name: Tests
         run: python manage.py test --parallel auto --noinput
+
+  lint:
+    name: Lint (flake8 + frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: flake8
+        # Solo flake8, con la versión fijada en requirements-dev.txt: pyflakes
+        # no importa el código, así que no hacen falta las dependencias.
+        run: |
+          pip install "$(grep -E '^flake8==' backend/requirements-dev.txt)"
+          cd backend && flake8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Chequeo del frontend
+        # Sin dependencias: solo node.
+        run: node frontend/tools/check_frontend.mjs
+
+  e2e:
+    name: Pruebas de navegador (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: frontend/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Dependencias de la API
+        run: pip install -r ../../backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
+
+      - name: Playwright y Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Hacer clic en la app
+        # start_backend.sh levanta la API con su propia base SQLite, los datos de
+        # seed_demo + seed_e2e.py y los mails a la consola. E2E_PYTHON: el python
+        # de setup-python, no el venv/ local que el script usa por defecto.
+        env:
+          E2E_PYTHON: python
+        run: npm test
+
+      - name: Guardar qué falló
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-fallas
+          path: |
+            frontend/e2e/playwright-report/
+            frontend/e2e/test-results/
+            frontend/e2e/backend.log
+          retention-days: 7
 
   docker:
     name: Imágenes Docker
@@ -115,3 +208,35 @@ jobs:
       - name: shellcheck
         # sh y no bash: corren en Alpine (busybox).
         run: shellcheck --shell=sh --severity=warning backup/*.sh frontend/docker-entrypoint.sh
+
+  agent-windows:
+    name: Agente de impresión para Windows (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend/apps/printing/agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12: la última que PyInstaller 6.11 da por probada (igual que Azure).
+          python-version: "3.12"
+
+      - name: PyInstaller
+        run: python -m pip install pyinstaller==6.11.1
+
+      - name: Armar RotulosAgente.exe
+        run: pyinstaller --onefile --console --clean --noconfirm --name RotulosAgente --distpath dist rotulos_print_agent.py
+
+      # Que el .exe arranque de verdad, y no solo que se haya armado.
+      - name: Probar el .exe
+        run: .\dist\RotulosAgente.exe --help
+
+      - name: Guardar el .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotulos-agent-windows
+          path: backend/apps/printing/agent/dist/RotulosAgente.exe
+          retention-days: 30

@@ -137,7 +137,7 @@
       let order = data.matches[0];
       if (!data.matches.length) {
         feedback(false);
-        addResult({ tone: "error", title: "No es un pedido de este comercio", detail: `Se leyó «${code}».` });
+        addResult({ tone: "error", title: "No encontramos ningún pedido con ese código", detail: `Se leyó «${code}».` });
         return;
       }
       if (data.matches.length > 1) order = await chooseOrder(data.matches);

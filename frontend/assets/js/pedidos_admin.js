@@ -43,7 +43,7 @@ function renderAdminOrdersRows(orders) {
   const body = document.getElementById("adminOrdersBody");
   if (!body) return;
   if (!orders.length) {
-    body.innerHTML = `<tr><td colspan="5" class="table-placeholder">No hay pedidos para mostrar.</td></tr>`;
+    body.innerHTML = adminEmptyRow(5, { icon: "box", title: "No hay pedidos para mostrar", text: "Probá con otros filtros o con otras fechas." });
     return;
   }
   body.innerHTML = "";
@@ -79,7 +79,7 @@ async function loadAdminOrders() {
   } catch (err) {
     if (err.isSessionExpired) return;
     console.error("Error al cargar pedidos:", err);
-    if (body) body.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:red;">${escapeHtml(err.message)}</td></tr>`;
+    if (body) body.innerHTML = adminErrorRow(5, err.message);
   }
 }
 

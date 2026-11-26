@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+
+    <title>Seguridad de tu cuenta</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+    <link rel="stylesheet" href="assets/css/seguridad.css" />
+  </head>
+  <body data-requires="users.me.view">
+    <div class="layout">
+      <header class="topbar" id="appTopbar"></header>
+
+      <main class="main security-main">
+        <div class="main-heading">
+          <h1>Seguridad de tu cuenta</h1>
+          <p>Dónde tenés la sesión abierta y cómo protegés el ingreso a tu cuenta.</p>
+        </div>
+
+        <p id="pageMessage" class="page-message" role="status" aria-live="polite"></p>
+
+        <!-- Backend: /api/v1/auth/2fa/... (security_views.py, mfa.py). -->
+        <section class="profile-card" id="dos-pasos">
+          <div class="profile-card-title">
+            <span>Verificación en dos pasos</span>
+            <span class="mfa-badge" id="mfaBadge" hidden></span>
+          </div>
+          <div class="profile-card-body">
+            <p class="security-help" id="mfaIntro">
+              Además de tu contraseña (o de Google), al entrar te pedimos un código. Si alguien consigue tu contraseña, igual no puede entrar.
+            </p>
+
+            <!-- Apagada: elegir cómo. -->
+            <div id="mfaOff" hidden>
+              <div class="field" id="mfaReauthPasswordField">
+                <label for="mfaReauthPassword">Para empezar, tu contraseña actual</label>
+                <input id="mfaReauthPassword" type="password" autocomplete="current-password" />
+              </div>
+              <div class="field" id="mfaReauthCodeField" hidden>
+                <label for="mfaReauthCode">Para empezar, el código que te mandamos por email</label>
+                <input id="mfaReauthCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
+                <small><button type="button" class="link-button" data-send-reauth>Mandarme un código por email</button></small>
+              </div>
+              <div class="mfa-choices">
+                <button type="button" class="mfa-choice" data-mfa-method="totp">
+                  <i class="ph ph-device-mobile" aria-hidden="true"></i>
+                  <strong>App autenticadora</strong>
+                  <span>Google Authenticator, Authy o similar. Funciona sin señal. La más segura.</span>
+                </button>
+                <button type="button" class="mfa-choice" data-mfa-method="email">
+                  <i class="ph ph-envelope-simple" aria-hidden="true"></i>
+                  <strong>Código por email</strong>
+                  <span>Te mandamos un código a tu email cada vez que entrás.</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Activando: QR o código por email, y confirmar. -->
+            <form id="mfaSetup" class="mfa-setup" hidden novalidate>
+              <div id="mfaTotpSetup" hidden>
+                <ol class="mfa-steps">
+                  <li>Abrí tu app autenticadora y agregá una cuenta escaneando este código.</li>
+                  <li>Si no podés escanearlo, cargá a mano esta clave: <code id="mfaSecret"></code> <button type="button" class="btn btn-ghost btn-small" id="copySecret">Copiar</button></li>
+                  <li>Escribí abajo el código de 6 números que te muestra la app.</li>
+                </ol>
+                <img id="mfaQr" class="mfa-qr" alt="Código QR para la app autenticadora" width="200" height="200">
+              </div>
+              <p id="mfaEmailSetup" class="security-help" hidden></p>
+              <div class="field">
+                <label for="mfaSetupCode">Código de 6 números</label>
+                <input id="mfaSetupCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+              </div>
+              <div class="mfa-actions">
+                <button type="submit" class="btn btn-primary">Activar</button>
+                <button type="button" class="btn btn-ghost" id="mfaSetupCancel">Cancelar</button>
+              </div>
+            </form>
+
+            <!-- Recién activada (o regenerados): los códigos de recuperación. -->
+            <div id="mfaCodes" class="mfa-codes" hidden>
+              <p class="page-message warning">
+                Guardá estos códigos en un lugar seguro (impresos o en tu gestor de contraseñas). Si perdés el celular, cada uno te deja entrar una vez. <strong>No los vamos a volver a mostrar.</strong>
+              </p>
+              <ul class="mfa-code-grid" id="mfaCodeList"></ul>
+              <div class="mfa-actions">
+                <button type="button" class="btn btn-outline" id="copyCodes">Copiar todos</button>
+                <button type="button" class="btn btn-outline" id="downloadCodes">Descargar</button>
+                <button type="button" class="btn btn-primary" id="codesDone">Ya los guardé</button>
+              </div>
+            </div>
+
+            <!-- Prendida: estado, códigos nuevos, desactivar. -->
+            <div id="mfaOn" hidden>
+              <p class="mfa-status" id="mfaStatusText"></p>
+              <form id="mfaManage" class="mfa-manage" novalidate>
+                <div class="field">
+                  <label for="mfaManageCode">Para cambiar algo, escribí un código</label>
+                  <input id="mfaManageCode" type="text" autocomplete="one-time-code" maxlength="9" placeholder="Código de 6 números o de recuperación">
+                  <small><button type="button" class="link-button" id="mfaReauthEmail">Mandarme un código por email</button></small>
+                </div>
+                <div class="mfa-actions">
+                  <button type="button" class="btn btn-outline" id="mfaRegenerate">Generar códigos de recuperación nuevos</button>
+                  <button type="button" class="btn btn-danger" id="mfaDisable">Desactivar</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Backend: POST /api/v1/auth/me/set-password/ y .../me/change-email/ (security_views.py). -->
+        <section class="profile-card" id="acceso">
+          <div class="profile-card-title">Contraseña y email</div>
+          <div class="profile-card-body">
+            <div id="passwordBlock">
+              <p class="security-help" id="passwordHasOne" hidden>
+                Tu contraseña se cambia en <a href="organizacion.html#perfil">Mi cuenta</a>.
+              </p>
+              <form id="setPasswordForm" class="mfa-setup" hidden novalidate>
+                <p class="security-help">Entrás con Google y no tenés contraseña. Creá una para poder entrar también con tu email.</p>
+                <div class="field">
+                  <label for="newPassword">Contraseña nueva</label>
+                  <input id="newPassword" type="password" autocomplete="new-password" data-password-meter />
+                </div>
+                <div class="field">
+                  <label for="newPasswordConfirm">Repetila</label>
+                  <input id="newPasswordConfirm" type="password" autocomplete="new-password" />
+                </div>
+                <div class="field" id="setPasswordCodeField">
+                  <label for="setPasswordCode">Código para confirmar que sos vos</label>
+                  <input id="setPasswordCode" type="text" autocomplete="one-time-code" maxlength="9" />
+                  <small>De tu app, uno de recuperación o <button type="button" class="link-button" data-send-reauth>mandarme un código por email</button></small>
+                </div>
+                <div class="mfa-actions"><button type="submit" class="btn btn-primary">Crear contraseña</button></div>
+              </form>
+            </div>
+
+            <form id="changeEmailForm" class="mfa-setup email-change" novalidate>
+              <p class="security-help">
+                Tu email actual: <strong id="currentEmail"></strong>. Para cambiarlo te mandamos un enlace al email nuevo; el cambio se hace recién al abrirlo.
+                <span id="googleEmailWarning" hidden>Ojo: si entrás con Google, después vas a tener que usar la cuenta de Google del email nuevo.</span>
+              </p>
+              <div class="field">
+                <label for="newEmail">Email nuevo</label>
+                <input id="newEmail" type="email" autocomplete="email" />
+              </div>
+              <div class="field" id="changeEmailPasswordField">
+                <label for="changeEmailPassword">Tu contraseña actual</label>
+                <input id="changeEmailPassword" type="password" autocomplete="current-password" />
+              </div>
+              <div class="field" id="changeEmailCodeField" hidden>
+                <label for="changeEmailCode">Código (de tu app, de recuperación o por email)</label>
+                <input id="changeEmailCode" type="text" autocomplete="one-time-code" maxlength="9" />
+                <small><button type="button" class="link-button" data-send-reauth>Mandarme un código por email</button></small>
+              </div>
+              <div class="mfa-actions"><button type="submit" class="btn btn-outline">Cambiar email</button></div>
+            </form>
+          </div>
+        </section>
+
+        <!-- Backend: GET /api/v1/auth/sessions/, POST .../<id>/revoke/, POST .../revoke-others/ (security_views.py). -->
+        <section class="profile-card" id="sesiones">
+          <div class="profile-card-title">
+            <span>Sesiones abiertas</span>
+            <button type="button" class="btn btn-outline btn-small" id="revokeOthersBtn" hidden>Cerrar todas las demás</button>
+          </div>
+          <div class="profile-card-body">
+            <p class="security-help">
+              Cada computadora o celular donde entraste a tu cuenta. Si ves uno que no reconocés, cerralo y cambiá tu contraseña.
+            </p>
+            <ul class="session-list" id="sessionList">
+              <li><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span></span></li>
+            </ul>
+          </div>
+        </section>
+        <!-- Backend: GET /api/v1/auth/me/security-log/ (security_views.SecurityLogView). -->
+        <section class="profile-card" id="actividad">
+          <div class="profile-card-title">Actividad de seguridad</div>
+          <div class="profile-card-body">
+            <p class="security-help">Los últimos ingresos (también los intentos fallidos con tu email) y cambios de seguridad de tu cuenta.</p>
+            <div class="table-scroll">
+              <table class="security-log">
+                <thead><tr><th>Cuándo</th><th>Qué pasó</th><th>Desde</th></tr></thead>
+                <tbody id="securityLogBody"><tr><td colspan="3"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span></span></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/seguridad.js"></script>
+  </body>
+</html>

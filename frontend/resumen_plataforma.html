@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resumen de la plataforma</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/base.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+    <!-- Las mismas piezas que el Inicio del comerciante: números con su línea
+         de la semana, "La semana" y la lista de lo que hay que atender. -->
+    <link rel="stylesheet" href="assets/css/dashboard.css" />
+  </head>
+  <body data-requires="users.view,orders.view_all,support.view_all">
+    <div class="layout">
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), sección Administración. -->
+      <header class="topbar" id="appTopbar"></header>
+
+      <main class="main">
+        <div class="dash-head">
+          <div class="main-heading">
+            <span class="dash-date" id="overviewDate"></span>
+            <h1>Resumen de la plataforma</h1>
+          </div>
+        </div>
+
+        <p id="pageMessage" class="page-message" role="status" aria-live="polite" hidden></p>
+
+        <!-- Personas, comercios, pedidos y soporte (GET /admin/overview/): cada
+             número abre su pantalla. Solo los bloques que el permiso deja ver. -->
+        <section id="overviewStats" class="today-stats" aria-label="La plataforma hoy">
+          <span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span>
+        </section>
+
+        <div class="dash-row">
+          <section id="weekBox" class="week dash-card dash-card-wide" aria-labelledby="weekTitle" hidden>
+            <div class="week-head">
+              <div>
+                <h2 class="todo-title" id="weekTitle">Pedidos de la semana</h2>
+                <p class="week-summary" id="weekSummary"></p>
+              </div>
+              <ul class="week-legend" aria-label="Referencias">
+                <li><i class="week-key week-entered" aria-hidden="true"></i>Entraron</li>
+                <li><i class="week-key week-dispatched" aria-hidden="true"></i>Despachados</li>
+              </ul>
+            </div>
+            <div class="week-chart-wrap">
+              <div class="week-chart" id="weekChart"></div>
+              <div class="week-tooltip" id="weekTooltip" role="status" hidden></div>
+            </div>
+            <details class="week-table">
+              <summary>Ver como tabla</summary>
+              <table>
+                <thead><tr><th scope="col">Día</th><th scope="col">Entraron</th><th scope="col">Despachados</th></tr></thead>
+                <tbody id="weekTableBody"></tbody>
+              </table>
+            </details>
+          </section>
+
+          <section id="todoBox" class="todo dash-card" aria-labelledby="todoTitle" hidden>
+            <div class="todo-head">
+              <h2 class="todo-title" id="todoTitle">Para atender</h2>
+            </div>
+            <ul class="todo-list" id="todoList"></ul>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/topbar.js"></script>
+    <script src="assets/js/dashboard_week.js"></script>
+    <script src="assets/js/resumen_plataforma.js"></script>
+  </body>
+</html>

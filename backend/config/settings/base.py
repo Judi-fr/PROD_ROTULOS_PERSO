@@ -123,7 +123,14 @@ DATABASES = {
 # Django REST Framework
 # ---------------------------------------------------------------------------
 
+# Cuántos proxies NUESTROS hay delante de la API (balanceador de AWS, Caddy):
+# de X-Forwarded-For solo valen las entradas que agregaron ellos
+# (apps/common/net.py). 0 = ninguno: el encabezado se ignora (desarrollo).
+TRUSTED_PROXIES = env.int("TRUSTED_PROXIES", default=0)
+
 REST_FRAMEWORK = {
+    # La misma regla que apps/common/net.py para los límites por IP.
+    "NUM_PROXIES": TRUSTED_PROXIES,
     "EXCEPTION_HANDLER": "config.errors.api_exception_handler",
     # Toda la API se autentica con JWT (djangorestframework-simplejwt).
     # El frontend manda el access token en el header:
@@ -163,7 +170,11 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/min",
         "user": "1000/min",
-        "login": "5/min",
+        "login": env("LOGIN_THROTTLE_RATE", default="5/min"),
+        # Segundo paso: escribir el código (además cuenta para el bloqueo de la
+        # cuenta, ver LoginLockout) y pedir que lo manden de nuevo por email.
+        "mfa_verify": "10/min",
+        "mfa_email": "3/min",
         # El agente de impresión consulta cada pocos segundos (apps.printing).
         "print_agent": "240/min",
         # Pedir/confirmar reset de contraseña: frena el email bombing a una
@@ -270,6 +281,11 @@ EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL", default="Human Log · Rótulos <no-reply@rotulos.local>"
 )
+
+# Quién recibe un aviso por mail de cada mensaje del form de contacto
+# ("Ayuda/Soporte"), separados por coma. Vacío = ninguno: el mensaje igual se
+# guarda en la bandeja de Soporte del admin (apps/accounts/support_mail.py).
+SUPPORT_NOTIFY_EMAILS = env.list("SUPPORT_NOTIFY_EMAILS", default=[])
 
 # Base del frontend (SPA) para armar links que van en los correos, p. ej. el
 # de reset apunta a {FRONTEND_URL}/reset-password.html?uid=...&token=...
@@ -530,6 +546,14 @@ SIMPLE_JWT = {
     "UPDATE_LAST_LOGIN": True,
 }
 
+# Sesiones con nombre y "Recordarme" (apps/accounts/sessions.py).
+# Con "Mantener la sesión iniciada": el refresh dura AUTH_REMEMBER_DAYS y no se
+# cierra por inactividad. Sin marcarla: cookie de sesión, el token vence a las
+# AUTH_SESSION_HOURS y la sesión se cierra tras AUTH_IDLE_MINUTES sin uso.
+AUTH_REMEMBER_DAYS = env.int("AUTH_REMEMBER_DAYS", default=30)
+AUTH_SESSION_HOURS = env.int("AUTH_SESSION_HOURS", default=12)
+AUTH_IDLE_MINUTES = env.int("AUTH_IDLE_MINUTES", default=30)
+
 # Tokens del frontend web en cookies HttpOnly (apps/accounts/auth_cookies.py,
 # donde está explicada cada decisión). Secure por defecto salvo en DEBUG, que
 # corre por HTTP; en un server de prueba por HTTP plano, AUTH_COOKIE_SECURE=False.
@@ -724,3 +748,12 @@ INTEGRATIONS_ALLOW_PRIVATE_HOSTS = env.bool("INTEGRATIONS_ALLOW_PRIVATE_HOSTS", 
 NOTICES_RECENT_DAYS = env.int("NOTICES_RECENT_DAYS", default=3)
 NOTICES_MAIL_RETRY_SECONDS = env.int("NOTICES_MAIL_RETRY_SECONDS", default=600)
 NOTICES_MAIL_ENABLED = env.bool("NOTICES_MAIL_ENABLED", default=True)
+
+# Verificación en dos pasos (apps/accounts/mfa.py).
+MFA_TOKEN_MAX_AGE_SECONDS = env.int("MFA_TOKEN_MAX_AGE_SECONDS", default=300)
+MFA_EMAIL_CODE_MINUTES = env.int("MFA_EMAIL_CODE_MINUTES", default=10)
+MFA_TRUST_DAYS = env.int("MFA_TRUST_DAYS", default=30)
+MFA_RECOVERY_CODES = env.int("MFA_RECOVERY_CODES", default=10)
+AUTH_DEVICE_COOKIE_DAYS = env.int("AUTH_DEVICE_COOKIE_DAYS", default=365)
+# Cambio de email (security_views.ChangeEmailView): vida del enlace al email nuevo.
+EMAIL_CHANGE_HOURS = env.int("EMAIL_CHANGE_HOURS", default=24)

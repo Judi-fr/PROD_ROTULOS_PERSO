@@ -1,440 +1,330 @@
 // ---------------------------------------------------------------------------
-// REPORTES / MÉTRICAS: usuarios, seguridad, pedidos y soporte/actividad.
-// (Antes era una sección de gestionuser.html; ver reportes.html.)
+// REPORTES: usuarios, seguridad, pedidos y soporte/actividad de toda la
+// plataforma. Rehecho el 2026-11-19: cada pestaña lleva arriba los números del
+// período y debajo columnas por mes, barras y tablas (report_charts.js, el
+// mismo dibujo que el Inicio). Antes eran barras de <span> con el ancho en
+// style y tablas con un renglón por mes aunque fuera todo cero.
+// El cálculo viene hecho del backend; acá solo se dibuja.
 // ---------------------------------------------------------------------------
 const METRICS_URL = `${window.APP_CONFIG.API_BASE}/users/metrics/`;
 const ORDERS_METRICS_URL = `${window.APP_CONFIG.API_BASE}/orders/metrics/`;
 const SUPPORT_METRICS_URL = `${window.APP_CONFIG.API_BASE}/support-messages/metrics/`;
 const AUDIT_METRICS_URL = `${window.APP_CONFIG.API_BASE}/audit/metrics/`;
 
-function renderMetricsBars(containerId, items, { labelKey, countKey, labelFormatter }) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  if (!items || items.length === 0) {
-    container.innerHTML = `<p class="roles-loading">Sin datos para mostrar.</p>`;
-    return;
-  }
-  const max = Math.max(...items.map((item) => item[countKey]), 1);
-  container.innerHTML = items
-    .map((item) => {
-      const label = escapeHtml(labelFormatter ? labelFormatter(item[labelKey]) : item[labelKey]);
-      const pct = Math.round((item[countKey] / max) * 100);
-      return `
-        <div class="metrics-bar-row">
-          <span class="metrics-bar-label" title="${label}">${label}</span>
-          <span class="metrics-bar-track"><span class="metrics-bar-fill" style="width:${pct}%"></span></span>
-          <span class="metrics-bar-count">${item[countKey]}</span>
-        </div>
-      `;
-    })
-    .join("");
+const RC = window.ReportCharts;
+const byId = (id) => document.getElementById(id);
+const plural = (n, one, many) => `${RC.formatNumber(n)} ${n === 1 ? one : many}`;
+
+// Con coma decimal y sin ",0" de más, como se escribe acá ("12,5 %", "0 %").
+function formatDecimal(value) {
+  return Number(value).toLocaleString("es-AR", { maximumFractionDigits: 1 });
 }
 
-function renderAuthMethodStats(authMethod) {
-  const container = document.getElementById("metricsAuthMethod");
-  if (!container) return;
-  const local = authMethod?.local ?? 0;
-  const google = authMethod?.google ?? 0;
-  container.innerHTML = `
-    <div class="metrics-stat">
-      <span class="metrics-stat-value">${local}</span>
-      <span class="metrics-stat-label">Email y contraseña</span>
-    </div>
-    <div class="metrics-stat">
-      <span class="metrics-stat-value">${google}</span>
-      <span class="metrics-stat-label">Google</span>
-    </div>
-  `;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers genéricos de reportes: el cálculo viene hecho del backend, acá
-// solo se pinta (tablas simples y filas de números grandes, reusando
-// metrics-bars / metrics-stat-row / stat-value — sin librerías de gráficos).
-// ---------------------------------------------------------------------------
-function setMetricsLoading(ids) {
-  ids.forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = `<p class="roles-loading"><span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span></p>`;
-  });
-}
-
-function renderMetricsEmpty(containerId, text = "Sin datos todavía.") {
-  const container = document.getElementById(containerId);
-  if (container) container.innerHTML = `<p class="roles-loading">${escapeHtml(text)}</p>`;
-}
-
-// "YYYY-MM" -> "ene 2026". Los meses sin datos ya vienen resueltos por el
-// backend (0 en vez de omitir el mes en las series que lo necesitan).
-function formatMonthLabel(month) {
-  const [year, monthNum] = String(month || "").split("-");
-  const date = new Date(Number(year), Number(monthNum) - 1, 1);
-  if (Number.isNaN(date.getTime())) return month;
-  return date.toLocaleDateString("es-AR", { month: "short", year: "numeric" });
-}
-
-// Nunca un "—" sin explicación: null/undefined siempre cae en el mismo texto.
 function formatPercent(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return "Sin datos todavía";
-  return `${Number(value).toFixed(1)}%`;
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${formatDecimal(value)} %`;
 }
 
 function formatHours(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return "Sin datos todavía";
-  return `${Number(value).toFixed(1)} h`;
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  const hours = Number(value);
+  // Más de dos días se lee mejor en días.
+  return hours >= 48 ? `${formatDecimal(hours / 24)} días` : `${formatDecimal(hours)} h`;
 }
 
-function renderMetricsTable(containerId, columns, rows, emptyText = "Sin datos todavía.") {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  if (!rows || rows.length === 0) {
-    container.innerHTML = `<p class="roles-loading">${emptyText}</p>`;
-    return;
-  }
-  const head = columns.map((col) => `<th>${escapeHtml(col.label)}</th>`).join("");
-  const body = rows
-    .map(
-      (row) =>
-        `<tr>${columns
-          .map((col) => `<td>${escapeHtml(col.render ? col.render(row) : row[col.key] ?? "-")}</td>`)
-          .join("")}</tr>`
-    )
-    .join("");
-  container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+function formatDays(value) {
+  const days = Math.round(value);
+  return `${days} ${days === 1 ? "día" : "días"}`;
 }
 
-function renderStatRow(containerId, stats, emptyText = "Sin datos todavía.") {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  if (!stats || stats.length === 0) {
-    container.innerHTML = `<p class="roles-loading">${emptyText}</p>`;
-    return;
-  }
-  container.innerHTML = stats
-    .map(
-      (stat) => `
-        <div class="metrics-stat">
-          <span class="metrics-stat-value">${escapeHtml(stat.value)}</span>
-          <span class="metrics-stat-label">${escapeHtml(stat.label)}</span>
-        </div>
-      `
-    )
-    .join("");
-}
-
-// --- Bloque "Usuarios" (incluye el contrato original: role_distribution,
-// signups_by_month, auth_method) + "Seguridad" -----------------------------
-
-const REPORTS_USER_IDS = [
-  "metricsRoleDistribution", "metricsSignupsByMonth", "metricsAuthMethod",
-  "metricsActiveVsInactive", "metricsActiveUsers", "metricsRetention",
-  "metricsLockoutsByMonth", "metricsTopFailedAttempts", "metricsAccountAge",
-  "metricsEmailVerification", "metricsPendingPasswordChange", "metricsAuthVerificationCross",
-];
-
-function renderUsersMetrics(data) {
-  renderMetricsBars("metricsRoleDistribution", data.role_distribution, {
-    labelKey: "label", countKey: "count", labelFormatter: translateRole,
+// Los meses del período, del más viejo al actual ("2026-06"...), para que cada
+// gráfico tenga todos los meses aunque el backend omita los que están en cero.
+function periodMonths(count) {
+  const now = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (count - 1 - index), 1);
+    return { key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`, date };
   });
-  renderMetricsBars("metricsSignupsByMonth", data.signups_by_month, {
-    labelKey: "month", countKey: "count", labelFormatter: formatMonthLabel,
+}
+
+function monthPoints(months) {
+  return months.map(({ date }) => ({
+    label: date.toLocaleDateString("es-AR", { month: "short" }).replace(".", ""),
+    long: date.toLocaleDateString("es-AR", { month: "long", year: "numeric" }).replace(/^./, (c) => c.toUpperCase()),
+  }));
+}
+
+// Una serie por mes a partir de filas {month, <campo>} del backend.
+function monthValues(months, rows, field = "count") {
+  const map = new Map((rows || []).map((row) => [String(row.month).slice(0, 7), Number(row[field]) || 0]));
+  return months.map(({ key }) => map.get(key) || 0);
+}
+
+const sum = (values) => values.reduce((a, b) => a + b, 0);
+
+function setLoading(ids) {
+  ids.forEach((id) => {
+    const el = byId(id);
+    if (el) el.innerHTML = `<span class="app-skeleton" role="status" aria-label="Cargando…"><span></span><span></span><span></span></span>`;
   });
-  renderAuthMethodStats(data.auth_method);
+}
 
-  renderMetricsTable(
-    "metricsActiveVsInactive",
-    [
-      { label: "Mes", render: (r) => formatMonthLabel(r.month) },
-      { label: "Altas", key: "signups" },
-      { label: "Bajas", key: "deactivations" },
-      { label: "Neto", render: (r) => (r.net > 0 ? `+${r.net}` : r.net) },
-    ],
-    data.active_vs_inactive_by_month
-  );
+function showPanelNote(name, text) {
+  const note = byId(`${name}Note`);
+  if (!note) return;
+  note.textContent = text || "";
+  note.hidden = !text;
+}
 
-  const activeUsers = data.active_users || {};
-  renderStatRow("metricsActiveUsers", [
-    { value: activeUsers.last_7_days ?? 0, label: "Activos (7 días)" },
-    { value: activeUsers.last_30_days ?? 0, label: "Activos (30 días)" },
-    { value: activeUsers.last_90_days ?? 0, label: "Activos (90 días)" },
-    { value: activeUsers.never_logged_in ?? 0, label: "Nunca inició sesión" },
+// --- Usuarios y Seguridad (GET /users/metrics/) ----------------------------
+
+const USER_IDS = ["chartSignups", "barsRoles", "tableRetention", "barsAuth"];
+const SECURITY_IDS = ["chartLockouts", "tableVerification", "tableFailed"];
+
+function renderUsers(data, months) {
+  const active = data.active_users || {};
+  const signups = monthValues(months, data.active_vs_inactive_by_month, "signups");
+  const deactivations = monthValues(months, data.active_vs_inactive_by_month, "deactivations");
+  const age = data.account_age || {};
+  RC.kpis(byId("usersKpis"), [
+    { label: "Activos en 30 días", icon: "user-check", value: active.last_30_days ?? 0, hint: `${RC.formatNumber(active.last_7_days ?? 0)} en 7 días · ${RC.formatNumber(active.last_90_days ?? 0)} en 90` },
+    { label: "Altas en el período", icon: "user-plus", value: sum(signups), hint: plural(sum(deactivations), "baja", "bajas") },
+    { label: "Nunca entraron", icon: "user-minus", value: active.never_logged_in ?? 0, hint: "Cuentas sin ningún ingreso" },
+    { label: "Antigüedad promedio", icon: "calendar-blank", value: age.average_days != null ? formatDays(age.average_days) : "—", hint: "Desde que se creó la cuenta" },
   ]);
 
-  renderMetricsTable(
-    "metricsRetention",
-    [
-      { label: "Mes de registro", render: (r) => formatMonthLabel(r.month) },
-      { label: "Cohorte", key: "cohort_size" },
-      { label: "Volvieron", key: "returned" },
-      { label: "% Retención", render: (r) => formatPercent(r.retention_rate) },
-    ],
-    data.retention
-  );
-
-  renderMetricsBars("metricsLockoutsByMonth", data.lockouts_by_month, {
-    labelKey: "month", countKey: "count", labelFormatter: formatMonthLabel,
+  RC.columns(byId("chartSignups"), {
+    points: monthPoints(months),
+    series: [{ label: "Altas", values: signups }, { label: "Bajas", values: deactivations }],
+    description: "Altas y bajas de cuentas por mes",
+    empty: "No hubo altas ni bajas en el período.",
   });
 
-  renderMetricsTable(
-    "metricsTopFailedAttempts",
+  RC.bars(byId("barsRoles"), (data.role_distribution || []).map((row) => ({ label: translateRole(row.label), count: row.count })));
+
+  RC.table(
+    byId("tableRetention"),
     [
-      { label: "Email", key: "email" },
-      { label: "Intentos", key: "failed_attempts" },
-      { label: "Bloqueada ahora", render: (r) => (r.is_locked ? "Sí" : "No") },
+      { label: "Mes de registro", value: (r) => monthPoints([{ date: new Date(`${r.month}-01T12:00:00`) }])[0].long },
+      { label: "Se registraron", value: (r) => RC.formatNumber(r.cohort_size), numeric: true },
+      { label: "Volvieron", value: (r) => RC.formatNumber(r.returned), numeric: true },
+      { label: "Retención", value: (r) => formatPercent(r.retention_rate), numeric: true },
     ],
-    data.top_failed_attempts
+    (data.retention || []).filter((row) => row.cohort_size > 0),
+    { empty: "Nadie se registró en el período." }
   );
 
-  const accountAge = data.account_age || {};
-  const ageStats = [
-    {
-      value: accountAge.average_days != null ? `${Math.round(accountAge.average_days)} días` : "Sin datos todavía",
-      label: "Antigüedad promedio",
-    },
-    ...(accountAge.by_role || []).map((row) => ({
-      value: `${Math.round(row.average_days)} días`,
-      label: translateRole(row.role.charAt(0).toUpperCase() + row.role.slice(1)),
-    })),
-  ];
-  renderStatRow("metricsAccountAge", ageStats);
+  const auth = data.auth_method || {};
+  RC.bars(byId("barsAuth"), [
+    { label: "Email y contraseña", count: auth.local ?? 0 },
+    { label: "Google", count: auth.google ?? 0 },
+  ]);
 }
 
-function renderSecurityMetrics(data) {
+function renderSecurity(data, months) {
   const verification = data.email_verification || {};
-  renderStatRow("metricsEmailVerification", [
-    { value: verification.verified ?? 0, label: "Verificados" },
-    { value: verification.unverified ?? 0, label: "Sin verificar" },
-    { value: verification.expired_token ?? 0, label: "Con token vencido" },
+  const verified = verification.verified ?? 0;
+  const unverified = verification.unverified ?? 0;
+  const lockouts = monthValues(months, data.lockouts_by_month);
+  const pending = data.pending_password_change ?? 0;
+  RC.kpis(byId("securityKpis"), [
+    { label: "Email verificado", icon: "envelope-simple-open", value: verified + unverified ? formatPercent((verified / (verified + unverified)) * 100) : "—", hint: `${plural(unverified, "sin verificar", "sin verificar")} · ${plural(verification.expired_token ?? 0, "link vencido", "links vencidos")}` },
+    { label: "Bloqueos en el período", icon: "lock-simple", value: sum(lockouts), hint: "Por contraseñas equivocadas", tone: sum(lockouts) ? "alert" : "" },
+    { label: "Cambio de contraseña pendiente", icon: "key", value: pending, hint: "Deben cambiarla al entrar" },
+    (() => {
+      const adoption = data.mfa_adoption || {};
+      const total = adoption.total ?? 0;
+      return {
+        label: "Verificación en dos pasos",
+        icon: "shield-check",
+        value: total ? formatPercent(((adoption.enabled ?? 0) / total) * 100) : "—",
+        hint: `${adoption.totp ?? 0} con app · ${adoption.email ?? 0} por email`,
+      };
+    })(),
   ]);
 
-  renderStatRow("metricsPendingPasswordChange", [
-    { value: data.pending_password_change ?? 0, label: "Cambio de contraseña pendiente" },
-  ]);
+  RC.columns(byId("chartLockouts"), {
+    points: monthPoints(months),
+    series: [{ label: "Bloqueos", values: lockouts }],
+    description: "Cuentas bloqueadas por mes",
+    empty: "No hubo bloqueos en el período.",
+  });
 
-  renderMetricsTable(
-    "metricsAuthVerificationCross",
+  RC.table(
+    byId("tableVerification"),
     [
-      { label: "Método", render: (r) => (r.auth_method === "google" ? "Google" : "Local") },
-      { label: "Verificados", key: "verified" },
-      { label: "Sin verificar", key: "unverified" },
+      { label: "Método", value: (r) => (r.auth_method === "google" ? "Google" : "Email y contraseña") },
+      { label: "Verificados", value: (r) => RC.formatNumber(r.verified), numeric: true },
+      { label: "Sin verificar", value: (r) => RC.formatNumber(r.unverified), numeric: true },
     ],
     data.auth_method_email_verification
   );
+
+  RC.table(
+    byId("tableFailed"),
+    [
+      { label: "Cuenta", value: (r) => r.email },
+      { label: "Intentos fallidos", value: (r) => RC.formatNumber(r.failed_attempts), numeric: true },
+      { label: "Bloqueada ahora", value: (r) => (r.is_locked ? "Sí" : "No") },
+    ],
+    (data.top_failed_attempts || []).filter((row) => row.failed_attempts > 0),
+    { empty: "Ninguna cuenta con intentos fallidos." }
+  );
 }
 
-// --- Bloque "Pedidos" (apps.orders, orders.view_all) -----------------------
+// --- Pedidos (GET /orders/metrics/) -----------------------------------------
 
-const REPORTS_ORDERS_IDS = [
-  "metricsOrdersByMonth", "metricsOrdersByStatus", "metricsCancellationRate",
-  "metricsAvgTimeBetweenStatuses", "metricsTopUsersByOrders", "metricsUsersWithOrders",
-  "metricsOrdersByCity", "metricsOrdersByState",
-];
+const ORDER_IDS = ["chartOrders", "barsStatus", "tableTimes", "barsCancelledFrom", "barsStates", "barsCities", "tableTopUsers"];
 
-function renderOrdersMetrics(data) {
-  renderMetricsBars("metricsOrdersByMonth", data.orders_by_month, {
-    labelKey: "month", countKey: "count", labelFormatter: formatMonthLabel,
+function renderOrders(data, months) {
+  const orders = monthValues(months, data.orders_by_month);
+  const cancellation = data.cancellation_rate || {};
+  const withOrders = data.users_with_orders || {};
+  RC.kpis(byId("ordersKpis"), [
+    { label: "Pedidos en el período", icon: "package", value: sum(orders), hint: `${RC.formatNumber(cancellation.total_orders ?? 0)} en total` },
+    { label: "Cancelados", icon: "x-circle", value: formatPercent(cancellation.rate), hint: plural(cancellation.cancelled_count ?? 0, "pedido cancelado", "pedidos cancelados") },
+    { label: "Cuentas con pedidos", icon: "storefront", value: withOrders.count ?? 0, hint: `${formatPercent(withOrders.percentage)} de ${RC.formatNumber(withOrders.total_users ?? 0)}` },
+  ]);
+
+  RC.columns(byId("chartOrders"), {
+    points: monthPoints(months),
+    series: [{ label: "Pedidos", values: orders }],
+    description: "Pedidos por mes",
+    empty: "No entraron pedidos en el período.",
   });
 
-  const statusData = data.orders_by_status || {};
-  renderMetricsBars("metricsOrdersByStatus", statusData.funnel, { labelKey: "label", countKey: "count" });
+  RC.bars(byId("barsStatus"), ((data.orders_by_status || {}).funnel || []).map((row) => ({ label: row.label, count: row.count })));
 
-  const cancellation = data.cancellation_rate || {};
-  const cancelRows = [
-    { label: "Total de pedidos", value: cancellation.total_orders ?? 0 },
-    { label: "Cancelados", value: cancellation.cancelled_count ?? 0 },
-    { label: "Tasa de cancelación", value: formatPercent(cancellation.rate) },
-    ...(cancellation.prior_status_breakdown || []).map((row) => ({
-      label: `Cancelado desde "${row.label}"`,
-      value: row.count,
-    })),
-  ];
-  renderMetricsTable(
-    "metricsCancellationRate",
-    [{ label: "Métrica", key: "label" }, { label: "Valor", key: "value" }],
-    cancelRows
-  );
-
-  renderMetricsTable(
-    "metricsAvgTimeBetweenStatuses",
+  RC.table(
+    byId("tableTimes"),
     [
-      { label: "Transición", key: "transition" },
-      { label: "Horas promedio", render: (r) => formatHours(r.average_hours) },
-      { label: "Muestras", key: "sample_size" },
+      { label: "De → a", value: (r) => r.transition },
+      { label: "Promedio", value: (r) => formatHours(r.average_hours), numeric: true },
+      { label: "Pedidos", value: (r) => RC.formatNumber(r.sample_size), numeric: true },
     ],
-    data.avg_time_between_statuses
+    (data.avg_time_between_statuses || []).filter((row) => row.sample_size > 0),
+    { empty: "Todavía no hay pedidos que hayan cambiado de estado." }
   );
 
-  renderMetricsTable(
-    "metricsTopUsersByOrders",
+  RC.bars(byId("barsCancelledFrom"), (cancellation.prior_status_breakdown || []).map((row) => ({ label: row.label, count: row.count })), { empty: "No hay pedidos cancelados." });
+
+  const location = data.orders_by_location || {};
+  RC.bars(byId("barsStates"), (location.by_state || []).map((row) => ({ label: row.state || "Sin provincia", count: row.count })));
+  RC.bars(byId("barsCities"), (location.by_city || []).map((row) => ({ label: row.city || "Sin ciudad", count: row.count })));
+
+  RC.table(
+    byId("tableTopUsers"),
     [
-      { label: "Email", key: "email" },
-      { label: "Pedidos", key: "count" },
-      { label: "Último pedido", render: (r) => formatDateTime(r.last_order_at) },
+      { label: "Cuenta", value: (r) => r.email },
+      { label: "Pedidos", value: (r) => RC.formatNumber(r.count), numeric: true },
+      { label: "Último pedido", value: (r) => formatDateTime(r.last_order_at), numeric: true },
     ],
     data.top_users_by_orders
   );
-
-  const usersWithOrders = data.users_with_orders || {};
-  renderStatRow("metricsUsersWithOrders", [
-    { value: usersWithOrders.count ?? 0, label: "Usuarios con pedidos" },
-    {
-      value: formatPercent(usersWithOrders.percentage),
-      label: `del total (${usersWithOrders.total_users ?? 0} usuarios)`,
-    },
-  ]);
-
-  const location = data.orders_by_location || {};
-  renderMetricsBars("metricsOrdersByCity", location.by_city, { labelKey: "city", countKey: "count" });
-  renderMetricsBars("metricsOrdersByState", location.by_state, { labelKey: "state", countKey: "count" });
 }
 
-// --- Bloque "Soporte y actividad" (apps.accounts soporte + apps.audit) ----
+// --- Soporte y actividad (GET /support-messages/metrics/ + /audit/metrics/) ---
 
-const REPORTS_SUPPORT_ACTIVITY_IDS = [
-  "metricsSupportByMonth", "metricsSupportByStatus", "metricsAvgResponseTime",
-  "metricsAdminActivityByActor", "metricsAdminActivityByAction", "metricsLoginEvents",
-];
+const SUPPORT_IDS = ["chartSupport", "barsSupportStatus", "chartLogins", "barsActors", "barsActions"];
 
-function renderSupportActivityMetrics(supportData, auditData) {
-  renderMetricsBars("metricsSupportByMonth", supportData.support_by_month, {
-    labelKey: "month", countKey: "count", labelFormatter: formatMonthLabel,
-  });
-  renderMetricsBars("metricsSupportByStatus", supportData.support_by_status, {
-    labelKey: "label", countKey: "count",
-  });
-
-  const avgResponse = supportData.avg_response_time || {};
-  renderStatRow("metricsAvgResponseTime", [
-    {
-      value: formatHours(avgResponse.average_hours),
-      label: `Tiempo promedio de respuesta (${avgResponse.sample_size ?? 0} muestras)`,
-    },
+function renderSupport(supportData, auditData, months) {
+  const messages = monthValues(months, supportData.support_by_month);
+  const logins = monthValues(months, auditData.login_events, "success");
+  const failed = monthValues(months, auditData.login_events, "failed");
+  const response = supportData.avg_response_time || {};
+  RC.kpis(byId("supportKpis"), [
+    { label: "Mensajes de soporte", icon: "chats", value: sum(messages), hint: "En el período" },
+    { label: "Tiempo de respuesta", icon: "timer", value: formatHours(response.average_hours), hint: response.sample_size ? `Promedio de ${plural(response.sample_size, "respuesta", "respuestas")}` : "Todavía sin respuestas" },
+    { label: "Ingresos", icon: "sign-in", value: sum(logins), hint: plural(sum(failed), "intento fallido", "intentos fallidos") },
   ]);
 
-  const adminActivity = auditData.admin_activity || {};
-  renderMetricsTable(
-    "metricsAdminActivityByActor",
-    [{ label: "Administrador", key: "actor_email" }, { label: "Acciones", key: "count" }],
-    adminActivity.by_actor
-  );
-  renderMetricsTable(
-    "metricsAdminActivityByAction",
-    [{ label: "Acción", render: (r) => actionLabel(r.action) }, { label: "Cantidad", key: "count" }],
-    adminActivity.by_action
-  );
+  RC.columns(byId("chartSupport"), {
+    points: monthPoints(months),
+    series: [{ label: "Mensajes", values: messages }],
+    description: "Mensajes de soporte por mes",
+    empty: "No llegaron mensajes en el período.",
+  });
+  RC.bars(byId("barsSupportStatus"), (supportData.support_by_status || []).map((row) => ({ label: row.label, count: row.count })), { empty: "No hay mensajes." });
 
-  renderMetricsTable(
-    "metricsLoginEvents",
-    [
-      { label: "Mes", render: (r) => formatMonthLabel(r.month) },
-      { label: "Exitosos", key: "success" },
-      { label: "Fallidos", key: "failed" },
-    ],
-    auditData.login_events
-  );
+  RC.columns(byId("chartLogins"), {
+    points: monthPoints(months),
+    series: [{ label: "Correctos", values: logins }, { label: "Fallidos", values: failed }],
+    description: "Inicios de sesión correctos y fallidos por mes",
+    empty: "No hubo ingresos en el período.",
+  });
+
+  const activity = auditData.admin_activity || {};
+  RC.bars(byId("barsActors"), (activity.by_actor || []).map((row) => ({ label: row.actor_email || "Sin cuenta", count: row.count })), { empty: "Sin acciones de administración." });
+  RC.bars(byId("barsActions"), (activity.by_action || []).map((row) => ({ label: actionLabel(row.action), count: row.count })), { empty: "Sin acciones de administración.", max: 12 });
 }
+
+// --- Carga -------------------------------------------------------------------
 
 function getReportsMonths() {
-  return document.getElementById("reportsMonthsSelect")?.value || "6";
+  return Number(byId("reportsMonthsSelect")?.value || 6);
 }
 
-async function fetchMetricsJsonOrEmpty(url) {
+async function getJson(url) {
   const response = await apiFetch(url);
-  if (!response.ok) return {};
-  return response.json().catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 403) throw new Error("No tenés permisos para ver estos reportes.");
+  if (!response.ok) throw new Error(getErrorMessage(data, "No se pudieron cargar los reportes."));
+  return data;
 }
 
-async function loadOrdersMetrics(months) {
-  const grid = document.getElementById("ordersMetricsGrid");
-  const empty = document.getElementById("ordersMetricsEmpty");
-  if (!canUseUserPermission("reports.view")) {
-    if (grid) grid.style.display = "none";
-    if (empty) {
-      empty.style.display = "";
-      empty.textContent = "No tenés permisos para ver las métricas de pedidos.";
-    }
-    return;
-  }
-  setMetricsLoading(REPORTS_ORDERS_IDS);
+async function loadUsersAndSecurity(count, months) {
+  setLoading([...USER_IDS, ...SECURITY_IDS]);
   try {
-    const response = await apiFetch(`${ORDERS_METRICS_URL}?months=${months}`);
-    const data = await response.json().catch(() => ({}));
-    if (response.status === 403) throw new Error("No tenés permisos para ver las métricas de pedidos.");
-    if (!response.ok) throw new Error(getErrorMessage(data, "No se pudieron cargar las métricas de pedidos."));
-    if (grid) grid.style.display = "";
-    if (empty) empty.style.display = "none";
-    renderOrdersMetrics(data);
+    const data = await getJson(`${METRICS_URL}?months=${count}`);
+    showPanelNote("usuarios", "");
+    showPanelNote("seguridad", "");
+    renderUsers(data, months);
+    renderSecurity(data, months);
   } catch (err) {
     if (err.isSessionExpired) return;
-    console.error("Error al cargar métricas de pedidos:", err);
-    if (grid) grid.style.display = "none";
-    if (empty) {
-      empty.style.display = "";
-      empty.textContent = err.message || "No se pudieron cargar las métricas de pedidos.";
-    }
+    console.error("Reportes de usuarios:", err);
+    showPanelNote("usuarios", err.message);
+    showPanelNote("seguridad", err.message);
+    [...USER_IDS, ...SECURITY_IDS].forEach((id) => byId(id)?.replaceChildren());
   }
 }
 
-async function loadSupportActivityMetrics(months) {
-  const title = document.getElementById("supportActivityTitle");
-  const grid = document.getElementById("supportActivityGrid");
-  // Todos los bloques piden "reports.view" desde la migración 0029.
-  const canSupport = canUseUserPermission("reports.view");
-  const canAudit = canUseUserPermission("reports.view");
-
-  // Bloque entero opcional: si ninguna de las dos partes está disponible
-  // (permiso o backend no implementado), ni se muestra el subtítulo.
-  if (!canSupport && !canAudit) {
-    if (title) title.style.display = "none";
-    if (grid) grid.style.display = "none";
-    setReportsTabAvailable("soporte", false);
-    return;
+async function loadOrders(count, months) {
+  setLoading(ORDER_IDS);
+  try {
+    const data = await getJson(`${ORDERS_METRICS_URL}?months=${count}`);
+    showPanelNote("pedidos", "");
+    renderOrders(data, months);
+  } catch (err) {
+    if (err.isSessionExpired) return;
+    console.error("Reportes de pedidos:", err);
+    showPanelNote("pedidos", err.message);
+    ORDER_IDS.forEach((id) => byId(id)?.replaceChildren());
   }
-  if (title) title.style.display = "";
-  if (grid) grid.style.display = "";
+}
+
+async function loadSupportActivity(count, months) {
   setReportsTabAvailable("soporte", true);
-  setMetricsLoading(REPORTS_SUPPORT_ACTIVITY_IDS);
-
+  setLoading(SUPPORT_IDS);
   await loadAuditActionsCatalog();
-
   try {
     const [supportData, auditData] = await Promise.all([
-      canSupport ? fetchMetricsJsonOrEmpty(`${SUPPORT_METRICS_URL}?months=${months}`) : Promise.resolve({}),
-      canAudit ? fetchMetricsJsonOrEmpty(`${AUDIT_METRICS_URL}?months=${months}`) : Promise.resolve({}),
+      getJson(`${SUPPORT_METRICS_URL}?months=${count}`).catch(() => ({})),
+      getJson(`${AUDIT_METRICS_URL}?months=${count}`).catch(() => ({})),
     ]);
-    renderSupportActivityMetrics(supportData, auditData);
+    showPanelNote("soporte", "");
+    renderSupport(supportData, auditData, months);
   } catch (err) {
     if (err.isSessionExpired) return;
-    console.error("Error al cargar métricas de soporte/actividad:", err);
-    REPORTS_SUPPORT_ACTIVITY_IDS.forEach((id) =>
-      renderMetricsEmpty(id, "No se pudieron cargar las métricas.")
-    );
+    console.error("Reportes de soporte:", err);
+    showPanelNote("soporte", "No se pudieron cargar los reportes de soporte.");
   }
 }
 
 async function loadMetrics() {
-  const months = getReportsMonths();
-  const titleEl = document.getElementById("metricsSignupsByMonthTitle");
-  if (titleEl) titleEl.textContent = `Altas por mes (últimos ${months} meses)`;
-
-  setMetricsLoading(REPORTS_USER_IDS);
-  try {
-    const response = await apiFetch(`${METRICS_URL}?months=${months}`);
-    const data = await response.json().catch(() => ({}));
-    if (response.status === 403) throw new Error("No tenés permisos para ver las métricas.");
-    if (!response.ok) throw new Error(data.detail || "No se pudieron cargar las métricas.");
-    renderUsersMetrics(data);
-    renderSecurityMetrics(data);
-  } catch (err) {
-    if (err.isSessionExpired) return;
-    console.error("Error al cargar métricas:", err);
-    REPORTS_USER_IDS.forEach((id) =>
-      renderMetricsEmpty(id, err.message || "No se pudieron cargar las métricas.")
-    );
-  }
-
-  await loadOrdersMetrics(months);
-  await loadSupportActivityMetrics(months);
+  const count = getReportsMonths();
+  const months = periodMonths(count);
+  await Promise.all([loadUsersAndSecurity(count, months), loadOrders(count, months), loadSupportActivity(count, months)]);
 }
 
 // Pestañas: un bloque por vez. La elegida queda en el #hash, así un recargo o

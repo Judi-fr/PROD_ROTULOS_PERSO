@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
-    <title>Pedidos de todos los usuarios</title>
+    <title>Todos los pedidos</title>
     <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
     <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
     <meta name="theme-color" content="#308028" />
@@ -21,20 +21,16 @@
   </head>
   <body>
     <div class="layout">
-      <!-- SIDEBAR: renderizado por assets/js/admin_sidebar.js. No hay ítem
-           propio en el menú (tampoco lo había antes, cuando esta tabla vivía
-           dentro de Auditoría), así que se marca Auditoría como activo. -->
-      <div id="adminSidebar" data-active="audit"></div>
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), la misma de todas las páginas. -->
+      <header class="topbar" id="appTopbar"></header>
 
       <!-- MAIN -->
       <main class="main">
-        <div class="topbar">
+        <div class="page-head">
           <div>
-            <h1 id="adminOrdersTitle">Pedidos de todos los usuarios</h1>
-            <p>Todos los pedidos del sitio, de cualquier usuario.</p>
-          </div>
-          <div class="topbar-actions">
-            <button class="btn btn-outline" id="logoutAdminBtn" type="button">Cerrar sesión</button>
+            <h1 id="adminOrdersTitle">Todos los pedidos</h1>
+            <p>Los pedidos de todos los comercios de la plataforma.</p>
           </div>
         </div>
 
@@ -83,7 +79,7 @@
       <script src="assets/js/auth.js"></script>
       <script src="assets/js/utils.js"></script>
       <script src="assets/js/admin_common.js"></script>
-      <script src="assets/js/admin_sidebar.js"></script>
+      <script src="assets/js/topbar.js"></script>
       <script src="assets/js/pedidos_admin.js"></script>
     </div>
   </body>

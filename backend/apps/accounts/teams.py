@@ -282,6 +282,33 @@ def team_display_name(team) -> str:
     return team.name or f"Comercio de {team.owner.email if team.owner else '(sin dueño)'}"
 
 
+class NoSingleBusiness(Exception):
+    """La persona elegida no tiene un comercio claro al que asignarle algo."""
+
+
+def business_data_user(user):
+    """El usuario de datos del comercio al que va algo que el admin eligió por
+    persona: claves de API, webhooks, el alta manual "a nombre de" alguien.
+    Los pedidos de un comercio cuelgan de su usuario de datos, así que a
+    nombre de la persona no los vería nadie. Un usuario de datos se devuelve
+    tal cual; una persona, su único comercio abierto o, si está en varios, el
+    único del que es dueña. Si no hay uno claro, ``NoSingleBusiness``."""
+    if team_of_data_user(user) is not None:
+        return user
+    members = memberships(user)
+    if len(members) == 1:
+        return members[0].team.data_user
+    owned = [member for member in members if member.role == TeamMember.Role.OWNER]
+    if len(owned) == 1:
+        return owned[0].team.data_user
+    if not members:
+        raise NoSingleBusiness(f"«{user.email}» no está en ningún comercio.")
+    names = ", ".join(sorted(team_display_name(member.team) for member in members))
+    raise NoSingleBusiness(
+        f"«{user.email}» está en varios comercios ({names}): elegí a la persona dueña del que corresponde."
+    )
+
+
 def internal_users_q(prefix="") -> Q:
     """Los usuarios de datos de los comercios (no son personas: no se listan
     ni se cuentan ni se tocan desde la administración). El de un comercio cuyo

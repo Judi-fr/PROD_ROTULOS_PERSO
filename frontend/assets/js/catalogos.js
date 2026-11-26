@@ -82,7 +82,7 @@ async function load(catalog) {
     const data = await response.json().catch(() => []);
     if (!response.ok) throw new Error(getErrorMessage(data, "No se pudo leer el catálogo."));
     const items = extractResults(data);
-    body.innerHTML = items.length ? "" : '<tr><td colspan="4" class="catalog-empty">Todavía no hay ninguno.</td></tr>';
+    body.innerHTML = items.length ? "" : adminEmptyRow(4, { icon: "list", title: "Todavía no hay ninguno", text: "Agregá el primero con el formulario de abajo." });
     items.forEach((item) => {
       const row = document.createElement("tr");
       if (!item.is_active) row.className = "catalog-row-inactive";
@@ -99,7 +99,7 @@ async function load(catalog) {
     });
   } catch (err) {
     if (err.isSessionExpired) return;
-    body.innerHTML = `<tr><td colspan="4" class="catalog-empty">${escapeHtml(err.message)}</td></tr>`;
+    body.innerHTML = adminErrorRow(4, err.message);
   }
 }
 

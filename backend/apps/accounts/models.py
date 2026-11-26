@@ -118,12 +118,23 @@ class LoginLockout(models.Model):
         return min(self.FIRST_DURATION * (2 ** min(self.lockout_count, 16)), self.MAX_DURATION)
 
     def register_failure(self):
-        """Suma un intento fallido; al llegar al umbral, bloquea (progresivo)."""
-        self.failed_attempts += 1
-        if self.failed_attempts >= self.THRESHOLD:
-            self.locked_until = timezone.now() + self.next_duration()
-            self.lockout_count += 1
-        self.save(update_fields=["failed_attempts", "locked_until", "lockout_count"])
+        """Suma un intento fallido; al llegar al umbral, bloquea (progresivo).
+
+        La suma la hace la base (``F``) y el bloqueo se decide con la fila
+        trabada: dos intentos en paralelo cuentan como dos, no como uno."""
+        from django.db import transaction
+        from django.db.models import F
+
+        with transaction.atomic():
+            LoginLockout.objects.filter(pk=self.pk).update(failed_attempts=F("failed_attempts") + 1)
+            fresh = LoginLockout.objects.select_for_update().get(pk=self.pk)
+            if fresh.failed_attempts >= self.THRESHOLD and not fresh.is_locked():
+                fresh.locked_until = timezone.now() + fresh.next_duration()
+                fresh.lockout_count += 1
+                fresh.save(update_fields=["locked_until", "lockout_count"])
+        self.failed_attempts = fresh.failed_attempts
+        self.locked_until = fresh.locked_until
+        self.lockout_count = fresh.lockout_count
 
     def register_success(self):
         """Login exitoso: resetea intentos y la escala de bloqueos."""
@@ -378,3 +389,13 @@ def account_settings_for(user):
 
 # Comercios con equipo (dueño + empleados): ver team_models.py y teams.py.
 from .team_models import Team, TeamInvitation, TeamJoinRequest, TeamMember, TeamProfile  # noqa: E402,F401
+
+# Seguridad de la cuenta (sesiones, segundo paso, cambio de email): ver security_models.py.
+from .security_models import (  # noqa: E402,F401
+    EmailChangeRequest,
+    KnownDevice,
+    MfaEmailCode,
+    MfaRecoveryCode,
+    UserMfa,
+    SessionRecord,
+)

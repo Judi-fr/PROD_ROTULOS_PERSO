@@ -2,7 +2,7 @@
 
 client_id = "bd3ad6cbc915cfffeb53856d5b7abe15"
 name = "Rotulos perso"
-application_url = "https://sillaenojada-hp-laptop-14-dq1xxx.tail0c0717.ts.net/api/v1/integrations/shopify/launch/"
+application_url = "https://rotulos.human-log.org/api/v1/integrations/shopify/launch/"
 embedded = false
 
 [build]
@@ -16,7 +16,7 @@ api_version = "2026-07"
   # desinstalación los registra el backend por API, tienda por tienda.
   [[webhooks.subscriptions]]
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
-  uri = "https://sillaenojada-hp-laptop-14-dq1xxx.tail0c0717.ts.net/api/v1/integrations/shopify/webhooks/"
+  uri = "https://rotulos.human-log.org/api/v1/integrations/shopify/webhooks/"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
@@ -26,5 +26,5 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://sillaenojada-hp-laptop-14-dq1xxx.tail0c0717.ts.net/api/v1/integrations/shopify/callback/"
+  "https://rotulos.human-log.org/api/v1/integrations/shopify/callback/"
 ]

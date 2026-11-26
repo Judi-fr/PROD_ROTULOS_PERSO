@@ -53,4 +53,66 @@ class SidebarTests(APITestCase):
         admin.save()
         items = sidebar(self.client, admin)
         self.assertEqual(items["admin"]["url"], "gestionuser.html")
-        self.assertEqual(items["admin"]["place"], "bottom")
+        # Desde 2026-11-19 es una sección del menú, con sus pantallas adentro
+        # (antes las páginas de admin tenían su propio menú).
+        self.assertEqual(items["admin"]["place"], "main")
+        links = [link["url"] for link in items["admin"]["links"]]
+        self.assertEqual(
+            links,
+            ["gestionuser.html", "roles.html", "comercios.html", "pedidos_admin.html", "reportes.html", "auditoria.html",
+             "soporte_admin.html", "comercios_baja.html", "catalogos.html", "estado_sistema.html"],
+        )
+        self.assertIn("comercio_usuario.html", items["admin"]["match"])
+
+    def test_admin_without_a_business_gets_no_merchant_sections(self):
+        admin = make_user("admin2@example.com", group="admin")
+        admin.is_staff = True
+        admin.save()
+        items = sidebar(self.client, admin)
+        # Sin comercio las secciones del comercio vienen en gris (disabled),
+        # sin funciones ni números.
+        self.assertEqual(list(items), ["home", "orders", "print", "design", "stores", "carriers", "business", "help", "admin"])
+        for key in ("orders", "print", "design", "stores", "carriers"):
+            self.assertTrue(items[key]["disabled"], key)
+            self.assertEqual(items[key]["links"], [], key)
+            self.assertIsNone(items[key]["badge"], key)
+        self.assertFalse(items["admin"]["disabled"])
+        self.assertEqual(items["business"]["url"], "comercio_inicio.html")
+        # Sin comercio, su Inicio es el resumen de la plataforma.
+        self.assertEqual(items["home"]["url"], "resumen_plataforma.html")
+        self.assertNotIn("resumen_plataforma.html", [link["url"] for link in items["admin"]["links"]])
+        new_business(admin)
+        items = sidebar(self.client, admin)
+        self.assertIn("orders", items)
+        self.assertFalse(items["orders"]["disabled"])
+        self.assertTrue(items["orders"]["links"])
+        # Con comercio, el Inicio es el del comercio y el resumen va en Administración.
+        self.assertEqual(items["home"]["url"], "dashboard.html")
+        self.assertEqual(items["admin"]["links"][0]["url"], "resumen_plataforma.html")
+
+    def test_merchant_without_a_business_sees_the_sections_in_grey(self):
+        alone = make_user("solo@example.com")
+        items = sidebar(self.client, alone)
+        self.assertEqual(list(items), ["home", "orders", "print", "design", "stores", "carriers", "business", "help"])
+        self.assertTrue(all(items[key]["disabled"] for key in ("orders", "print", "design", "stores", "carriers")))
+        self.assertFalse(items["home"]["disabled"])
+        self.assertEqual(items["business"]["url"], "comercio_inicio.html")
+        self.assertEqual(items["business"]["links"], [])
+
+    def test_owner_sections_are_not_disabled(self):
+        self.assertFalse(any(item["disabled"] for item in sidebar(self.client, self.owner).values()))
+
+    def test_merchant_gets_no_administration(self):
+        self.assertNotIn("admin", sidebar(self.client, self.owner))
+
+    def test_platform_staff_sees_only_their_admin_screens(self):
+        from django.contrib.auth.models import Group
+
+        from apps.accounts.models import GroupRolePermission, RolePermission
+
+        staff = make_user("reportes@example.com", group="reportes")
+        group = Group.objects.get(name="reportes")
+        GroupRolePermission.objects.create(group=group, permission=RolePermission.objects.get(key="reports.view"))
+        items = sidebar(self.client, staff)
+        self.assertEqual([link["url"] for link in items["admin"]["links"]], ["reportes.html"])
+        self.assertEqual(items["admin"]["url"], "reportes.html")

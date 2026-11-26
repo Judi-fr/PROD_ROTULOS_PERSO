@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.labels.serializers import ImageOrDataUrlField
-from apps.accounts.teams import allowed_store_ids, data_owner
+from apps.accounts.teams import NoSingleBusiness, allowed_store_ids, business_data_user, data_owner
 from apps.accounts.teams import contact_email as owner_contact_email
 
 from . import shipping_rates
@@ -234,7 +234,19 @@ class StoreClaimSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=500)
 
 
-class IntegrationKeySerializer(serializers.ModelSerializer):
+class BusinessOwnerMixin:
+    """El admin elige al dueño por persona (busca por mail), pero lo que llega
+    por estas integraciones es de un comercio: se guarda su usuario de datos
+    (``teams.business_data_user``)."""
+
+    def validate_owner(self, value):
+        try:
+            return business_data_user(value)
+        except NoSingleBusiness as exc:
+            raise serializers.ValidationError(str(exc))
+
+
+class IntegrationKeySerializer(BusinessOwnerMixin, serializers.ModelSerializer):
     # El mail de la persona dueña del comercio (los datos cuelgan de su
     # usuario de datos, que no es una persona).
     owner_email = serializers.SerializerMethodField()
@@ -259,7 +271,7 @@ class IntegrationKeySerializer(serializers.ModelSerializer):
         return owner_contact_email(getattr(obj, "owner", None)) or None
 
 
-class IncomingWebhookSerializer(serializers.ModelSerializer):
+class IncomingWebhookSerializer(BusinessOwnerMixin, serializers.ModelSerializer):
     integration_key_name = serializers.CharField(source="integration_key.name", read_only=True)
     webhook_url = serializers.SerializerMethodField()
 
@@ -284,7 +296,7 @@ class IncomingWebhookSerializer(serializers.ModelSerializer):
         return f"/api/v1/ingest/webhooks/{obj.slug}/"
 
 
-class WebhookEndpointSerializer(serializers.ModelSerializer):
+class WebhookEndpointSerializer(BusinessOwnerMixin, serializers.ModelSerializer):
     class Meta:
         model = WebhookEndpoint
         fields = [

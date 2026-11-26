@@ -1345,6 +1345,8 @@ const IN_PAGE_TOOLS = [
   { label: "Nuevo pedido a mano", url: "pedidos.html#nuevo", section: "Pedidos", perm: "orders.create_manual" },
   { label: "Mis direcciones", url: "direcciones.html", section: "Pedidos", perm: "addresses.manage" },
   { label: "Cambiar mi contraseña", url: "organizacion.html#perfil", section: "Mi cuenta", perm: null },
+  { label: "Seguridad de la cuenta", url: "seguridad.html", section: "Mi cuenta", perm: null },
+  { label: "Sesiones abiertas (cerrar sesión en otros dispositivos)", url: "seguridad.html#sesiones", section: "Mi cuenta", perm: null },
   { label: "Datos del comercio", url: "equipo.html#datos", section: "Mi comercio", perm: null },
   { label: "Estadísticas del comercio", url: "equipo.html#estadisticas", section: "Mi comercio", perm: "stats.dispatch" },
   { label: "Crear o sumarme a otro comercio", url: "comercio_inicio.html", section: "Mi cuenta", perm: null },
@@ -1452,4 +1454,140 @@ async function renderSampleOrdersNotice(container, { onChange } = {}) {
     container.appendChild(button);
   }
   container.hidden = false;
+}
+
+// ---- Después de entrar ---------------------------------------------------
+// A dónde va alguien que acaba de entrar (login, Google, verificar_ingreso).
+// Primero lo que quedó a medio hacer (instalar la app, imprimir desde
+// Tiendanube, sumarse a un comercio); después ?next=, la página que pidió sin
+// sesión, solo si es una página de esta misma carpeta (un ?next= con otro
+// sitio no puede usarse para mandar a alguien afuera tras el login).
+function authLandingPage(user, search = window.location.search) {
+  if (user && user.must_change_password) return "cambiar-password.html";
+  // Sin confirmar el email no puede usar la app: primero eso.
+  if (user && user.email_verified === false) return "confirmar_email.html";
+  if (localStorage.getItem("pendingTiendanubePrint")) {
+    return localStorage.getItem("pendingTiendanubePage") || "imprimir_tiendanube.html";
+  }
+  if (localStorage.getItem("pendingStoreClaim")) return "tiendas.html";
+  if (localStorage.getItem("pendingJoinCode")) {
+    return "unirse.html?code=" + encodeURIComponent(localStorage.getItem("pendingJoinCode"));
+  }
+  const next = new URLSearchParams(search || "").get("next") || "";
+  if (/^[a-z0-9_-]+\.html(#[a-z0-9_-]*)?$/i.test(next) && !/^(index|register|logoutpage)\.html/i.test(next)) {
+    return next;
+  }
+  const role = String((user && user.role) || "").toLowerCase();
+  const isAdmin = Boolean((user && user.is_staff) || role === "admin");
+  return isAdmin ? "gestionuser.html" : "dashboard.html";
+}
+
+// La cuenta tiene la verificación en dos pasos: el login no entregó la sesión
+// sino un desafío. Se guarda en ESTA pestaña (nunca en la URL) y se sigue en
+// verificar_ingreso.html. Devuelve true si había desafío.
+function startMfaChallenge(data, remember) {
+  if (!data || !data.mfa_required) return false;
+  try {
+    sessionStorage.setItem(
+      "mfaChallenge",
+      JSON.stringify({
+        mfa_token: data.mfa_token,
+        method: data.method,
+        email_hint: data.email_hint || "",
+        remember: remember ?? null,
+        search: window.location.search,
+      })
+    );
+  } catch {
+    // Sin sessionStorage no hay cómo seguir: la página del código lo dice.
+  }
+  window.location.replace("verificar_ingreso.html");
+  return true;
+}
+
+// Copia un texto al portapapeles y avisa en #pageMessage (o pide copiarlo a
+// mano si el navegador no deja, por ejemplo en http sin localhost).
+async function copyText(text, successMessage = "Copiado.") {
+  try {
+    await navigator.clipboard.writeText(text);
+    showMessage(successMessage, "success");
+    return true;
+  } catch {
+    await appPrompt("Copialo desde acá:", text);
+    return false;
+  }
+}
+
+// ---- Contraseñas: medidor y aviso de Mayúsculas -----------------------------
+// Las reglas son las del backend (validate_password_strength): 8 caracteres,
+// una mayúscula y un número. El medidor solo adelanta lo que el servidor va a
+// decir; "fuerte" suma 12+ caracteres o un símbolo. Se engancha solo a todo
+// <input data-password-meter>; el aviso de Mayúsculas, a toda contraseña.
+const PASSWORD_RULES = [
+  { label: "8 caracteres", test: (value) => value.length >= 8 },
+  { label: "una mayúscula", test: (value) => /[A-ZÁÉÍÓÚÑ]/.test(value) },
+  { label: "un número", test: (value) => /\d/.test(value) },
+];
+
+function passwordStrength(value) {
+  const met = PASSWORD_RULES.filter((rule) => rule.test(value)).length;
+  if (!value) return { level: 0, label: "" };
+  if (met < PASSWORD_RULES.length) return { level: 1, label: "Débil" };
+  if (value.length >= 12 || /[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]/.test(value)) return { level: 3, label: "Fuerte" };
+  return { level: 2, label: "Aceptable" };
+}
+
+function attachPasswordMeter(input, container) {
+  if (!input || input.dataset.meterReady) return;
+  input.dataset.meterReady = "1";
+  const box = container || document.createElement("div");
+  box.className = "password-meter";
+  box.setAttribute("aria-live", "polite");
+  box.innerHTML = '<div class="password-meter-bar"><span></span><span></span><span></span></div>' +
+    '<span class="password-meter-label"></span><ul class="password-meter-rules"></ul>';
+  if (!container) (input.closest(".access-input") || input).insertAdjacentElement("afterend", box);
+  const list = box.querySelector(".password-meter-rules");
+  PASSWORD_RULES.forEach((rule) => {
+    const li = document.createElement("li");
+    li.textContent = rule.label;
+    list.append(li);
+  });
+  const update = () => {
+    const value = input.value;
+    const strength = passwordStrength(value);
+    box.dataset.level = String(strength.level);
+    box.querySelector(".password-meter-label").textContent = strength.label;
+    [...list.children].forEach((li, index) => li.classList.toggle("is-met", PASSWORD_RULES[index].test(value)));
+    box.hidden = !value;
+  };
+  input.addEventListener("input", update);
+  update();
+}
+
+function attachCapsLockWarning(input) {
+  if (!input || input.dataset.capsReady) return;
+  input.dataset.capsReady = "1";
+  const note = document.createElement("small");
+  note.className = "caps-warning";
+  note.textContent = "Tenés las mayúsculas activadas.";
+  note.hidden = true;
+  note.setAttribute("role", "status");
+  (input.closest(".access-input") || input).insertAdjacentElement("afterend", note);
+  const check = (event) => {
+    if (typeof event.getModifierState === "function") note.hidden = !event.getModifierState("CapsLock");
+  };
+  input.addEventListener("keydown", check);
+  input.addEventListener("keyup", check);
+  input.addEventListener("blur", () => (note.hidden = true));
+}
+
+function attachPasswordHelpers(root = document) {
+  root.querySelectorAll("input[data-password-meter]").forEach((input) => attachPasswordMeter(input));
+  root.querySelectorAll('input[type="password"]').forEach((input) => attachCapsLockWarning(input));
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => attachPasswordHelpers());
+} else {
+  attachPasswordHelpers();
 }

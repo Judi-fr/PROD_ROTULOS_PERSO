@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+
+    <title>Confirmá tu email · Human Log Rótulos</title>
+    <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg" />
+    <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#308028" />
+    <link rel="stylesheet" href="assets/css/ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/acceso.css" />
+  </head>
+  <body class="access-page">
+    <!-- Una cuenta registrada con el formulario no puede usar la app hasta
+         abrir el enlace del correo (el backend lo exige, ver
+         apps/accounts/authentication.py). Acá espera: ve a qué dirección se
+         mandó, puede pedirlo de nuevo o entrar con otra cuenta. -->
+    <div class="access-layout">
+      <aside class="access-aside" aria-hidden="true">
+        <img src="assets/images/rotulo-ejemplo.png" alt="" width="900" height="1350">
+        <p class="access-aside-text">Los pedidos de tu tienda entran solos: imprimí los rótulos y despachá con tu transportista <strong>desde un solo lugar</strong>.</p>
+      </aside>
+      <main class="access-main">
+        <div class="access-card">
+          <div class="access-brand"><img src="assets/images/humanlog-logo.png" alt="Human Log"><span>Rótulos</span></div>
+          <h1>Confirmá tu email</h1>
+          <p class="access-lead">
+            Te mandamos un enlace a <strong id="confirmEmail">tu correo</strong>. Abrilo para empezar a usar Rótulos.
+            Si no lo ves, revisá la carpeta de spam.
+          </p>
+          <p id="pageMessage" class="page-message" role="status" aria-live="polite" hidden></p>
+          <button type="button" class="access-submit" id="checkBtn">Ya lo confirmé</button>
+          <p class="access-secondary">
+            <button type="button" class="access-link access-link-button" id="resendBtn">Mandármelo de nuevo</button>
+          </p>
+          <details class="access-fix-email" id="fixEmail">
+            <summary class="access-link">¿Escribiste mal tu email?</summary>
+            <!-- Backend: POST /api/v1/auth/me/change-email/ (security_views.ChangeEmailView): el enlace va al
+                 email nuevo y abrirlo también lo confirma. -->
+            <form id="fixEmailForm" class="access-form" novalidate>
+              <div class="access-field">
+                <label for="fixEmailNew">El email correcto</label>
+                <input type="email" id="fixEmailNew" autocomplete="email" required>
+              </div>
+              <div class="access-field">
+                <label for="fixEmailPassword">Tu contraseña</label>
+                <input type="password" id="fixEmailPassword" autocomplete="current-password" required>
+              </div>
+              <button type="submit" class="btn btn-outline">Mandar el enlace al email correcto</button>
+            </form>
+          </details>
+          <p class="access-secondary">
+            <button type="button" class="access-link access-link-button" id="otherAccountBtn">Entrar con otra cuenta</button>
+          </p>
+        </div>
+      </main>
+    </div>
+
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/confirmar_email.js"></script>
+  </body>
+</html>

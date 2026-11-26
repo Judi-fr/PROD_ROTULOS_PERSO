@@ -28,7 +28,9 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions_map import user_has_permission
 from apps.accounts.teams import data_owner, order_scope_q
+from apps.carriers.common import province_code, province_name
 from apps.carriers.models import CarrierShipment
+from apps.common.text import fold
 
 from .models import Order
 from .summary_views import PENDING, SHIPPED, SHIPMENT_PROBLEMS
@@ -137,8 +139,11 @@ def carrier_stats(orders):
 
 def buyer_stats(orders):
     """Dónde están los compradores de los pedidos del período (sin los
-    cancelados): las provincias y ciudades con más pedidos. Las ciudades se
-    juntan sin distinguir mayúsculas ni espacios ("CABA" y "caba ")."""
+    cancelados): las provincias y ciudades con más pedidos. Se juntan sin
+    distinguir mayúsculas, espacios ni tildes ("CABA" y "caba "), y una
+    provincia reconocida se junta con todas sus formas ("CABA", "Capital
+    Federal", "Ciudad Autónoma de Buenos Aires") y sale con su nombre. Lo
+    mismo una ciudad que se llama como su provincia (Córdoba en Córdoba)."""
     rows = list(
         orders.exclude(status=Order.Status.CANCELLED).values_list("address__city", "address__state")
     )
@@ -148,13 +153,18 @@ def buyer_stats(orders):
     city_names = {}
     for city, state in rows:
         city, state = (city or "").strip(), (state or "").strip()
+        state_code = province_code(state)
+        state_key = state_code or fold(state)
         if state:
-            states[state.casefold()] += 1
-            state_names.setdefault(state.casefold(), state)
+            states[state_key] += 1
+            state_names.setdefault(state_key, province_name(state_code) or state)
         if city:
-            key = (city.casefold(), state.casefold())
+            # "Capital" en Córdoba no es CABA: solo cuenta si coincide con la provincia.
+            city_code = province_code(city)
+            same_as_state = bool(city_code) and city_code == state_code
+            key = (city_code if same_as_state else fold(city), state_key)
             cities[key] += 1
-            city_names.setdefault(key, (city, state))
+            city_names.setdefault(key, (province_name(city_code) if same_as_state else city, state))
     return {
         "total": len(rows),
         "states": [{"name": state_names[key], "count": count} for key, count in states.most_common(TOP_PLACES)],

@@ -16,7 +16,7 @@
          la MISMA implementación (ReportLab) que arma el rótulo definitivo
          — así lo que se ve acá es exactamente lo que se va a imprimir. -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js"></script>
     <script src="assets/js/config.js"></script>
     <script src="assets/js/auth.js"></script>
     <script src="assets/js/utils.js"></script>
@@ -1144,8 +1144,8 @@
     </style>
   </head>
   <body data-requires="labels.template_create,labels.template_edit">
-    <!-- La barra la dibuja assets/js/topbar.js; acá solo los links propios. -->
-    <header class="topbar" id="appTopbar" data-links='[{"href": "mis_plantillas.html", "label": "Volver a mis plantillas"}]'></header>
+    <!-- La barra la dibuja assets/js/topbar.js (avisos y cuenta; la navegación es la barra lateral). -->
+    <header class="topbar" id="appTopbar"></header>
     <!-- Después del <header>: topbar.js lo dibuja apenas carga, y en el
          <head> todavía no existía (la barra quedaba vacía, sin "Cerrar
          sesión"). -->

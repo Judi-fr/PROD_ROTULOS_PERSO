@@ -5,6 +5,7 @@ Cubren el "Bloque 1" de endurecimiento: no dependen del frontend ni de
 cookies (eso es una fase posterior); ejercitan el contrato JSON actual.
 """
 
+import re
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -88,6 +89,29 @@ class LoginTests(AuthTestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn("access", resp.data)
+
+    def test_login_guarda_el_ultimo_ingreso(self):
+        # Reportes (activos, nunca inició sesión, retención) y la columna
+        # "Último acceso" de Usuarios leen last_login. UPDATE_LAST_LOGIN de
+        # simplejwt solo cubre su propia vista, no este login.
+        self.assertIsNone(self.user.last_login)
+        resp = self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "login@example.com", "password": STRONG_PASSWORD},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.last_login)
+
+    def test_login_fallido_no_toca_el_ultimo_ingreso(self):
+        self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "login@example.com", "password": "malísima"},
+            format="json",
+        )
+        self.user.refresh_from_db()
+        self.assertIsNone(self.user.last_login)
 
     def test_login_password_incorrecto_da_401(self):
         resp = self.client.post(
@@ -2949,6 +2973,14 @@ class UserExportCsvTests(AuthTestCase):
         fila_google = by_email["csv_google@example.com"]
         self.assertEqual(fila_google[7], "Google")
 
+    def test_export_el_rol_sale_como_en_la_pantalla(self):
+        # QA en AWS (2026-11-20): salía "Subscriber" y "Admin".
+        self.client.force_authenticate(user=self.admin)
+        rows = self._parse_csv(self.client.get(self.URL))
+        by_email = {row[2]: row for row in rows[1:]}
+        self.assertEqual(by_email["admin_csv@example.com"][3], "Administrador")
+        self.assertEqual(by_email["csv_a@example.com"][3], "Comerciante")
+
     def test_export_en_excel_trae_las_mismas_columnas_y_filas(self):
         from io import BytesIO
 
@@ -3735,3 +3767,36 @@ class UserExportCsvInjectionTests(AuthTestCase):
         content = resp.content.decode("utf-8")
         self.assertNotIn(',=HYPERLINK', content)
         self.assertNotIn(',"=HYPERLINK', content)
+
+
+class PasswordResetAfterLoginTests(AuthTestCase):
+    """Desde 2026-11-19 el login guarda last_login, que el token de Django usa
+    en su hash: un link pedido ANTES de entrar tiene que seguir sirviendo."""
+
+    def test_el_enlace_sigue_sirviendo_despues_de_entrar(self):
+        user = User.objects.create_user(
+            username="vuelve@example.com", email="vuelve@example.com", password=STRONG_PASSWORD
+        )
+        new_business(user)
+        self.client.post(
+            "/api/v1/auth/password-reset/", {"email": "vuelve@example.com"}, format="json"
+        )
+        self.assertEqual(len(mail.outbox), 1)
+        link = re.search(r"uid=([\w-]+)&token=([\w-]+)", mail.outbox[0].body)
+        self.assertIsNotNone(link)
+
+        login = self.client.post(
+            "/api/v1/auth/login/", {"email": "vuelve@example.com", "password": STRONG_PASSWORD}, format="json"
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertIsNotNone(user.last_login)
+
+        resp = self.client.post(
+            "/api/v1/auth/password-reset/confirm/",
+            {"uid": link.group(1), "token": link.group(2), "new_password": "Rotulos2027"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("Rotulos2027"))

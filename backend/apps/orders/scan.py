@@ -45,4 +45,8 @@ def find_orders(queryset, code):
     lookup = Q(external_number=code)
     if code.isdigit() and len(code) >= PADDED_ID_DIGITS:
         lookup |= Q(pk=int(code))
+    elif code.isdigit():
+        # Lo que muestra la app de un pedido sin número de tienda (cargado a
+        # mano, importado) es nuestro id: "#8".
+        lookup |= Q(pk=int(code), external_number="")
     return list(queryset.filter(lookup)[:MAX_MATCHES])

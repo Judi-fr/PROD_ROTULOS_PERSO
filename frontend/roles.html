@@ -21,18 +21,16 @@
   </head>
   <body>
     <div class="layout">
-      <!-- SIDEBAR: renderizado por assets/js/admin_sidebar.js -->
-      <div id="adminSidebar" data-active="roles"></div>
+      <!-- La barra compartida (assets/js/topbar.js): avisos y cuenta; la navegación es la
+           barra lateral (app_sidebar.js), la misma de todas las páginas. -->
+      <header class="topbar" id="appTopbar"></header>
 
       <!-- MAIN -->
       <main class="main">
-        <div class="topbar">
+        <div class="page-head">
           <div>
             <h1 id="rolesTitle">Roles y permisos</h1>
             <p>Administrá los permisos disponibles para cada rol del sistema.</p>
-          </div>
-          <div class="topbar-actions">
-            <button class="btn btn-outline" id="logoutAdminBtn" type="button">Cerrar sesión</button>
           </div>
         </div>
 
@@ -126,7 +124,7 @@
       <script src="assets/js/auth.js"></script>
       <script src="assets/js/utils.js"></script>
       <script src="assets/js/admin_common.js"></script>
-      <script src="assets/js/admin_sidebar.js"></script>
+      <script src="assets/js/topbar.js"></script>
       <script src="assets/js/roles.js"></script>
       <script src="assets/js/roles_perfiles.js"></script>
     </div>

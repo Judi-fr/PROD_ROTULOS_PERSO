@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Verificá que sos vos</title>
+  <link rel="icon" type="image/svg+xml" href="assets/images/favicon.svg">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <meta name="theme-color" content="#308028">
+  <link rel="stylesheet" href="assets/css/ui.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/acceso.css">
+</head>
+<body class="access-page">
+  <div class="access-layout">
+    <aside class="access-aside" aria-hidden="true">
+      <img src="assets/images/rotulo-ejemplo.png" alt="" width="900" height="1350">
+      <p class="access-aside-text">Tu cuenta tiene la <strong>verificación en dos pasos</strong>: aunque alguien sepa tu contraseña, sin este código no entra.</p>
+    </aside>
+
+    <main class="access-main">
+      <div class="access-card">
+        <div class="access-brand"><img src="assets/images/humanlog-logo.png" alt="Human Log"><span>Rótulos</span></div>
+        <h1>Verificá que sos vos</h1>
+        <p class="access-lead" id="mfaLead">Escribí el código de 6 números.</p>
+
+        <form id="mfaForm" class="access-form" novalidate>
+          <div class="access-field">
+            <label for="mfaCode" id="mfaCodeLabel">Código</label>
+            <input type="text" id="mfaCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+          </div>
+          <label class="access-check">
+            <input type="checkbox" id="trustBrowser">
+            <span>No pedirlo en este navegador por 30 días <small>(no la marques en una computadora compartida)</small></span>
+          </label>
+          <p id="pageMessage" class="page-message" role="alert" hidden></p>
+          <button type="submit" class="access-submit">Entrar</button>
+        </form>
+
+        <p class="access-switch">
+          <button type="button" class="access-link access-link-button" id="useRecovery">Usar un código de recuperación</button>
+        </p>
+        <p class="access-switch" id="resendRow" hidden>
+          ¿No te llegó? <button type="button" class="access-link access-link-button" id="resendBtn">Mandármelo de nuevo</button>
+        </p>
+        <p class="access-legal"><a href="index.html">Volver al inicio de sesión</a></p>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/verificar_ingreso.js"></script>
+</body>
+</html>

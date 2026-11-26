@@ -5,6 +5,18 @@ from django.urls import path
 from .account_settings_views import AccountSettingsView
 from .dashboard_views import DashboardView
 from .profile_views import ProfileView
+from .security_views import (
+    MfaConfirmView,
+    MfaDisableView,
+    MfaReauthEmailView,
+    MfaRecoveryCodesView,
+    MfaResendView,
+    MfaSetupView,
+    MfaStatusView,
+    MfaVerifyView,
+)
+from .security_views import ChangeEmailView, ConfirmEmailChangeView, SecurityLogView, SetPasswordView
+from .security_views import SessionListView, SessionPingView, SessionRevokeOthersView, SessionRevokeView
 from .support_views import SupportMessageView
 from .role_permission_views import (
     PermissionCatalogView,
@@ -42,7 +54,7 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="password-reset-confirm",
     ),
-    # Verificación suave de email (solo cuentas email/contraseña, ver
+    # Verificación de email, obligatoria para usar la app (solo cuentas email/contraseña, ver
     # RegisterView): confirma el token del correo y permite reenviarlo.
     path(
         "verify-email/confirm/",
@@ -57,6 +69,10 @@ urlpatterns = [
     # Perfil del usuario autenticado: GET (ver) y PATCH (editar nombre/apellido).
     path("me/", ProfileView.as_view(), name="profile"),
     # Datos de la cuenta: fiscales, remitente/logo por defecto, preferencias.
+    path("me/security-log/", SecurityLogView.as_view(), name="security-log"),
+    path("me/set-password/", SetPasswordView.as_view(), name="set-password"),
+    path("me/change-email/", ChangeEmailView.as_view(), name="change-email"),
+    path("me/change-email/confirm/", ConfirmEmailChangeView.as_view(), name="change-email-confirm"),
     path("me/account/", AccountSettingsView.as_view(), name="account-settings"),
     # Cambio de contraseña del usuario autenticado (exige la actual).
     path("me/change-password/", ChangePasswordView.as_view(), name="change-password"),
@@ -75,4 +91,20 @@ urlpatterns = [
     # revoca el anterior.
     # Body: {"refresh": "<JWT>"}  ->  {"access": "<JWT nuevo>", "refresh": "..."}
     path("refresh/", CookieTokenRefreshView.as_view(), name="token-refresh"),
+    # Segundo paso de un ingreso (mfa.py, login_flow.py): públicas, se
+    # autentican con el mfa_token que devolvió el login.
+    path("2fa/verify/", MfaVerifyView.as_view(), name="mfa-verify"),
+    path("2fa/resend/", MfaResendView.as_view(), name="mfa-resend"),
+    # Activarla y administrarla (seguridad.html).
+    path("2fa/", MfaStatusView.as_view(), name="mfa-status"),
+    path("2fa/setup/", MfaSetupView.as_view(), name="mfa-setup"),
+    path("2fa/confirm/", MfaConfirmView.as_view(), name="mfa-confirm"),
+    path("2fa/reauth-email/", MfaReauthEmailView.as_view(), name="mfa-reauth-email"),
+    path("2fa/disable/", MfaDisableView.as_view(), name="mfa-disable"),
+    path("2fa/recovery-codes/", MfaRecoveryCodesView.as_view(), name="mfa-recovery-codes"),
+    # Sesiones abiertas de la propia cuenta (seguridad.html, sessions.py).
+    path("sessions/", SessionListView.as_view(), name="session-list"),
+    path("sessions/ping/", SessionPingView.as_view(), name="session-ping"),
+    path("sessions/revoke-others/", SessionRevokeOthersView.as_view(), name="session-revoke-others"),
+    path("sessions/<uuid:session_id>/revoke/", SessionRevokeView.as_view(), name="session-revoke"),
 ]

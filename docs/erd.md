@@ -18,6 +18,15 @@ erDiagram
         char default_print_format
         datetime updated_at
     }
+    EmailChangeRequest {
+        bigauto id PK
+        auto user_id FK
+        char new_email
+        char token_hash UK
+        datetime expires_at
+        datetime confirmed_at
+        datetime created_at
+    }
     EmailVerification {
         bigauto id PK
         auto user_id FK
@@ -33,12 +42,38 @@ erDiagram
         auto group_id FK
         bigauto permission_id FK
     }
+    KnownDevice {
+        bigauto id PK
+        auto user_id FK
+        char device_hash
+        char browser
+        datetime first_seen_at
+        datetime last_seen_at
+        datetime trusted_until
+    }
     LoginLockout {
         bigauto id PK
         auto user_id FK
         positiveinteger failed_attempts
         datetime locked_until
         positiveinteger lockout_count
+    }
+    MfaEmailCode {
+        bigauto id PK
+        auto user_id FK
+        char purpose
+        char code_hash
+        datetime expires_at
+        datetime used_at
+        positivesmallinteger attempts
+        datetime created_at
+    }
+    MfaRecoveryCode {
+        bigauto id PK
+        auto user_id FK
+        char code_hash
+        datetime used_at
+        datetime created_at
     }
     PasswordChangeRequirement {
         bigauto id PK
@@ -61,6 +96,20 @@ erDiagram
         char key UK
         char name
         char category
+    }
+    SessionRecord {
+        uuid id PK
+        auto user_id FK
+        datetime created_at
+        datetime last_seen_at
+        genericipaddress ip
+        char user_agent
+        char browser
+        boolean remember
+        char method
+        char mfa_method
+        datetime revoked_at
+        char revoked_reason
     }
     SupportMessage {
         bigauto id PK
@@ -126,6 +175,15 @@ erDiagram
         char name
         json accesses
         datetime created_at
+    }
+    UserMfa {
+        bigauto id PK
+        auto user_id FK
+        char method
+        text secret_encrypted
+        text pending_secret_encrypted
+        datetime enabled_at
+        biginteger last_totp_step
     }
     AuditLog {
         bigauto id PK
@@ -696,18 +754,23 @@ erDiagram
     User ||--o{ Address : "user"
     User ||--o{ CarrierAccount : "owner"
     User ||--o{ Document : "user"
+    User ||--o{ EmailChangeRequest : "user"
     User ||--o{ ImportMapping : "user"
     User ||--o{ IncomingWebhook : "owner"
     User ||--o{ IntegrationKey : "owner"
+    User ||--o{ KnownDevice : "user"
     User ||--o{ Label : "user"
     User ||--o{ LabelImage : "owner"
     User ||--o{ LabelSequence : "owner"
     User ||--o{ MerchantNotice : "owner"
+    User ||--o{ MfaEmailCode : "user"
+    User ||--o{ MfaRecoveryCode : "user"
     User ||--o{ Order : "user"
     User ||--o{ OrderImport : "user"
     User ||--o{ PrintAgent : "owner"
     User ||--o{ PrintJob : "owner"
     User ||--o{ Printer : "owner"
+    User ||--o{ SessionRecord : "user"
     User ||--o{ SupportMessage : "user"
     User ||--o{ TeamJoinRequest : "user"
     User ||--o{ TeamMember : "user"
@@ -719,5 +782,6 @@ erDiagram
     User ||--o| PasswordChangeRequirement : "user"
     User ||--o| PersonalProfile : "user"
     User ||--o| Team : "data_user"
+    User ||--o| UserMfa : "user"
     WebhookEndpoint ||--o{ WebhookDelivery : "endpoint"
 ```

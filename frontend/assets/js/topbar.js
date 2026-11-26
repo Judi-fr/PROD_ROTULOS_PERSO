@@ -7,10 +7,12 @@
 //
 // Estaba copiada en cada página: el mismo bloque HTML en 12 archivos y la
 // misma función renderTopbar en 11 .js. Acá se escribe una sola vez; cada
-// página solo declara sus links propios:
+// página solo pone:
 //
-//   <header class="topbar" id="appTopbar"
-//           data-links='[{"href":"dashboard.html","label":"Volver al panel"}]'></header>
+//   <header class="topbar" id="appTopbar"></header>
+//
+// Las páginas ya no declaran links propios (data-links, quitados 2026-11-19):
+// repetían lo que la barra lateral despliega bajo cada sección.
 //
 // Muestra el selector de comercio (una persona puede estar en varios).
 //
@@ -31,19 +33,10 @@
     return document.getElementById("appTopbar");
   }
 
-  function readLinks(node) {
-    try {
-      const links = JSON.parse(node.dataset.links || "[]");
-      return Array.isArray(links) ? links : [];
-    } catch {
-      console.error("topbar: data-links no es JSON válido");
-      return [];
-    }
-  }
-
   // El menú de la cuenta: lo personal, fuera de las acciones de la página.
   const ACCOUNT_LINKS = [
     { href: "organizacion.html", label: "Mi cuenta" },
+    { href: "seguridad.html", label: "Seguridad" },
     { href: "mi_actividad.html", label: "Mi actividad" },
     { href: "ayuda.html", label: "Ayuda" },
   ];
@@ -90,27 +83,13 @@
     left.appendChild(home);
     node.appendChild(left);
 
-    // Medio: las acciones de la página (data-links). El panel ya tiene su
-    // botón y lo de la cuenta está en su menú, así que esos no se repiten.
-    // Los links vienen del HTML de la página, no del backend: igual se
-    // insertan con textContent y href directo, nunca con innerHTML. Un link
-    // con "perm" solo aparece si la sesión tiene ese permiso (el backend
-    // vuelve a chequear al entrar; esto solo evita ofrecer de más).
-    const permissions = (user && Array.isArray(user.permissions) && user.permissions) || null;
-    const skip = new Set(["dashboard.html", ...ACCOUNT_LINKS.map((link) => link.href)]);
+    // Medio: vacío a propósito (2026-11-19). Cada página declaraba sus links
+    // (data-links) y repetían las funciones que la barra lateral ya despliega
+    // bajo su sección; ahora la navegación es solo la barra lateral. El nav
+    // queda como separador, así la cuenta sigue a la derecha.
     const actions = document.createElement("nav");
     actions.className = "topbar-actions";
-    actions.setAttribute("aria-label", "Acciones de esta página");
-    readLinks(node).forEach((link) => {
-      if (!link || !link.href || skip.has(link.href.split("#")[0])) return;
-      if (link.perm && permissions && !permissions.includes(link.perm)) return;
-      const anchor = document.createElement("a");
-      anchor.className = "topbar-link";
-      anchor.href = link.href;
-      anchor.textContent = link.label || link.href;
-      if (link.id) anchor.id = link.id;
-      actions.appendChild(anchor);
-    });
+    actions.setAttribute("aria-hidden", "true");
     node.appendChild(actions);
 
     // Derecha: la cuenta. "Cerrar sesión" conserva el id logoutBtn: cada
@@ -234,19 +213,6 @@
     document.body.appendChild(script);
   }
 
-  // Con muchos links o una ventana mediana, los de la página no entran en la
-  // fila y quedaban cortados ("Cola de impresió"). Entonces la barra pasa al
-  // armado de dos filas, el mismo del celular (is-crowded en ui.css). Se mide
-  // sin la clase, en el mismo cuadro, así no parpadea.
-  function fitLinks(node) {
-    const actions = node.querySelector(".topbar-actions");
-    node.classList.remove("is-crowded");
-    if (!actions || !actions.children.length) return;
-    if (actions.scrollWidth > actions.clientWidth + 1) node.classList.add("is-crowded");
-  }
-
-  let observed = null;
-
   function render(user) {
     const node = container();
     if (!node) return;
@@ -256,11 +222,6 @@
     // lee de acá al cargar).
     window.__topbarUser = user || null;
     if (window.AppSidebar) window.AppSidebar.render(user || null);
-    fitLinks(node);
-    if (observed !== node && window.ResizeObserver) {
-      observed = node;
-      new ResizeObserver(() => fitLinks(node)).observe(node);
-    }
   }
 
   window.AppTopbar = { render };

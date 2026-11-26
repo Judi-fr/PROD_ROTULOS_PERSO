@@ -16,6 +16,8 @@ module.exports = async () => {
     await page.goto("/index.html");
     await page.fill("#user", email);
     await page.fill("#password", password);
+    // Sesión mantenida: si no, se cerraría por inactividad en una corrida larga.
+    await page.check("#rememberMe");
     await page.click('button[type="submit"]');
     await page.waitForURL(/(dashboard|gestionuser)\.html/);
     await context.storageState({ path: `.auth-${name}.json` });
