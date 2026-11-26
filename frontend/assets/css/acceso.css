@@ -423,3 +423,17 @@ a.access-submit:hover { color: var(--n-0); }
     animation: none;
   }
 }
+
+/* "La última vez entraste con Google" (index.html). */
+.access-last-method {
+  margin: 0 0 8px;
+  color: var(--accent-700);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.access-google.is-last-method {
+  padding: 4px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 2px var(--accent-500);
+}

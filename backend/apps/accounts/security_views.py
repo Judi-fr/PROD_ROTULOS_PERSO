@@ -176,9 +176,6 @@ class MfaVerifyView(APIView):
             return Response({"detail": "El código no es correcto."}, status=status.HTTP_400_BAD_REQUEST)
 
         lockout.register_success()
-        device = devices.current_device_id(request)
-        if request.data.get("trust_browser") is True:
-            devices.remember_device(user, request, device, trust=True)
         if method == "recovery":
             record(
                 request,
@@ -191,10 +188,15 @@ class MfaVerifyView(APIView):
                 actor_email=user.email,
             )
             recovery_code_used_mail(user, mfa.recovery_codes_left(user))
-        return finish_login(
+        response = finish_login(
             request, user, remember=data.get("remember"), method=data.get("method") or "password",
             mfa_method=method, skip_mfa=True,
         )
+        # Después de finish_login: así un navegador nuevo cuenta como nuevo
+        # (y avisa) aunque además se lo marque de confianza.
+        if request.data.get("trust_browser") is True:
+            devices.remember_device(user, request, devices.current_device_id(request), trust=True)
+        return response
 
 
 class MfaResendView(APIView):
@@ -251,9 +253,39 @@ def confirm_identity(user, code) -> str | None:
     """Para acciones delicadas (desactivar, códigos nuevos): un código de su
     método, uno de recuperación o uno que se pidió por email (``reauth``)."""
     method = mfa.verify_second_factor(user, code, email_purpose="reauth")
-    if method is None and mfa.email_code_verify(user, code, "reauth"):
+    config = mfa.config_of(user)
+    # Con el método por email, verify_second_factor ya probó el de "reauth":
+    # probarlo de nuevo gastaría dos intentos por cada error.
+    already_tried = config is not None and config.enabled and config.method == UserMfa.Method.EMAIL
+    if method is None and not already_tried and mfa.email_code_verify(user, code, "reauth"):
         method = "email"
     return method
+
+
+REAUTH_FAILED = {"detail": "Confirmá que sos vos: tu contraseña actual o un código."}
+
+
+def require_reauth(request, *, allow_password: bool = True):
+    """Antes de una acción delicada con una sesión ya abierta (activar el
+    segundo paso, crear contraseña, cambiar el email…): la contraseña actual
+    o un código (del segundo paso, de recuperación o el que se pide por
+    email). Los errores cuentan para el mismo bloqueo que el login: con una
+    sesión robada no se puede probar contraseñas o códigos sin límite.
+    Devuelve ``None`` si está bien, o la respuesta de error."""
+    user = request.user
+    lockout, _ = LoginLockout.objects.get_or_create(user=user)
+    if lockout.is_locked():
+        return _locked_response(lockout)
+    password = request.data.get("password") or ""
+    code = request.data.get("code")
+    ok = bool(allow_password and password and user.has_usable_password() and user.check_password(password))
+    if not ok and code:
+        ok = confirm_identity(user, code) is not None
+    if not ok:
+        lockout.register_failure()
+        return Response(REAUTH_FAILED, status=status.HTTP_400_BAD_REQUEST)
+    lockout.register_success()
+    return None
 
 
 class MfaStatusView(_OwnAccountView):
@@ -273,6 +305,9 @@ class MfaStatusView(_OwnAccountView):
 
 
 class MfaSetupView(_OwnAccountView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mfa_verify"
+
     """POST /api/v1/auth/2fa/setup/ {method} — empieza a activarla. Con la
     app devuelve el QR y el secreto; con email manda un código. Queda activa
     recién con ``2fa/confirm/``."""
@@ -283,6 +318,11 @@ class MfaSetupView(_OwnAccountView):
             return Response({"detail": "Elegí la app autenticadora o el código por email."}, status=status.HTTP_400_BAD_REQUEST)
         if mfa.mfa_enabled(request.user):
             return Response({"detail": "Ya la tenés activada: desactivala para cambiar de método."}, status=status.HTTP_400_BAD_REQUEST)
+        # Con una sesión robada no se tiene que poder activar con el celular de
+        # otro y dejar afuera al dueño.
+        failed = require_reauth(request)
+        if failed is not None:
+            return failed
         config, _ = UserMfa.objects.get_or_create(user=request.user, defaults={"method": method})
         config.method = method
         config.last_totp_step = None
@@ -352,8 +392,9 @@ class MfaDisableView(_OwnAccountView):
     def post(self, request):
         if not mfa.mfa_enabled(request.user):
             return Response({"detail": "No la tenías activada."}, status=status.HTTP_400_BAD_REQUEST)
-        if confirm_identity(request.user, request.data.get("code")) is None:
-            return Response(BAD_CODE, status=status.HTTP_400_BAD_REQUEST)
+        failed = require_reauth(request, allow_password=False)
+        if failed is not None:
+            return failed
         from .security_models import MfaRecoveryCode
 
         UserMfa.objects.filter(user=request.user).delete()
@@ -375,8 +416,211 @@ class MfaRecoveryCodesView(_OwnAccountView):
     def post(self, request):
         if not mfa.mfa_enabled(request.user):
             return Response({"detail": "Primero activá la verificación en dos pasos."}, status=status.HTTP_400_BAD_REQUEST)
-        if confirm_identity(request.user, request.data.get("code")) is None:
-            return Response(BAD_CODE, status=status.HTTP_400_BAD_REQUEST)
+        failed = require_reauth(request, allow_password=False)
+        if failed is not None:
+            return failed
         codes = mfa.new_recovery_codes(request.user)
         self.audit(request, "auth.recovery_codes_regenerated")
         return Response({"recovery_codes": codes})
+
+
+# ---- Historial de seguridad -------------------------------------------------
+
+SECURITY_LOG_LIMIT = 30
+
+
+class SecurityLogView(_OwnAccountView):
+    """GET /api/v1/auth/me/security-log/ — los últimos eventos de seguridad de
+    la propia cuenta: ingresos (también los fallidos con su email), bloqueos,
+    contraseña, segundo paso y sesiones. El navegador legible, nunca el
+    user agent crudo."""
+
+    def get(self, request):
+        from django.db.models import Q
+
+        from apps.audit.models import AuditLog
+
+        from .sessions import browser_label
+
+        rows = (
+            AuditLog.objects.filter(category="auth")
+            .filter(Q(actor=request.user) | Q(actor__isnull=True, actor_email__iexact=request.user.email))
+            .order_by("-created_at")[:SECURITY_LOG_LIMIT]
+        )
+        return Response(
+            [
+                {
+                    "action": row.action,
+                    "action_label": row.get_action_display(),
+                    "actor_email": row.actor_email,
+                    "created_at": row.created_at,
+                    "ip": row.ip_address,
+                    "browser": browser_label(row.user_agent) if row.user_agent else "",
+                }
+                for row in rows
+            ]
+        )
+
+
+# ---- Contraseña para cuentas de Google -------------------------------------
+
+
+class SetPasswordView(_OwnAccountView):
+    """POST /api/v1/auth/me/set-password/ {new_password, new_password_confirm, code?}
+    — quien entró siempre con Google crea una contraseña (sin la actual, que
+    no tiene). Con el segundo paso activo pide su código."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mfa_verify"
+
+    def post(self, request):
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from .auth_views import validate_password_strength
+        from .security_mail import password_changed_mail
+
+        user = request.user
+        if user.has_usable_password():
+            return Response(
+                {"detail": "Ya tenés una contraseña: cambiala desde Mi cuenta."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        password = request.data.get("new_password") or ""
+        if password != (request.data.get("new_password_confirm") or ""):
+            return Response({"new_password_confirm": "Las contraseñas no coinciden."}, status=status.HTTP_400_BAD_REQUEST)
+        error = validate_password_strength(password)
+        if not error:
+            try:
+                validate_password(password, user=user)
+            except DjangoValidationError as exc:
+                error = " ".join(exc.messages)
+        if error:
+            return Response({"new_password": error}, status=status.HTTP_400_BAD_REQUEST)
+        # Sin contraseña no hay con qué confirmar: un código (del segundo paso o
+        # por email). Si no, una sesión robada crearía su propia contraseña.
+        failed = require_reauth(request, allow_password=False)
+        if failed is not None:
+            return failed
+        user.set_password(password)
+        user.save(update_fields=["password"])
+        revoke_all(user, except_sid=current_sid(request), reason="password")
+        self.audit(request, "auth.password_set")
+        password_changed_mail(user, "set")
+        return Response({"detail": "Listo: ya podés entrar también con tu email y esta contraseña."})
+
+
+# ---- Cambiar el email -------------------------------------------------------
+
+EMAIL_CHANGES_PER_DAY = 5
+EMAIL_CHANGE_SENT = {
+    "detail": "Si ese email está disponible, te mandamos un enlace para confirmarlo. El cambio se hace recién al abrirlo."
+}
+
+
+def _token_hash(raw: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+class ChangeEmailView(_OwnAccountView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mfa_verify"
+
+    """POST /api/v1/auth/me/change-email/ {new_email, password? | code?} —
+    manda un enlace al email NUEVO; nada cambia hasta abrirlo. Un email que ya
+    usa otra cuenta responde igual que uno libre (no se revela)."""
+
+    def post(self, request):
+        import secrets
+
+        from django.conf import settings
+
+        from .auth_views import normalize_email, validate_email_format
+        from .security_mail import email_change_link_mail
+        from .security_models import EmailChangeRequest
+
+        user = request.user
+        failed = require_reauth(request)
+        if failed is not None:
+            return failed
+        new_email = normalize_email(request.data.get("new_email"))
+        error = validate_email_format(new_email) if new_email else "Escribí el email nuevo."
+        if error:
+            return Response({"new_email": error}, status=status.HTTP_400_BAD_REQUEST)
+        if new_email == normalize_email(user.email):
+            return Response({"new_email": "Es el mismo email que ya usás."}, status=status.HTTP_400_BAD_REQUEST)
+        since = timezone.now() - timedelta(days=1)
+        if EmailChangeRequest.objects.filter(user=user, created_at__gte=since).count() >= EMAIL_CHANGES_PER_DAY:
+            return Response({"detail": "Pediste muchos cambios hoy: probá mañana."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        taken = get_user_model().objects.filter(username__iexact=new_email).exists()
+        if not taken:
+            raw = secrets.token_urlsafe(32)
+            hours = settings.EMAIL_CHANGE_HOURS
+            # Los pedidos anteriores dejan de servir pero quedan, así cuentan
+            # para el tope diario.
+            EmailChangeRequest.objects.filter(user=user, confirmed_at__isnull=True, expires_at__gt=timezone.now()).update(
+                expires_at=timezone.now()
+            )
+            EmailChangeRequest.objects.create(
+                user=user, new_email=new_email, token_hash=_token_hash(raw), expires_at=timezone.now() + timedelta(hours=hours)
+            )
+            url = f"{settings.FRONTEND_URL.rstrip('/')}/confirmar_cambio_email.html?token={raw}"
+            email_change_link_mail(new_email, url, hours)
+        return Response(EMAIL_CHANGE_SENT, status=status.HTTP_202_ACCEPTED)
+
+
+class ConfirmEmailChangeView(APIView):
+    """POST /api/v1/auth/me/change-email/confirm/ {token} — el enlace del
+    mail. Público: el token es la prueba (largo, de un solo uso, vence)."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mfa_verify"
+
+    def post(self, request):
+        from django.db import transaction
+
+        from .models import EmailVerification
+        from .security_mail import _mask, email_changed_old_mail
+        from .security_models import EmailChangeRequest
+
+        invalid = Response({"detail": "El enlace no es válido o ya venció. Pedí el cambio de nuevo."}, status=status.HTTP_400_BAD_REQUEST)
+        raw = str(request.data.get("token") or "")
+        if not raw:
+            return invalid
+        with transaction.atomic():
+            change = (
+                EmailChangeRequest.objects.select_for_update()
+                .select_related("user")
+                .filter(token_hash=_token_hash(raw), confirmed_at__isnull=True, expires_at__gt=timezone.now())
+                .first()
+            )
+            if change is None:
+                return invalid
+            user = change.user
+            if get_user_model().objects.filter(username__iexact=change.new_email).exclude(pk=user.pk).exists():
+                return invalid
+            old_email = user.email
+            user.email = change.new_email
+            user.username = change.new_email
+            user.save(update_fields=["email", "username"])
+            change.confirmed_at = timezone.now()
+            change.save(update_fields=["confirmed_at"])
+            # Abrir el enlace prueba que el email nuevo es suyo.
+            EmailVerification.objects.filter(user=user, is_verified=False).update(is_verified=True, verified_at=timezone.now())
+        revoke_all(user, reason="email_change")
+        record(
+            request,
+            actor=user,
+            category="auth",
+            action="auth.email_change",
+            target=user,
+            target_type="user",
+            target_repr=change.new_email,
+            actor_email=change.new_email,
+            changes={"email": {"from": _mask(old_email), "to": _mask(change.new_email)}},
+        )
+        email_changed_old_mail(old_email, change.new_email)
+        return Response({"detail": "Listo: desde ahora entrás con tu email nuevo."})

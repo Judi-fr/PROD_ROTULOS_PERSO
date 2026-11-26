@@ -33,6 +33,7 @@
         <h1>Entrá a tu cuenta</h1>
         <p class="access-lead">Con Google o con tu email y contraseña.</p>
 
+        <p class="access-last-method" id="lastMethodHint" hidden>La última vez entraste con Google.</p>
         <div id="g_id_signin" class="access-google"></div>
         <div class="access-divider">o</div>
 
@@ -80,7 +81,9 @@
     // Entró: se guarda quién es (los tokens ya quedaron en cookies HttpOnly)
     // y va a donde corresponda (authLandingPage, utils.js). Si la cuenta pide
     // el código del segundo paso, sigue en verificar_ingreso.html.
-    function handleAuthSuccess(data) {
+    function handleAuthSuccess(data, method) {
+      // Solo el método (nunca el email): la próxima vez se resalta ese botón.
+      try { localStorage.setItem('lastLoginMethod', method === 'google' ? 'google' : 'password'); } catch (e) { /* sin storage */ }
       if (startMfaChallenge(data, rememberChoice())) return;
       window.Auth.saveSession(data.user);
       window.location.replace(authLandingPage(data.user));
@@ -104,7 +107,7 @@
           throw new Error(data.detail || 'No se pudo iniciar sesión con Google.');
         }
 
-        handleAuthSuccess(data);
+        handleAuthSuccess(data, 'google');
       } catch (error) {
         showMessage(error.message || 'No se pudo iniciar sesión con Google.');
       }
@@ -121,6 +124,14 @@
     function rememberChoice() {
       return rememberBox.checked;
     }
+
+    // "La última vez entraste con Google": así no prueba una contraseña que no tiene.
+    try {
+      if (localStorage.getItem('lastLoginMethod') === 'google') {
+        document.getElementById('lastMethodHint').hidden = false;
+        document.getElementById('g_id_signin').classList.add('is-last-method');
+      }
+    } catch (e) { /* sin storage */ }
 
     // Volvió por inactividad (auth.js): se lo decimos en vez de mostrar el login mudo.
     if (new URLSearchParams(window.location.search).get('motivo') === 'inactividad') {

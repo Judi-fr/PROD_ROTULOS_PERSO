@@ -88,6 +88,8 @@
     <ul>
       <li>Un registro de las acciones importantes (quién imprimió, despachó, cambió permisos…) con la dirección IP y el navegador, para seguridad y para que el dueño del comercio vea qué hizo su equipo.</li>
       <li>Si subís la foto de un rótulo para copiar su diseño, la foto.</li>
+      <li>De cada sesión abierta: cuándo empezó, cuándo se usó por última vez, el navegador y la dirección IP, para que veas dónde está abierta tu cuenta y puedas cerrarla. También los navegadores desde los que ya entraste, para avisarte por mail cuando se entra desde uno nuevo.</li>
+      <li>Si activás la verificación en dos pasos: la clave de tu app autenticadora (cifrada) y tus códigos de recuperación (guardados de forma que no se pueden leer).</li>
     </ul>
 
     <h2>4. Para qué los usamos</h2>
@@ -120,7 +122,8 @@
 
     <h2>7. Cookies y almacenamiento en tu navegador</h2>
     <ul>
-      <li><strong>Sesión</strong>: dos cookies (<code>rotulos_access</code> y <code>rotulos_refresh</code>) que mantienen tu sesión abierta. Son imprescindibles y ningún script de la página puede leerlas.</li>
+      <li><strong>Sesión</strong>: dos cookies (<code>rotulos_access</code> y <code>rotulos_refresh</code>) que mantienen tu sesión abierta. Son imprescindibles y ningún script de la página puede leerlas. Si no marcás "Mantener la sesión iniciada", se borran al cerrar el navegador.</li>
+      <li><strong>Navegador</strong>: una cookie (<code>rotulos_device</code>) con un número al azar que identifica a este navegador, para avisarte de ingresos desde uno nuevo y para no pedirte el código del segundo paso si marcaste que confiás en él. Ningún script de la página puede leerla.</li>
       <li><strong>Preferencias</strong>: el navegador recuerda cosas como el comercio elegido, el zoom del editor o el último transportista usado.</li>
       <li>No usamos cookies de publicidad ni de análisis.</li>
     </ul>

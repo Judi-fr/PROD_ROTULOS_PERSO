@@ -92,3 +92,33 @@ def remember_device(user, request, device: str, *, trust: bool = False) -> tuple
 
 def forget_trust(user) -> None:
     KnownDevice.objects.filter(user=user, trusted_until__isnull=False).update(trusted_until=None)
+
+
+# Como mucho tantos avisos de "navegador nuevo" por persona y por día: alguien
+# que borra las cookies seguido no tiene que llenarse el correo.
+NEW_DEVICE_MAILS_PER_DAY = 5
+
+
+def notify_new_device(user, request, session) -> None:
+    """Primer ingreso de la cuenta desde este navegador: queda en la auditoría
+    y, con tope por día, le llega un mail a la persona."""
+    from apps.audit.models import AuditLog
+    from apps.audit.services import record
+
+    from .security_mail import new_device_mail
+
+    since = timezone.now() - timedelta(days=1)
+    sent_today = AuditLog.objects.filter(actor=user, action="auth.new_device", created_at__gte=since).count()
+    record(
+        request,
+        actor=user,
+        category="auth",
+        action="auth.new_device",
+        target=user,
+        target_type="user",
+        target_repr=user.email,
+        actor_email=user.email,
+        changes={"browser": {"from": None, "to": session.browser}},
+    )
+    if sent_today < NEW_DEVICE_MAILS_PER_DAY:
+        new_device_mail(user, session)

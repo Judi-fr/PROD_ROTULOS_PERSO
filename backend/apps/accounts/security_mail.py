@@ -88,3 +88,88 @@ def mfa_disabled_mail(user, *, by_admin: bool):
         heading="Tu cuenta ya no pide un código al entrar",
         paragraphs=paragraphs,
     )
+
+
+def new_device_mail(user, session):
+    where = session.browser or "un navegador"
+    ip = f" (IP {session.ip})" if session.ip else ""
+    return _send(
+        user,
+        subject="Nuevo ingreso a tu cuenta",
+        heading="Entraron a tu cuenta desde un navegador nuevo",
+        paragraphs=[
+            f"El {_when()} se entró a tu cuenta desde {where}{ip}.",
+            "Si fuiste vos, no tenés que hacer nada.",
+        ],
+        footnote="Si no fuiste vos: cambiá tu contraseña y cerrá las sesiones que no reconozcas.",
+    )
+
+
+_PASSWORD_TEXTS = {
+    "change": "cambiaste la contraseña de tu cuenta",
+    "reset": "se restableció la contraseña de tu cuenta con el enlace de \"Olvidé mi contraseña\"",
+    "set": "creaste una contraseña para tu cuenta",
+}
+
+
+def password_changed_mail(user, kind: str):
+    from django.conf import settings
+
+    reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/recuperar-password.html"
+    return _send(
+        user,
+        subject="Tu contraseña cambió",
+        heading="Tu contraseña cambió",
+        paragraphs=[f"El {_when()} {_PASSWORD_TEXTS.get(kind, _PASSWORD_TEXTS['change'])}."],
+        footnote=f"Si no fuiste vos, recuperá tu cuenta ya: {reset_url}",
+    )
+
+
+def _mask(email: str) -> str:
+    local, _, domain = (email or "").partition("@")
+    return f"{local[:1]}***@{domain}" if domain else "***"
+
+
+def email_change_link_mail(new_email: str, url: str, hours: int):
+    """Al email NUEVO: el enlace que confirma que es suyo."""
+    paragraphs = [
+        "Pediste usar este email para entrar a Human Log · Rótulos.",
+        f"Para confirmarlo, abrí el enlace. Vence en {hours} horas.",
+    ]
+    try:
+        send_mail(
+            subject="Confirmá tu nuevo email — Human Log · Rótulos",
+            message="Hola,\n\n" + "\n\n".join(paragraphs) + f"\n\n{url}\n\nSi no lo pediste, ignorá este correo.\n",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[new_email],
+            fail_silently=False,
+            html_message=branded_html(
+                heading="Confirmá tu nuevo email",
+                paragraphs=paragraphs,
+                action=("Confirmar mi nuevo email", url),
+                footnote="Si no lo pediste, ignorá este correo.",
+            ),
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception("No se pudo mandar el enlace de cambio de email")
+        return False
+
+
+def email_changed_old_mail(old_email: str, new_email: str):
+    """Al email VIEJO: aviso de que la cuenta ya entra con otro."""
+    paragraphs = [f"El {_when()} el email de tu cuenta cambió a {_mask(new_email)}. Desde ahora se entra con ese."]
+    footnote = "Si no fuiste vos, escribí a soporte cuanto antes."
+    try:
+        send_mail(
+            subject="El email de tu cuenta cambió — Human Log · Rótulos",
+            message="Hola,\n\n" + "\n\n".join(paragraphs) + f"\n\n{footnote}\n",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[old_email],
+            fail_silently=False,
+            html_message=branded_html(heading="El email de tu cuenta cambió", paragraphs=paragraphs, footnote=footnote),
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception("No se pudo avisar el cambio de email al email anterior")
+        return False

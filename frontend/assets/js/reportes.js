@@ -131,6 +131,16 @@ function renderSecurity(data, months) {
     { label: "Email verificado", icon: "envelope-simple-open", value: verified + unverified ? formatPercent((verified / (verified + unverified)) * 100) : "—", hint: `${plural(unverified, "sin verificar", "sin verificar")} · ${plural(verification.expired_token ?? 0, "link vencido", "links vencidos")}` },
     { label: "Bloqueos en el período", icon: "lock-simple", value: sum(lockouts), hint: "Por contraseñas equivocadas", tone: sum(lockouts) ? "alert" : "" },
     { label: "Cambio de contraseña pendiente", icon: "key", value: pending, hint: "Deben cambiarla al entrar" },
+    (() => {
+      const adoption = data.mfa_adoption || {};
+      const total = adoption.total ?? 0;
+      return {
+        label: "Verificación en dos pasos",
+        icon: "shield-check",
+        value: total ? formatPercent(((adoption.enabled ?? 0) / total) * 100) : "—",
+        hint: `${adoption.totp ?? 0} con app · ${adoption.email ?? 0} por email`,
+      };
+    })(),
   ]);
 
   RC.columns(byId("chartLockouts"), {

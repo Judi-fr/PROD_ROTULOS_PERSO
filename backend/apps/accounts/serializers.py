@@ -597,6 +597,9 @@ class ProfileSerializer(serializers.ModelSerializer):
 
         data["team"] = team_payload(instance)
         data["teams"] = teams_payload(instance)
+        from .sessions import previous_login
+
+        data["previous_login"] = previous_login(instance, self.context.get("request"))
         return data
 
     def update(self, instance, validated_data):

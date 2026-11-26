@@ -156,17 +156,29 @@ def send_email_code(user, purpose: str) -> None:
     )
 
 
-def email_code_verify(user, code, purpose: str) -> bool:
-    code = _clean_code(code)
-    pending = (
+def _pending_email_code(user, purpose: str):
+    return (
         MfaEmailCode.objects.filter(user=user, purpose=purpose, used_at__isnull=True, expires_at__gt=timezone.now())
         .order_by("-created_at")
         .first()
     )
-    if pending is None or pending.attempts >= EMAIL_CODE_MAX_ATTEMPTS:
+
+
+def email_code_verify(user, code, purpose: str) -> bool:
+    """Cada intento se "gasta" en la base ANTES de comparar (update
+    condicional): pedidos en paralelo no pueden pasar el tope de intentos."""
+    from django.db.models import F
+
+    code = _clean_code(code)
+    pending = _pending_email_code(user, purpose)
+    if pending is None:
+        return False
+    claimed = MfaEmailCode.objects.filter(
+        pk=pending.pk, used_at__isnull=True, attempts__lt=EMAIL_CODE_MAX_ATTEMPTS
+    ).update(attempts=F("attempts") + 1)
+    if not claimed:
         return False
     if not (code.isdigit() and hmac.compare_digest(code_hash(code), pending.code_hash)):
-        MfaEmailCode.objects.filter(pk=pending.pk).update(attempts=pending.attempts + 1)
         return False
     used = MfaEmailCode.objects.filter(pk=pending.pk, used_at__isnull=True).update(used_at=timezone.now())
     return used == 1

@@ -480,6 +480,52 @@ exact midnight. It reads `.get()`, so it takes query params or a JSON body dict 
   `personAvatarUrl` in `utils.js` (photo → Google → initials drawn locally by `initialsAvatarUrl`; it used to be api.dicebear.com with the EMAIL in the URL, which sent every person's email to a third party on every page — 2026-10-29), the topbar, `equipo.js`, `actividad_equipo.js`.
   Tests: `apps/accounts/tests/test_personal_profile.py`.
 
+### Account security: sessions, Recordarme, 2FA (`apps/accounts`, 2026-11-25)
+
+Spec `docs/superpowers/specs/2026-11-25-recordarme-y-2fa-design.md`, plan `docs/superpowers/plans/2026-11-25-recordarme-y-2fa.md`.
+- **One end for every login: `login_flow.finish_login`** (email+password, Google, register, and `2fa/verify/`). It asks
+  for the second step, opens the session, registers the browser, audits `auth.login_success` and delivers the tokens. A
+  new login rule goes there, never in a single view.
+- **Sessions (`SessionRecord`, `sessions.py`)**: each login is a row; its id travels as the `sid` claim in refresh and
+  access (plus `remember` and `life`, the refresh lifetime in seconds, which `SessionTokenRefreshSerializer` keeps on
+  rotation — simplejwt's `set_exp()` would fall back to 7 days). `JWTAuthenticationWithPasswordPolicy` rejects a closed
+  sid at once (401 `session_closed`; ignored on public views so a stale cookie never blocks logging in). Tokens without
+  `sid` (older ones, tests using `RefreshToken.for_user`) keep working until they expire. `revoke_all(user,
+  except_sid=...)` closes sessions AND blacklists the other sessions' refresh tokens (it reads the sid from the stored
+  `OutstandingToken.token`, which `tokens_for_session` rewrites after adding the claims). Password change/reset, email
+  change, 2FA disable, admin deactivation/`revoke-sessions/` all call it; a lockout does NOT (anyone could log a merchant
+  out by mistyping their password).
+- **"Mantener la sesión iniciada"** (`remember` in login/Google bodies): true = 30 days (`AUTH_REMEMBER_DAYS`); false =
+  session cookie, 12 h token (`AUTH_SESSION_HOURS`) and closed after `AUTH_IDLE_MINUTES` (30) without use; absent (API
+  clients, tests) = as before (7 days, no idle close). The browser measures idleness (`auth.js`: real clicks/keys/scroll,
+  shared between tabs, warning one minute before, `index.html?motivo=inactividad`) and pings `sessions/ping/` at most
+  every 5 min while active; the server enforces it with 5 extra minutes (`IDLE_GRACE`).
+- **2FA (`mfa.py`)**: optional, per person, app (TOTP RFC 6238 with stdlib: SHA1, 6 digits, ±1 step, a step never
+  accepted twice) or email code (10 min, single use, 5 tries). TOTP secret encrypted with `apps.integrations.crypto`;
+  email and recovery codes as HMAC-SHA256 with `SECRET_KEY` (rotating it invalidates them). With 2FA on, login and Google
+  answer `{mfa_required, mfa_token, method, email_hint}` instead of tokens; `2fa/verify/` (wrong codes count toward
+  `LoginLockout`) finishes it. Password reset does NOT turn 2FA off. Trusted browser = `KnownDevice.trusted_until`
+  (`MFA_TRUST_DAYS`), cookie `rotulos_device` (`devices.py`). The admin removes it with `users/<id>/reset-2fa/`
+  (`users.edit`, audited, mail). Endpoints under `/api/v1/auth/2fa/` (status, setup, confirm, disable, recovery-codes,
+  reauth-email, verify, resend); `?mfa=1|0` filter on `users/`; `mfa_adoption` in `users/metrics/`.
+- **Notices and account changes**: first login from a browser the account never used mails "Nuevo ingreso" (max 5/day,
+  not on register, never to internal users) and audits `auth.new_device`; password change/reset/set mails "Tu contraseña
+  cambió" (`security_mail.py`). `me/security-log/` (last 30 own `auth` events, failed attempts with their email
+  included), `previous_login` in `user_payload` and `me/` ("Tu ingreso anterior" on Inicio), `me/set-password/` (Google
+  accounts), `me/change-email/` + `confirm/` (link to the NEW address, old one notified, a taken address answers like a
+  free one; after it Google login only works with the new address's Google account).
+- **Frontend**: `seguridad.html` (2FA, password/email, sessions, activity; account menu "Seguridad"),
+  `verificar_ingreso.html` (challenge in `sessionStorage.mfaChallenge`, never the URL), `confirmar_cambio_email.html`;
+  shared in `utils.js`: `authLandingPage`, `startMfaChallenge`, `copyText`, `attachPasswordMeter`/
+  `attachCapsLockWarning` (auto-wired to `input[data-password-meter]` and every password field). The login remembers
+  only the last METHOD (`localStorage.lastLoginMethod`), never the email.
+- **Re-auth before anything a stolen session could abuse** (`security_views.require_reauth`): enabling 2FA, creating a
+  password, changing the email (current password or a code), disabling 2FA and new recovery codes (a code). Failures
+  count toward `LoginLockout` like the login; `LoginLockout.register_failure` and email-code attempts are counted in the
+  database (`F()`), so parallel requests can't slip past the limits. Superseded email-change links stay (expired) so
+  the 5/day cap counts them.
+- `LOGIN_THROTTLE_RATE` (default 5/min) is configurable; the e2e backend raises it.
+
 ### Roles & permissions (`apps/accounts`)
 
 There is **no `role` field on `User`** — it's derived, never stored directly:

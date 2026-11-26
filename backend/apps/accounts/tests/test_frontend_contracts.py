@@ -86,3 +86,23 @@ class AccountSecurityPagesTests(SimpleTestCase):
         for path in ("setup/", "confirm/", "disable/", "recovery-codes/", "reauth-email/"):
             self.assertIn(f'"{path}"', security)
         self.assertIn("reset-2fa/", (FRONTEND / "assets/js/usuarios.js").read_text(encoding="utf-8"))
+
+    def test_password_meter_and_caps_lock_helpers_exist(self):
+        utils = (FRONTEND / "assets/js/utils.js").read_text(encoding="utf-8")
+        for name in ("function attachPasswordMeter(", "function attachCapsLockWarning(", "function attachPasswordHelpers("):
+            self.assertIn(name, utils)
+        for page in ("register.html", "reset-password.html", "cambiar-password.html", "organizacion.html", "seguridad.html"):
+            self.assertIn("data-password-meter", (FRONTEND / page).read_text(encoding="utf-8"), page)
+        login = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        self.assertIn("lastLoginMethod", login)
+        self.assertNotIn("localStorage.setItem('lastLoginMethod', email", login)
+
+    def test_account_change_pages_call_existing_endpoints(self):
+        from django.urls import reverse
+
+        self.assertEqual(reverse("change-email-confirm"), "/api/v1/auth/me/change-email/confirm/")
+        confirm = (FRONTEND / "assets/js/confirmar_cambio_email.js").read_text(encoding="utf-8")
+        self.assertIn("/auth/me/change-email/confirm/", confirm)
+        security = (FRONTEND / "assets/js/seguridad.js").read_text(encoding="utf-8")
+        for path in ("/auth/me/set-password/", "/auth/me/change-email/", "/auth/me/security-log/"):
+            self.assertIn(path, security)

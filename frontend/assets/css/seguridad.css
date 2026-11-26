@@ -186,3 +186,33 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ---- Actividad de seguridad ---- */
+.security-log {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.security-log th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.security-log td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.security-log tr.is-alert td:nth-child(2) {
+  color: var(--danger-700);
+  font-weight: 600;
+}
+
+.security-main .table-scroll {
+  overflow-x: auto;
+}

@@ -8,6 +8,7 @@ técnico del código vive en `CLAUDE.md`.
 - [Conectar un cliente que NO tiene Tiendanube](#conectar-un-cliente-que-no-tiene-tiendanube)
 - [Poner la app en un servidor](#poner-la-app-en-un-servidor)
 - [Backups y cómo restaurar](#backups-y-cómo-restaurar)
+- [Destrabar la cuenta de alguien](#destrabar-la-cuenta-de-alguien)
 
 ---
 
@@ -563,3 +564,22 @@ docker compose -f docker-compose.prod.yml start api worker
 > cambiar algo del servidor) conviene probar el restore en una máquina de
 > prueba, no en producción.
 
+
+
+---
+
+## Destrabar la cuenta de alguien
+
+Todo desde **Administración → Usuarios**, en el menú "⋯" de la persona:
+
+- **Perdió el celular y los códigos de recuperación** (no puede pasar la verificación en
+  dos pasos): **Quitar verificación en dos pasos**. Antes confirmá por otro medio que es
+  ella. Le cerramos las sesiones, le llega un mail y queda en la auditoría. Después puede
+  volver a activarla desde **Seguridad**.
+- **Cuenta sospechosa** (alguien más pudo entrar): **Cerrar sus sesiones**. Tiene que
+  volver a entrar en todos lados; la cuenta sigue activa. Recomendale cambiar la contraseña.
+- **Bloqueada por intentos fallidos**: **Desbloquear** (o esperar: el bloqueo dura de 1
+  minuto a 1 hora).
+
+Cada persona ve sus propias sesiones, su actividad y su verificación en dos pasos en
+**Seguridad** (menú de su cuenta, arriba a la derecha).

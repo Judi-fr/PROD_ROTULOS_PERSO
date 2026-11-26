@@ -9,6 +9,10 @@ es lo que sale en los rótulos.
 
 ¿Querés probar antes de conectar nada? En el panel, **Probar con pedidos de ejemplo**.
 
+Para proteger la cuenta: en el menú de tu cuenta, **Seguridad → Verificación en dos pasos** (con una app
+autenticadora o un código por email). En una computadora propia podés marcar **Mantener la sesión
+iniciada** al entrar; en una compartida, mejor no.
+
 ## 2. Conectá tu tienda
 En **Tiendas y envíos → Abrir**, elegí dónde está tu tienda y seguí los pasos que aparecen.
 Desde ahí los pedidos entran solos. Empretienda es la excepción: las ventas se cargan subiendo la

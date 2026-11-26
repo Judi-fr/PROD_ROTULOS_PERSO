@@ -112,6 +112,7 @@ test("verificación en dos pasos: se activa con la app, pide el código al entra
   await login(page);
   await page.waitForURL(/(dashboard|comercio_inicio)\.html/);
   await page.goto("/seguridad.html");
+  await page.fill("#mfaReauthPassword", password);
   await page.click('[data-mfa-method="totp"]');
   await expect(page.locator("#mfaQr")).toHaveAttribute("src", /^data:image\/png;base64,/);
   const secret = (await page.locator("#mfaSecret").textContent()).trim();

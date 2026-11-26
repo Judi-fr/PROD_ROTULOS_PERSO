@@ -911,6 +911,18 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             for lockout in qs
         ]
 
+    @staticmethod
+    def _metrics_mfa_adoption():
+        """Personas con la verificación en dos pasos activa, y por método."""
+        everyone = people()
+        enabled = everyone.filter(mfa__enabled_at__isnull=False)
+        return {
+            "total": everyone.count(),
+            "enabled": enabled.count(),
+            "totp": enabled.filter(mfa__method="totp").count(),
+            "email": enabled.filter(mfa__method="email").count(),
+        }
+
     def _metrics_account_age(self):
         now = timezone.now()
         users = list(people().prefetch_related("groups"))
@@ -1037,6 +1049,7 @@ class UserAdminViewSet(viewsets.ModelViewSet):
             "lockouts_by_month": self._metrics_lockouts_by_month(cutoff),
             "top_failed_attempts": self._metrics_top_failed_attempts(),
             "account_age": self._metrics_account_age(),
+            "mfa_adoption": self._metrics_mfa_adoption(),
             # Seguridad de cuentas.
             "email_verification": self._metrics_email_verification(),
             "pending_password_change": self._metrics_pending_password_change(),

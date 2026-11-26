@@ -98,8 +98,10 @@
     });
   }
 
-  async function mfaPost(path, body) {
-    const response = await apiFetch(`${MFA_URL}${path}`, {
+  const mfaPost = (path, body) => postJson(`${MFA_URL}${path}`, body);
+
+  async function postJson(url, body) {
+    const response = await apiFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
@@ -146,7 +148,13 @@
     button.addEventListener("click", async () => {
       const method = button.dataset.mfaMethod;
       try {
-        const data = await mfaPost("setup/", { method });
+        const data = await mfaPost("setup/", {
+          method,
+          password: el("mfaReauthPassword").value || undefined,
+          code: el("mfaReauthCode").value.trim() || undefined,
+        });
+        el("mfaReauthPassword").value = "";
+        el("mfaReauthCode").value = "";
         el("mfaTotpSetup").hidden = method !== "totp";
         el("mfaEmailSetup").hidden = method !== "email";
         if (method === "totp") {
@@ -279,6 +287,112 @@
     load();
   });
 
+  // ---- Actividad de seguridad ---------------------------------------------
+  const ALERT_ACTIONS = new Set(["auth.login_failed", "auth.lockout", "auth.mfa_failed", "auth.new_device", "auth.mfa_admin_reset"]);
+
+  async function loadSecurityLog() {
+    const body = el("securityLogBody");
+    try {
+      const response = await apiFetch(`${API_BASE}/auth/me/security-log/`);
+      const rows = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(getErrorMessage(rows, "No se pudo leer la actividad."));
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="3" class="security-help">Todavía no hay movimientos.</td></tr>';
+        return;
+      }
+      body.replaceChildren(
+        ...rows.map((row) => {
+          const tr = document.createElement("tr");
+          if (ALERT_ACTIONS.has(row.action)) tr.className = "is-alert";
+          const where = [row.browser, row.ip ? `IP ${row.ip}` : ""].filter(Boolean).join(" · ");
+          [formatDateTime(row.created_at), row.action_label || row.action, where || "-"].forEach((text) => {
+            const td = document.createElement("td");
+            td.textContent = text;
+            tr.append(td);
+          });
+          return tr;
+        })
+      );
+    } catch (error) {
+      if (!error.isSessionExpired) body.innerHTML = '<tr><td colspan="3">No se pudo leer la actividad.</td></tr>';
+    }
+  }
+
+  // ---- Contraseña y email -------------------------------------------------
+  async function loadAccess() {
+    const user = window.Auth.getCurrentUser();
+    el("currentEmail").textContent = user.email || "";
+    try {
+      const response = await apiFetch(MFA_URL);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      const hasPassword = data.has_usable_password !== false;
+      el("passwordHasOne").hidden = !hasPassword;
+      el("setPasswordForm").hidden = hasPassword;
+      el("mfaReauthPasswordField").hidden = !hasPassword;
+      el("mfaReauthCodeField").hidden = hasPassword;
+      el("changeEmailPasswordField").hidden = !hasPassword;
+      el("changeEmailCodeField").hidden = hasPassword;
+      el("googleEmailWarning").hidden = hasPassword;
+    } catch {
+      // Sin el estado se muestra el formulario con contraseña, el más común.
+    }
+  }
+
+  el("setPasswordForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const data = await postJson(`${API_BASE}/auth/me/set-password/`, {
+        new_password: el("newPassword").value,
+        new_password_confirm: el("newPasswordConfirm").value,
+        code: el("setPasswordCode").value.trim() || undefined,
+      });
+      showMessage(data.detail || "Listo.", "success");
+      el("newPassword").value = "";
+      el("newPasswordConfirm").value = "";
+      loadAccess();
+      load();
+    } catch (error) {
+      if (!error.isSessionExpired) showMessage(error.message);
+    }
+  });
+
+  // "Mandarme un código por email": el mismo para todos los formularios que
+  // piden confirmar la identidad (activar, crear contraseña, cambiar el email).
+  document.querySelectorAll("[data-send-reauth]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      try {
+        await mfaPost("reauth-email/");
+        showMessage("Te mandamos un código a tu email actual. Vence en 10 minutos.", "success");
+      } catch (error) {
+        if (!error.isSessionExpired) showMessage(error.message);
+      }
+    })
+  );
+
+  el("changeEmailForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const newEmail = el("newEmail").value.trim();
+    if (!newEmail) {
+      showMessage("Escribí el email nuevo.");
+      return;
+    }
+    try {
+      const data = await postJson(`${API_BASE}/auth/me/change-email/`, {
+        new_email: newEmail,
+        password: el("changeEmailPassword").value || undefined,
+        code: el("changeEmailCode").value.trim() || undefined,
+      });
+      el("changeEmailPassword").value = "";
+      el("changeEmailCode").value = "";
+      showMessage(data.detail || "Te mandamos un enlace al email nuevo.", "success");
+    } catch (error) {
+      if (!error.isSessionExpired) showMessage(error.message);
+    }
+  });
+
   loadMfa();
   load();
+  loadSecurityLog();
+  loadAccess();
 })();

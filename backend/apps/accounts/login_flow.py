@@ -69,7 +69,10 @@ def finish_login(
             actor_email=user.email,
             changes=changes,
         )
-    devices.remember_device(user, request, device)
+    _row, is_new = devices.remember_device(user, request, device)
+    # El registro es, por definición, el primer navegador: no se avisa.
+    if is_new and method != "register":
+        devices.notify_new_device(user, request, session)
     body = {**(extra or {}), **tokens, "user": user_payload(user, picture, request)}
     response = deliver_tokens(request, Response(body, status=status_code), remember=remember)
     return devices.ensure_device_cookie(request, response)

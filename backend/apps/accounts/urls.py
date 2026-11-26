@@ -15,6 +15,7 @@ from .security_views import (
     MfaStatusView,
     MfaVerifyView,
 )
+from .security_views import ChangeEmailView, ConfirmEmailChangeView, SecurityLogView, SetPasswordView
 from .security_views import SessionListView, SessionPingView, SessionRevokeOthersView, SessionRevokeView
 from .support_views import SupportMessageView
 from .role_permission_views import (
@@ -68,6 +69,10 @@ urlpatterns = [
     # Perfil del usuario autenticado: GET (ver) y PATCH (editar nombre/apellido).
     path("me/", ProfileView.as_view(), name="profile"),
     # Datos de la cuenta: fiscales, remitente/logo por defecto, preferencias.
+    path("me/security-log/", SecurityLogView.as_view(), name="security-log"),
+    path("me/set-password/", SetPasswordView.as_view(), name="set-password"),
+    path("me/change-email/", ChangeEmailView.as_view(), name="change-email"),
+    path("me/change-email/confirm/", ConfirmEmailChangeView.as_view(), name="change-email-confirm"),
     path("me/account/", AccountSettingsView.as_view(), name="account-settings"),
     # Cambio de contraseña del usuario autenticado (exige la actual).
     path("me/change-password/", ChangePasswordView.as_view(), name="change-password"),

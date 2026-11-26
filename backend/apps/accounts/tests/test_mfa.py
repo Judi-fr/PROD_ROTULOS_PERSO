@@ -284,8 +284,9 @@ class MfaLoginTests(APITestCase):
         ok = self.client.post(VERIFY, {"mfa_token": token, "code": codes[0]}, format="json")
         self.assertEqual(ok.status_code, 200, ok.data)
         self.assertEqual(SessionRecord.objects.get().mfa_method, "recovery")
-        self.assertEqual(len(mail.outbox), before + 1)
-        self.assertIn("9", mail.outbox[-1].body)
+        recovery_mails = [m for m in mail.outbox[before:] if m.subject.startswith("Usaste un código de recuperación")]
+        self.assertEqual(len(recovery_mails), 1)
+        self.assertIn("Te quedan 9", recovery_mails[0].body)
         self.assertTrue(AuditLog.objects.filter(action="auth.recovery_code_used").exists())
 
     def test_user_without_mfa_login_response_unchanged(self):
@@ -321,7 +322,7 @@ class MfaSetupTests(APITestCase):
         return {"HTTP_AUTHORIZATION": f"Bearer {response.data['access']}"}
 
     def enable_app(self, headers):
-        setup = self.client.post(f"{TWOFA}setup/", {"method": "totp"}, format="json", **headers)
+        setup = self.client.post(f"{TWOFA}setup/", {"method": "totp", "password": PASSWORD}, format="json", **headers)
         self.assertEqual(setup.status_code, 200, setup.data)
         with mock.patch("apps.accounts.mfa.time.time", return_value=NOW):
             confirm = self.client.post(
@@ -332,7 +333,7 @@ class MfaSetupTests(APITestCase):
 
     def test_totp_setup_needs_valid_code_to_enable(self):
         headers = self.auth()
-        setup = self.client.post(f"{TWOFA}setup/", {"method": "totp"}, format="json", **headers)
+        setup = self.client.post(f"{TWOFA}setup/", {"method": "totp", "password": PASSWORD}, format="json", **headers)
         self.assertTrue(setup.data["qr"].startswith("data:image/png;base64,"))
         self.assertIn(setup.data["secret"], setup.data["otpauth_uri"])
         self.assertFalse(mfa.mfa_enabled(self.user))
@@ -355,7 +356,7 @@ class MfaSetupTests(APITestCase):
     def test_setup_twice_is_refused(self):
         headers = self.auth()
         self.enable_app(headers)
-        again = self.client.post(f"{TWOFA}setup/", {"method": "email"}, format="json", **headers)
+        again = self.client.post(f"{TWOFA}setup/", {"method": "email", "password": PASSWORD}, format="json", **headers)
         self.assertEqual(again.status_code, 400)
 
     def test_email_setup_requires_verified_email(self):
@@ -363,12 +364,12 @@ class MfaSetupTests(APITestCase):
 
         EmailVerification.objects.create(user=self.user, token="t" * 20, is_verified=False)
         headers = {"HTTP_AUTHORIZATION": f"Bearer {RefreshToken_for(self.user)}"}
-        response = self.client.post(f"{TWOFA}setup/", {"method": "email"}, format="json", **headers)
+        response = self.client.post(f"{TWOFA}setup/", {"method": "email", "password": PASSWORD}, format="json", **headers)
         self.assertEqual(response.status_code, 403)
 
     def test_email_setup_sends_code_and_confirms(self):
         headers = self.auth()
-        sent = self.client.post(f"{TWOFA}setup/", {"method": "email"}, format="json", **headers)
+        sent = self.client.post(f"{TWOFA}setup/", {"method": "email", "password": PASSWORD}, format="json", **headers)
         self.assertEqual(sent.status_code, 200, sent.data)
         code = code_from_mail(mail.outbox[-1])
         confirm = self.client.post(f"{TWOFA}confirm/", {"code": code}, format="json", **headers)

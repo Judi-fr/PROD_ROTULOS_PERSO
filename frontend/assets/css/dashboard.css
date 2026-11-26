@@ -587,6 +587,18 @@
   margin-bottom: 0;
 }
 
+/* "Tu ingreso anterior": discreto, para notar un ingreso que no fue uno. */
+.dash-previous {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.dash-previous a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .dash-date {
   display: block;
   margin: 0 0 8px;

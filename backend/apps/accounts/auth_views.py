@@ -44,7 +44,8 @@ from apps.audit.services import record
 
 from .auth_cookies import clear_auth_cookies, deliver_tokens, refresh_from_request, wants_cookies
 from .login_flow import finish_login, parse_remember
-from .sessions import active_session, revoke_all, revoke_session, session_fields, touch
+from .security_mail import password_changed_mail
+from .sessions import active_session, previous_login, revoke_all, revoke_session, session_fields, touch
 from .models import EmailVerification, LoginLockout, user_email_verified
 
 User = get_user_model()
@@ -212,6 +213,7 @@ def user_payload(user, picture="", request=None):
         # La sesión de este navegador: el frontend cierra por inactividad solo
         # las que no son "Recordarme" (sessions.py).
         **session_fields(request),
+        "previous_login": previous_login(user, request),
     }
 
 
@@ -370,6 +372,7 @@ class ChangePasswordView(APIView):
         # sid): si alguien más tenía la contraseña, queda afuera. Esta sigue.
         current_sid = request.auth.get("sid") if request.auth is not None else None
         revoke_all(request.user, except_sid=current_sid, reason="password")
+        password_changed_mail(request.user, "change")
         return Response({"detail": "Contraseña actualizada correctamente."})
 
 
@@ -882,6 +885,7 @@ class PasswordResetConfirmView(APIView):
         # generator depende del hash), pero NO cierra las sesiones activas: se
         # revocan los refresh vigentes por si la cuenta estaba comprometida.
         revoke_all(user, reason="password_reset")
+        password_changed_mail(user, "reset")
 
         record(
             request,

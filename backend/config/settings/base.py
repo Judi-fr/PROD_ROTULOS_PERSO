@@ -743,3 +743,5 @@ MFA_EMAIL_CODE_MINUTES = env.int("MFA_EMAIL_CODE_MINUTES", default=10)
 MFA_TRUST_DAYS = env.int("MFA_TRUST_DAYS", default=30)
 MFA_RECOVERY_CODES = env.int("MFA_RECOVERY_CODES", default=10)
 AUTH_DEVICE_COOKIE_DAYS = env.int("AUTH_DEVICE_COOKIE_DAYS", default=365)
+# Cambio de email (security_views.ChangeEmailView): vida del enlace al email nuevo.
+EMAIL_CHANGE_HOURS = env.int("EMAIL_CHANGE_HOURS", default=24)

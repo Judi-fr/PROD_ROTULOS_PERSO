@@ -225,3 +225,29 @@ def session_fields(request) -> dict:
         "session_remember": bool(token.get("remember")),
         "session_idle_minutes": settings.AUTH_IDLE_MINUTES,
     }
+
+
+def current_session(request):
+    """La sesión de esta request: la recién abierta en un ingreso o la de su token."""
+    session = getattr(request, "_rotulos_session", None) if request is not None else None
+    if session is not None:
+        return session
+    token = getattr(request, "auth", None) if request is not None else None
+    sid = token.get("sid") if token is not None and hasattr(token, "get") else None
+    return SessionRecord.objects.filter(pk=sid).first() if sid else None
+
+
+def previous_login(user, request) -> dict | None:
+    """El ingreso anterior al de esta sesión ("Tu ingreso anterior", Inicio)."""
+    current = current_session(request)
+    if current is None:
+        return None
+    previous = (
+        SessionRecord.objects.filter(user=user, created_at__lt=current.created_at)
+        .exclude(pk=current.pk)
+        .order_by("-created_at")
+        .first()
+    )
+    if previous is None:
+        return None
+    return {"at": previous.created_at.isoformat(), "browser": previous.browser or "Navegador desconocido"}

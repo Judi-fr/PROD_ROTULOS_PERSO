@@ -1517,3 +1517,77 @@ async function copyText(text, successMessage = "Copiado.") {
     return false;
   }
 }
+
+// ---- Contraseñas: medidor y aviso de Mayúsculas -----------------------------
+// Las reglas son las del backend (validate_password_strength): 8 caracteres,
+// una mayúscula y un número. El medidor solo adelanta lo que el servidor va a
+// decir; "fuerte" suma 12+ caracteres o un símbolo. Se engancha solo a todo
+// <input data-password-meter>; el aviso de Mayúsculas, a toda contraseña.
+const PASSWORD_RULES = [
+  { label: "8 caracteres", test: (value) => value.length >= 8 },
+  { label: "una mayúscula", test: (value) => /[A-ZÁÉÍÓÚÑ]/.test(value) },
+  { label: "un número", test: (value) => /\d/.test(value) },
+];
+
+function passwordStrength(value) {
+  const met = PASSWORD_RULES.filter((rule) => rule.test(value)).length;
+  if (!value) return { level: 0, label: "" };
+  if (met < PASSWORD_RULES.length) return { level: 1, label: "Débil" };
+  if (value.length >= 12 || /[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]/.test(value)) return { level: 3, label: "Fuerte" };
+  return { level: 2, label: "Aceptable" };
+}
+
+function attachPasswordMeter(input, container) {
+  if (!input || input.dataset.meterReady) return;
+  input.dataset.meterReady = "1";
+  const box = container || document.createElement("div");
+  box.className = "password-meter";
+  box.setAttribute("aria-live", "polite");
+  box.innerHTML = '<div class="password-meter-bar"><span></span><span></span><span></span></div>' +
+    '<span class="password-meter-label"></span><ul class="password-meter-rules"></ul>';
+  if (!container) (input.closest(".access-input") || input).insertAdjacentElement("afterend", box);
+  const list = box.querySelector(".password-meter-rules");
+  PASSWORD_RULES.forEach((rule) => {
+    const li = document.createElement("li");
+    li.textContent = rule.label;
+    list.append(li);
+  });
+  const update = () => {
+    const value = input.value;
+    const strength = passwordStrength(value);
+    box.dataset.level = String(strength.level);
+    box.querySelector(".password-meter-label").textContent = strength.label;
+    [...list.children].forEach((li, index) => li.classList.toggle("is-met", PASSWORD_RULES[index].test(value)));
+    box.hidden = !value;
+  };
+  input.addEventListener("input", update);
+  update();
+}
+
+function attachCapsLockWarning(input) {
+  if (!input || input.dataset.capsReady) return;
+  input.dataset.capsReady = "1";
+  const note = document.createElement("small");
+  note.className = "caps-warning";
+  note.textContent = "Tenés las mayúsculas activadas.";
+  note.hidden = true;
+  note.setAttribute("role", "status");
+  (input.closest(".access-input") || input).insertAdjacentElement("afterend", note);
+  const check = (event) => {
+    if (typeof event.getModifierState === "function") note.hidden = !event.getModifierState("CapsLock");
+  };
+  input.addEventListener("keydown", check);
+  input.addEventListener("keyup", check);
+  input.addEventListener("blur", () => (note.hidden = true));
+}
+
+function attachPasswordHelpers(root = document) {
+  root.querySelectorAll("input[data-password-meter]").forEach((input) => attachPasswordMeter(input));
+  root.querySelectorAll('input[type="password"]').forEach((input) => attachCapsLockWarning(input));
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => attachPasswordHelpers());
+} else {
+  attachPasswordHelpers();
+}
